@@ -301,20 +301,33 @@ private final class DesktopSsoSession: NSObject, ASWebAuthenticationPresentation
         self.model = nil
 
         guard let callbackURL,
-              callbackURL.scheme?.lowercased() == "hanasand-desktop",
-              callbackURL.host?.lowercased() == "sso" else {
+              let code = DesktopSsoCallback.authorizationCode(from: callbackURL) else {
             let message = error == nil ? "SSO sign-in could not be completed." : "SSO sign-in was canceled or failed."
             model.completeHanasandSsoWithError(message)
             return
         }
 
-        let query = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        guard query.first(where: { $0.name == "error" }) == nil,
-              let code = query.first(where: { $0.name == "code" })?.value else {
-            model.completeHanasandSsoWithError("SSO sign-in could not be completed.")
-            return
-        }
         Task { await model.completeHanasandSso(code: code, verifier: verifier) }
+    }
+}
+
+enum DesktopSsoCallback {
+    static func authorizationCode(from callbackURL: URL) -> String? {
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "hanasand-desktop",
+              components.host?.lowercased() == "sso",
+              components.path.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.fragment == nil,
+              let queryItems = components.queryItems,
+              queryItems.count == 1,
+              queryItems[0].name == "code",
+              let code = queryItems[0].value,
+              code.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
+            return nil
+        }
+        return code
     }
 }
 
