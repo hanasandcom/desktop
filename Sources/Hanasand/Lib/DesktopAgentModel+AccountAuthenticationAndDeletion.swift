@@ -48,7 +48,10 @@ extension DesktopAgentModel {
                 return
             }
 
-            guard (200..<300).contains(statusCode), let token = decoded?.token, !token.isEmpty else {
+            guard (200..<300).contains(statusCode),
+                  let decoded,
+                  let token = decoded.token,
+                  !token.isEmpty else {
                 let message = decoded?.error
                     ?? String(data: data, encoding: .utf8)
                     ?? "Login failed."
@@ -56,18 +59,7 @@ extension DesktopAgentModel {
                 return
             }
 
-            try DesktopCredentialStore.write(token, for: .authToken)
-            try DesktopCredentialStore.write("", for: .impersonationToken)
-            settings.authToken = token
-            settings.userID = decoded?.id ?? username
-            settings.impersonationToken = ""
-            settings.impersonatingUserID = ""
-            settings.impersonatingUserName = ""
-            loginUsername = ""
-            loginPassword = ""
-            loginStatus = ""
-            append(meta: "Login", body: "Signed in as \(settings.userID).", kind: .change)
-            beginDesktopAgentPresence()
+            try activateHanasandSession(decoded, fallbackUserID: username)
         } catch {
             loginStatus = error.localizedDescription
         }

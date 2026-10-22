@@ -18,15 +18,18 @@ extension DesktopAgentModel {
             return
         }
         guard codexWorkerProcess?.isRunning != true else { return }
-        let scriptPath = "/Users/eirikhanasand/Desktop/personal/hanasand/app/desktop/scripts/codex-remote-worker.sh"
+        let environment = ProcessInfo.processInfo.environment
+        let repositoryPath = environment["HANASAND_DESKTOP_REPO_ROOT"] ?? FileManager.default.currentDirectoryPath
+        let repositoryURL = URL(fileURLWithPath: repositoryPath, isDirectory: true)
+        let scriptPath = repositoryURL.appendingPathComponent("scripts/codex-remote-worker.sh").path
         guard FileManager.default.isExecutableFile(atPath: scriptPath) else {
-            append(meta: "Codex worker", body: "Remote Codex worker script is not executable at \(scriptPath).", kind: .error)
+            append(meta: "Codex worker", body: "Remote Codex worker script was not found. Set HANASAND_DESKTOP_REPO_ROOT to the desktop repository path.", kind: .error)
             return
         }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: scriptPath)
-        process.currentDirectoryURL = URL(fileURLWithPath: "/Users/eirikhanasand/Desktop/personal/hanasand")
+        process.currentDirectoryURL = repositoryURL
         process.environment = ProcessInfo.processInfo.environment.merging([
             "HANASAND_CODEX_POLL_SECONDS": "2",
         ]) { _, new in new }

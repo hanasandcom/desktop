@@ -94,6 +94,24 @@ extension HanasandLoginGate {
                 }
             }
 
+            HStack(spacing: 8) {
+                secondaryButton(
+                    title: model.isLoggingIn ? "Waiting" : "Sign in with passkey",
+                    busy: model.isLoggingIn,
+                    action: { Task { await model.loginWithPasskey() } }
+                )
+                .frame(maxWidth: .infinity)
+                .disabled(model.isLoggingIn)
+
+                secondaryButton(
+                    title: model.isLoggingIn ? "Waiting" : "Continue with SSO",
+                    busy: model.isLoggingIn,
+                    action: { model.beginHanasandSso() }
+                )
+                .frame(maxWidth: .infinity)
+                .disabled(model.isLoggingIn)
+            }
+
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }

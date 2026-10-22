@@ -7,7 +7,6 @@ Native macOS client for Hanasand account, mail, AI, and control workflows. It al
 From the repository root:
 
 ```sh
-cd desktop
 swift run Hanasand
 ```
 
@@ -32,58 +31,60 @@ This cover traffic adds about 2.6 Mbps (roughly 1.2 GB or 1.1 GiB per foreground
 From the repository root, choose a semantic version and run:
 
 ```sh
-HANASAND_APP_VERSION=0.1.2 desktop/scripts/package-update.sh
+HANASAND_APP_VERSION=0.1.2 scripts/package-update.sh
 ```
 
-The script builds and verifies a release `.app`, signs it with `HANASAND_CODESIGN_IDENTITY` when set, or selects the first local Apple Development identity. Stable signing keeps macOS privacy permissions such as Screen Recording attached across updates. Ad-hoc packages are refused unless `HANASAND_ALLOW_ADHOC_SIGNING=1` is set for a throwaway local build. By default, the script writes `desktop/dist/Hanasand-<version>-macos.zip` and `desktop/dist/manifest.json`. Set `HANASAND_APP_OUTPUT_DIR` to choose another output directory:
+The script builds and verifies a release `.app`, signs it with `HANASAND_CODESIGN_IDENTITY` when set, or selects the first local Apple Development identity. The app uses the `com.hanasand.desktop` bundle ID, the `hanasand-desktop` SSO callback scheme, and the `webcredentials:hanasand.com` associated domain for passkeys. Stable signing keeps macOS privacy permissions such as Screen Recording attached across updates. Ad-hoc packages are refused unless `HANASAND_ALLOW_ADHOC_SIGNING=1` is set for a throwaway local build; associated-domain passkeys require an app signed by the matching Apple development team. By default, the script writes `dist/Hanasand-<version>-macos.zip` and `dist/manifest.json`. Set `HANASAND_APP_OUTPUT_DIR` to choose another output directory:
 
 ```sh
-HANASAND_APP_VERSION=0.1.2 HANASAND_APP_OUTPUT_DIR=/tmp/hanasand-desktop-0.1.2 desktop/scripts/package-update.sh
+HANASAND_APP_VERSION=0.1.2 HANASAND_APP_OUTPUT_DIR=/tmp/hanasand-desktop-0.1.2 scripts/package-update.sh
 ```
 
 The update API reads the exact archive filename recorded in the manifest. Upload the versioned archive and its manifest together, without renaming the archive. For example, from the repository root:
 
 ```sh
-rsync -az desktop/dist/Hanasand-0.1.2-macos.zip desktop/dist/manifest.json ubuntu@hanasand:/srv/hanasand/app-updates/
+rsync -az dist/Hanasand-0.1.2-macos.zip dist/manifest.json ubuntu@hanasand:/srv/hanasand/app-updates/
 ```
 
 The runner helper is intended for a Forgejo update workflow, which needs a macOS runner because SwiftUI cannot be built in the Linux Git container. This checkout includes the helper but no Forgejo workflow definition, so any trigger and automated release steps are outside this repository. Start the runner in the foreground when that external workflow requires it:
 
 ```sh
-desktop/scripts/run-macos-runner-once.sh
+scripts/run-macos-runner-once.sh
 ```
 
 The script builds the Forgejo runner locally if needed, registers it with `macos` and `macos-arm64` labels, and runs until stopped with `Ctrl-C`.
+
+The remote Codex worker is disabled by default. To enable it for a local checkout, set `HANASAND_DESKTOP_START_CODEX_WORKER=1`; set `HANASAND_DESKTOP_REPO_ROOT` to this repository's root if the app is launched with a different working directory.
 
 ## Capture visual smoke screenshots
 
 On macOS, run the screenshot pass from the repository root:
 
 ```sh
-desktop/scripts/smoke-screenshots.sh
+scripts/smoke-screenshots.sh
 ```
 
-The script builds or launches the Desktop app, opens sections through authenticated `POST /command` requests, checks the screenshots, and saves a manifest and browsable HTML contact sheet under `desktop/.artifacts/desktop-smoke-<timestamp>/`. It prompts once for the Hanasand user ID and session token; token input is hidden. The script does not load session credentials from environment variables or files. A local CryptoKit helper reads the desktop leaf certificate from Keychain, verifies the exact DER SHA-256 fingerprint during TLS, derives request proofs, encrypts command payloads, and verifies/decrypts response bodies in memory. The helper binary is placed in the smoke output directory; neither credentials nor plaintext response bodies are written there.
+The script builds or launches the Desktop app, opens sections through authenticated `POST /command` requests, checks the screenshots, and saves a manifest and browsable HTML contact sheet under `.artifacts/desktop-smoke-<timestamp>/`. It prompts once for the Hanasand user ID and session token; token input is hidden. The script does not load session credentials from environment variables or files. A local CryptoKit helper reads the desktop leaf certificate from Keychain, verifies the exact DER SHA-256 fingerprint during TLS, derives request proofs, encrypts command payloads, and verifies/decrypts response bodies in memory. The helper binary is placed in the smoke output directory; neither credentials nor plaintext response bodies are written there.
 
 Useful options:
 
 ```sh
-HANASAND_DESKTOP_SMOKE_KEEP_RUNNING=1 desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_SMOKE_OUT=/tmp/hanasand-smoke desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_AGENT_URL=https://localhost:45731 desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_SMOKE_SCOPE=core desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_SMOKE_SCOPE=dashboard desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect desktop/scripts/smoke-screenshots.sh
-HANASAND_DESKTOP_SMOKE_CAPTURE_RECT=80,70,1340,900 desktop/scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_KEEP_RUNNING=1 scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_OUT=/tmp/hanasand-smoke scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_AGENT_URL=https://localhost:45731 scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_SCOPE=core scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_SCOPE=dashboard scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_CAPTURE_RECT=80,70,1340,900 scripts/smoke-screenshots.sh
 ```
 
 The default `full` pass captures Control, Server, Mail, Documents, Images, Dashboard, Settings, and every registered native dashboard route. The script checks route-command coverage before capture. Use `core` for a short shell pass or `dashboard` for dashboard route coverage. Screenshots use the visible Hanasand window ID by default. Set `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect` to capture a rectangle, or use `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=screen` and clear `HANASAND_DESKTOP_SMOKE_CAPTURE_RECT` for a full-screen capture.
 
 ## Legacy C++ loopback helper
 
-`desktop/main.cpp` builds a separate, minimal helper for cases that do not need the macOS GUI. It is not the Swift bridge: it binds only to `127.0.0.1`, exposes `GET /health`, `GET /status`, and `POST /command`, and returns status output when the request text contains `status`; other command text returns HTTP 400. It does not parse the JSON command field, and it has no LAN discovery or the Swift bridge's session-proof protocol. Its default port is also `45731`; choose another port when running it alongside the Swift app.
+`main.cpp` builds a separate, minimal helper for cases that do not need the macOS GUI. It is not the Swift bridge: it binds only to `127.0.0.1`, exposes `GET /health`, `GET /status`, and `POST /command`, and returns status output when the request text contains `status`; other command text returns HTTP 400. It does not parse the JSON command field, and it has no LAN discovery or the Swift bridge's session-proof protocol. Its default port is also `45731`; choose another port when running it alongside the Swift app.
 
-Build it from `desktop/`:
+Build it from the repository root:
 
 ```sh
 clang++ -std=c++17 -O2 -Wall -Wextra main.cpp -o build/hanasand-agent

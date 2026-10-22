@@ -58,7 +58,7 @@ extension IDEWorkspaceModel {
             IDEQuickCommand(title: "Status", command: "git status --short", icon: "waveform.path.ecg"),
             IDEQuickCommand(title: "Pull", command: "git pull --ff-only", icon: "arrow.down.circle"),
             IDEQuickCommand(title: "Push", command: "git push", icon: "arrow.up.circle"),
-            IDEQuickCommand(title: "Build desktop", command: "cd app/desktop && swift build", icon: "hammer"),
+            IDEQuickCommand(title: "Build desktop", command: "swift build", icon: "hammer"),
             IDEQuickCommand(title: "List shares", command: "curl -I -s https://hanasand.com/s", icon: "network"),
             IDEQuickCommand(title: "Files", command: "find . -maxdepth 2 -type f | head -80", icon: "doc.text.magnifyingglass"),
         ]

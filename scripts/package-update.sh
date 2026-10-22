@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${HANASAND_APP_VERSION:-$(git -C "$ROOT_DIR/../.." rev-parse --short HEAD)}"
+VERSION="${HANASAND_APP_VERSION:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
 CHANNEL="${HANASAND_APP_CHANNEL:-stable}"
 RELEASED_AT="${HANASAND_APP_RELEASED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
-RELEASE_NOTES="${HANASAND_APP_RELEASE_NOTES:-Desktop app update from commit $(git -C "$ROOT_DIR/../.." rev-parse --short HEAD).}"
+RELEASE_NOTES="${HANASAND_APP_RELEASE_NOTES:-Desktop app update from commit $(git -C "$ROOT_DIR" rev-parse --short HEAD).}"
 DIST_DIR="${HANASAND_APP_OUTPUT_DIR:-${ROOT_DIR}/dist}"
 if [[ "${DIST_DIR}" != /* ]]; then
   DIST_DIR="${PWD}/${DIST_DIR}"
@@ -14,6 +14,7 @@ BUILD_DIR="${ROOT_DIR}/.build/release"
 APP_DIR="${DIST_DIR}/Hanasand.app"
 PACKAGE_PATH="${DIST_DIR}/Hanasand-${VERSION}-macos.zip"
 ICON_FILE="${ROOT_DIR}/Resources/Hanasand.icns"
+ENTITLEMENTS_FILE="${ROOT_DIR}/Signing/Hanasand.entitlements"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([-+][A-Za-z0-9.]+)?$ ]]; then
   cat >&2 <<EOF
@@ -62,6 +63,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.hanasand.desktop.sso</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>hanasand-desktop</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
@@ -72,10 +84,10 @@ if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
 fi
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
-  codesign --force --deep --options runtime --sign "$SIGN_IDENTITY" "$APP_DIR"
+  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$APP_DIR"
 elif [[ "${HANASAND_ALLOW_ADHOC_SIGNING:-}" == "1" ]]; then
   echo "Signing ad-hoc because HANASAND_ALLOW_ADHOC_SIGNING=1 is set." >&2
-  codesign --force --deep --sign - "$APP_DIR"
+  codesign --force --deep --entitlements "$ENTITLEMENTS_FILE" --sign - "$APP_DIR"
 else
   cat >&2 <<EOF
 No valid Apple Development signing identity found.
