@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${HANASAND_APP_VERSION:-$(git -C "$ROOT_DIR" rev-parse --short HEAD)}"
 CHANNEL="${HANASAND_APP_CHANNEL:-stable}"
+if [[ "${HANASAND_ALLOW_ADHOC_SIGNING:-}" == "1" ]]; then
+  if [[ -n "${HANASAND_APP_CHANNEL:-}" && "${HANASAND_APP_CHANNEL}" != "local" ]]; then
+    echo "Ad-hoc packages are local-only; do not assign them a release channel." >&2
+    exit 64
+  fi
+  CHANNEL="local"
+fi
 RELEASED_AT="${HANASAND_APP_RELEASED_AT:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 RELEASE_NOTES="${HANASAND_APP_RELEASE_NOTES:-Desktop app update from commit $(git -C "$ROOT_DIR" rev-parse --short HEAD).}"
 DIST_DIR="${HANASAND_APP_OUTPUT_DIR:-${ROOT_DIR}/dist}"
@@ -89,6 +96,14 @@ else
 
   if [[ -n "$SIGN_IDENTITY" ]]; then
     codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$APP_DIR"
+    SIGNATURE_DETAILS="$(codesign -dv --verbose=4 "$APP_DIR" 2>&1 || true)"
+    SIGNER_TEAM_ID="$(printf '%s\n' "$SIGNATURE_DETAILS" | awk -F '[()]' '/^Authority=/ { if ($2 ~ /^[A-Z0-9]+$/) { print $2; exit } }')"
+    BUNDLE_TEAM_ID="$(printf '%s\n' "$SIGNATURE_DETAILS" | awk -F= '/^TeamIdentifier=/ { print $2; exit }')"
+    if [[ -n "$SIGNER_TEAM_ID" && -n "$BUNDLE_TEAM_ID" && "$SIGNER_TEAM_ID" != "$BUNDLE_TEAM_ID" ]]; then
+      echo "Signing certificate team $SIGNER_TEAM_ID does not match the signed app team $BUNDLE_TEAM_ID." >&2
+      echo "Refusing to package an update with a mismatched Apple signing identity." >&2
+      exit 65
+    fi
   else
   cat >&2 <<EOF
 No valid Apple Development signing identity found.
