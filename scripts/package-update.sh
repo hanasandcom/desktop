@@ -78,17 +78,18 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-SIGN_IDENTITY="${HANASAND_CODESIGN_IDENTITY:-}"
-if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
-  SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development:/ { print $2; exit }')"
-fi
-
-if [[ -n "$SIGN_IDENTITY" ]]; then
-  codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$APP_DIR"
-elif [[ "${HANASAND_ALLOW_ADHOC_SIGNING:-}" == "1" ]]; then
+if [[ "${HANASAND_ALLOW_ADHOC_SIGNING:-}" == "1" ]]; then
   echo "Signing ad-hoc because HANASAND_ALLOW_ADHOC_SIGNING=1 is set." >&2
-  codesign --force --deep --entitlements "$ENTITLEMENTS_FILE" --sign - "$APP_DIR"
+  codesign --force --deep --sign - "$APP_DIR"
 else
+  SIGN_IDENTITY="${HANASAND_CODESIGN_IDENTITY:-}"
+  if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '"' '/Apple Development:/ { print $2; exit }')"
+  fi
+
+  if [[ -n "$SIGN_IDENTITY" ]]; then
+    codesign --force --deep --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$APP_DIR"
+  else
   cat >&2 <<EOF
 No valid Apple Development signing identity found.
 Refusing to package an ad-hoc desktop update because macOS privacy permissions
@@ -97,7 +98,8 @@ such as Screen Recording are tied to the app signature and will be lost.
 Set HANASAND_CODESIGN_IDENTITY to a valid identity, or set
 HANASAND_ALLOW_ADHOC_SIGNING=1 only for throwaway local builds.
 EOF
-  exit 65
+    exit 65
+  fi
 fi
 
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
