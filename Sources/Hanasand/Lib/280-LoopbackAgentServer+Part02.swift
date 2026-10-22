@@ -19,7 +19,7 @@ extension LoopbackAgentServer {
         let certificate = certificateProvider().trimmingCharacters(in: .whitespacesAndNewlines)
         if certificate.isEmpty || !hasValidSessionProof(request, body: body, certificate: certificate) {
             let rejected = http(body: #"{"ok":false,"message":"A matching Hanasand login session is required for LAN access."}"#, status: "401 Unauthorized")
-            return certificate.isEmpty ? rejected : (Self.encryptHTTPResponse(rejected, certificate: certificate) ?? rejected)
+            return rejected
         }
 
         let plaintextBody: Data

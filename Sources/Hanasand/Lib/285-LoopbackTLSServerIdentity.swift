@@ -86,6 +86,10 @@ struct LoopbackTLSServerIdentity {
         guard certificateStatus == errSecSuccess || certificateStatus == errSecItemNotFound else {
             throw IdentityError.keychain(certificateStatus)
         }
+        let certificateDataStatus = SecItemDelete(certificateDataQuery(label: labels.certificate) as CFDictionary)
+        guard certificateDataStatus == errSecSuccess || certificateDataStatus == errSecItemNotFound else {
+            throw IdentityError.keychain(certificateDataStatus)
+        }
     }
 
     private static func keychainLabels(namespace: String) throws -> (applicationTag: Data, key: String, certificate: String) {
@@ -141,12 +145,9 @@ struct LoopbackTLSServerIdentity {
     }
 
     private static func loadCertificateDER(label: String) throws -> Data? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: label,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
+        var query = certificateDataQuery(label: label)
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
@@ -157,21 +158,27 @@ struct LoopbackTLSServerIdentity {
     }
 
     private static func saveCertificateDER(_ der: Data, label: String) throws {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: label,
-        ]
+        let query = certificateDataQuery(label: label)
         let deleteStatus = SecItemDelete(query as CFDictionary)
         guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
             throw IdentityError.keychain(deleteStatus)
         }
         let add: [CFString: Any] = [
-            kSecClass: kSecClassCertificate,
-            kSecAttrLabel: label,
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: "com.hanasand.desktop.local-agent.tls.certificate",
+            kSecAttrAccount: label,
             kSecValueData: der,
         ]
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw IdentityError.keychain(status) }
+    }
+
+    private static func certificateDataQuery(label: String) -> [CFString: Any] {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: "com.hanasand.desktop.local-agent.tls.certificate",
+            kSecAttrAccount: label,
+        ]
     }
 
     static func certificateIsCurrent(_ der: Data, advertisedIPv4Addresses: [String]) -> Bool {
