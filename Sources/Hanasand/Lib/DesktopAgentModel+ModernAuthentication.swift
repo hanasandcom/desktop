@@ -6,6 +6,8 @@ import Foundation
 import Security
 import SwiftUI
 
+private let passkeySignInEnabled = false
+
 private struct PasskeyAuthenticationOptions: Decodable {
     let challengeId: String
     let publicKey: PublicKey
@@ -48,6 +50,10 @@ private struct MobilePasskeyPayload: Encodable {
 
 extension DesktopAgentModel {
     func loginWithPasskey() async {
+        guard passkeySignInEnabled else {
+            loginStatus = "Passkey sign-in is temporarily unavailable."
+            return
+        }
         guard !isLoggingIn else { return }
         isLoggingIn = true
         loginStatus = "Waiting for passkey"
