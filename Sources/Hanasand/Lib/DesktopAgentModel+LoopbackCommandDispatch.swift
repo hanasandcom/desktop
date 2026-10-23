@@ -196,6 +196,9 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_shares" {
             openNativeDashboard(path: "/s", label: "Shares")
             append(meta: "Dashboard", body: "Opened native Shares panel.", kind: .command)
+        } else if command == "open_dashboard_repositories" {
+            openNativeDashboard(path: "/repositories", label: "Repositories")
+            append(meta: "Dashboard", body: "Opened native Repositories panel.", kind: .command)
         } else if command == "open_dashboard_links" {
             openNativeDashboard(path: "/g", label: "Links")
             append(meta: "Dashboard", body: "Opened native Links panel.", kind: .command)
@@ -217,6 +220,15 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_realtime_logs" {
             openNativeDashboard(path: "/logs/realtime", label: "Realtime Logs")
             append(meta: "Dashboard", body: "Opened native Realtime Logs panel.", kind: .command)
+        } else if command == "open_dashboard_ti_profiles" {
+            openNativeDashboard(path: "/ti/profiles", label: "Actor Profiles")
+            append(meta: "Dashboard", body: "Opened native Actor Profiles panel.", kind: .command)
+        } else if command == "open_dashboard_ti_sources" {
+            openNativeDashboard(path: "/ti/sources", label: "Intelligence Sources")
+            append(meta: "Dashboard", body: "Opened native Intelligence Sources panel.", kind: .command)
+        } else if command == "open_dashboard_ti_timeliness" {
+            openNativeDashboard(path: "/ti/timeliness", label: "Threat Delivery Health")
+            append(meta: "Dashboard", body: "Opened native Threat Delivery Health panel.", kind: .command)
         } else if command == "open_dashboard_health_checks" {
             openNativeDashboard(path: "/automation/health", label: "Health Checks")
             append(meta: "Dashboard", body: "Opened native Health Checks panel.", kind: .command)

@@ -440,6 +440,10 @@ run_dashboard_smoke() {
   run_step "55-organization-settings" "open_dashboard_organization_settings"
   run_step "56-organization-events" "open_dashboard_organization_events"
   run_step "57-organization-activity" "open_dashboard_organization_activity"
+  run_step "58-repositories" "open_dashboard_repositories"
+  run_step "59-ti-profiles" "open_dashboard_ti_profiles"
+  run_step "60-ti-sources" "open_dashboard_ti_sources"
+  run_step "61-ti-timeliness" "open_dashboard_ti_timeliness"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

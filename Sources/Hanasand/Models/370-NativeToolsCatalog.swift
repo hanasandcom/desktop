@@ -13,13 +13,13 @@ enum NativeToolsCatalog {
         let actions = dashboard + administration
         let categories: [(String, (DesktopAction) -> Bool)] = [
             ("Security & intelligence", { action in
-                ["/cases", "/ti", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/pwned"].contains(action.routePath)
+                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/pwned"].contains(action.routePath)
             }),
             ("Infrastructure", { action in
                 ["/system/hosts", "/system/updates", "/traffic", "/system/ai", "/system/rates", "/system/cron", "/system", "/vms"].contains(action.routePath)
             }),
             ("Workspace & content", { action in
-                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts"].contains(action.routePath)
+                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/repositories", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts"].contains(action.routePath)
             }),
             ("Organization", { action in
                 ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)

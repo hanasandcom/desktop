@@ -105,6 +105,7 @@ extension LoopbackAgentServer {
                 "open_dashboard_articles",
                 "open_dashboard_thoughts",
                 "open_dashboard_shares",
+                "open_dashboard_repositories",
                 "open_dashboard_links",
                 "open_dashboard_tests",
                 "open_dashboard_profile",
@@ -112,6 +113,9 @@ extension LoopbackAgentServer {
                 "open_dashboard_roles",
                 "open_dashboard_logs",
                 "open_dashboard_realtime_logs",
+                "open_dashboard_ti_profiles",
+                "open_dashboard_ti_sources",
+                "open_dashboard_ti_timeliness",
                 "open_dashboard_health_checks",
                 "open_dashboard_personal_cron",
                 "open_dashboard_organization_settings",
@@ -184,6 +188,9 @@ extension LoopbackAgentServer {
             if command == "open_dashboard_shares" {
                 return http(body: #"{"ok":true,"message":"Native Shares panel opened in the Desktop app."}"#)
             }
+            if command == "open_dashboard_repositories" {
+                return http(body: #"{"ok":true,"message":"Native Repositories panel opened in the Desktop app."}"#)
+            }
             if command == "open_dashboard_profile" {
                 return http(body: #"{"ok":true,"message":"Native Profile panel opened in the Desktop app."}"#)
             }
@@ -198,6 +205,15 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_realtime_logs" {
                 return http(body: #"{"ok":true,"message":"Native Realtime Logs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_ti_profiles" {
+                return http(body: #"{"ok":true,"message":"Native Actor Profiles panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_ti_sources" {
+                return http(body: #"{"ok":true,"message":"Native Intelligence Sources panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_ti_timeliness" {
+                return http(body: #"{"ok":true,"message":"Native Threat Delivery Health panel opened in the Desktop app."}"#)
             }
             if command == "open_dashboard_health_checks" {
                 return http(body: #"{"ok":true,"message":"Native Health Checks panel opened in the Desktop app."}"#)
