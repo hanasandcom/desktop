@@ -390,6 +390,7 @@ run_core_smoke() {
 }
 
 run_dashboard_smoke() {
+  run_step "08-api-reference" "open_dashboard_api_reference"
   run_step "09-cases" "open_dashboard_cases"
   run_step "10-dashboard-mail" "open_dashboard_mail"
   run_step "11-links" "open_dashboard_links"
