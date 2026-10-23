@@ -13,6 +13,11 @@ import WebKit
 struct NotesNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
+    @State private var searchQuery = ""
+
+    private var visibleNotes: [DashboardNote] {
+        NotesSearch.filter(model.notes, query: searchQuery)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -20,7 +25,18 @@ struct NotesNativePanel: View {
                 ActionButton(title: "New note", icon: "plus") {
                     model.newNoteDraft()
                 }
-                ForEach(model.notes) { note in
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(theme.textTertiary)
+                    TextField("Search title or content", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("Search notes")
+                }
+                .padding(10)
+                .background(theme.field)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                ForEach(visibleNotes) { note in
                     Button {
                         model.selectNote(note)
                     } label: {
@@ -41,8 +57,11 @@ struct NotesNativePanel: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if model.notes.isEmpty {
-                    CompactInfoCard(title: "No notes", lines: ["Create the first shared desktop note."])
+                if visibleNotes.isEmpty {
+                    CompactInfoCard(
+                        title: model.notes.isEmpty ? "No notes" : "No matching notes",
+                        lines: [model.notes.isEmpty ? "Create the first shared desktop note." : "Try another title or content search."]
+                    )
                 }
             }
             .frame(width: 260, alignment: .topLeading)
