@@ -434,6 +434,12 @@ run_dashboard_smoke() {
   run_step "49-explore-tools" "open_dashboard_tools"
   run_step "50-traffic-map" "open_dashboard_traffic_map"
   run_step "51-cdn-image-library" "open_dashboard_image_library"
+  run_step "52-realtime-logs" "open_dashboard_realtime_logs"
+  run_step "53-health-checks" "open_dashboard_health_checks"
+  run_step "54-personal-cron" "open_dashboard_personal_cron"
+  run_step "55-organization-settings" "open_dashboard_organization_settings"
+  run_step "56-organization-events" "open_dashboard_organization_events"
+  run_step "57-organization-activity" "open_dashboard_organization_activity"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {
@@ -445,7 +451,7 @@ assert_dashboard_smoke_covers_loopback_commands() {
       log "dashboard loopback command is not covered by screenshot smoke: ${command}"
       missing=1
     fi
-  done < <(grep -Eo '"open_dashboard_[^"]+"' "${ROOT_DIR}/Sources/Hanasand/Hanasand.swift" | tr -d '"' | sort -u)
+  done < <(grep -Eo '"open_dashboard_[^"]+"' "${ROOT_DIR}/Sources/Hanasand/Lib/280-LoopbackAgentServer+Part02.swift" | tr -d '"' | sort -u)
 
   if [[ "${missing}" == "1" ]]; then
     return 1

@@ -1,5 +1,22 @@
 import Foundation
 
+private final class AutomationRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum AutomationSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration, delegate: AutomationRedirectBlocker(), delegateQueue: nil)
+    }()
+}
+
 struct AutomationClient {
     private let baseURL: URL
     private let userID: String
@@ -22,7 +39,7 @@ struct AutomationClient {
         token = settings.authToken
         impersonationToken = settings.impersonationToken
         canMutate = settings.impersonationToken.isEmpty && settings.impersonatingUserID.isEmpty
-        self.send = send ?? { request in try await URLSession.shared.data(for: request) }
+        self.send = send ?? { request in try await AutomationSession.shared.data(for: request) }
     }
 
     func list(scope: String? = nil) async throws -> DesktopAutomationEnvelope {

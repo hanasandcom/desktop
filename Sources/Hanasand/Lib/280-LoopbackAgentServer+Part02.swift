@@ -111,6 +111,12 @@ extension LoopbackAgentServer {
                 "open_dashboard_users",
                 "open_dashboard_roles",
                 "open_dashboard_logs",
+                "open_dashboard_realtime_logs",
+                "open_dashboard_health_checks",
+                "open_dashboard_personal_cron",
+                "open_dashboard_organization_settings",
+                "open_dashboard_organization_events",
+                "open_dashboard_organization_activity",
                 "open_dashboard_system",
                 "open_dashboard_vms",
                 "open_dashboard_ai_models",
@@ -189,6 +195,24 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_logs" {
                 return http(body: #"{"ok":true,"message":"Native Logs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_realtime_logs" {
+                return http(body: #"{"ok":true,"message":"Native Realtime Logs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_health_checks" {
+                return http(body: #"{"ok":true,"message":"Native Health Checks panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_personal_cron" {
+                return http(body: #"{"ok":true,"message":"Native Personal Cron Jobs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_organization_settings" {
+                return http(body: #"{"ok":true,"message":"Native Organization Settings panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_organization_events" {
+                return http(body: #"{"ok":true,"message":"Native Organization Events panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_organization_activity" {
+                return http(body: #"{"ok":true,"message":"Native Organization Activity panel opened in the Desktop app."}"#)
             }
             if command.hasPrefix("open_dashboard_") {
                 return http(body: #"{"ok":true,"message":"Native dashboard panel opened in the Desktop app."}"#)

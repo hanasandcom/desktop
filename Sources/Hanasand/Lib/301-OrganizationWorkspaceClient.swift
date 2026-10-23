@@ -1,5 +1,22 @@
 import Foundation
 
+private final class OrganizationWorkspaceRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum OrganizationWorkspaceSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration, delegate: OrganizationWorkspaceRedirectBlocker(), delegateQueue: nil)
+    }()
+}
+
 struct OrganizationWorkspaceClient {
     let baseURL: URL
     let organizationID: String
@@ -7,7 +24,7 @@ struct OrganizationWorkspaceClient {
     let authToken: String
     let isImpersonationClear: Bool
     var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
-        try await URLSession.shared.data(for: request)
+        try await OrganizationWorkspaceSession.shared.data(for: request)
     }
 
     init(settings: HanasandDesktopSettings, organizationID: String,

@@ -77,6 +77,8 @@ extension DesktopAgentModel {
             .route("Host Updates", "View automatic update history.", "arrow.down.circle", "/system/updates"),
             .route("Mail", "Open Mail.", "envelope", "/mail"),
             .route("Automations", "Manage scheduled agent runs.", "alarm.waves.left.and.right", "/dashboard/automations"),
+            .route("Health Checks", "Monitor websites and services with checks and history.", "heart.text.square", "/automation/health"),
+            .route("Personal Cron Jobs", "Schedule recurring personal agent jobs.", "calendar.badge.clock", "/automation/cron"),
             .route("Notes", "Open shared notes.", "note.text", "/notes"),
             .route("Traffic", "Inspect live traffic and maps.", "point.3.connected.trianglepath.dotted", "/traffic"),
             .route("Live Traffic Map", "Explore recent requests by country.", "map", "/traffic/map"),
@@ -99,6 +101,7 @@ extension DesktopAgentModel {
     var adminActions: [DesktopAction] {
         [
             .route("Logs", "Search logs and diagnostics.", "exclamationmark.triangle", "/logs"),
+            .route("Realtime Logs", "Review recent high and critical log events.", "waveform.path", "/logs/realtime"),
             .route("Database", "Inspect database and operations.", "externaldrive.connected.to.line.below", "/db"),
             .route("Backups", "View database backup status.", "externaldrive.badge.timemachine", "/db/backups"),
             .route("Restore", "Browse and restore backups.", "arrow.counterclockwise.circle", "/db/restore"),
@@ -107,6 +110,10 @@ extension DesktopAgentModel {
             .route("Users", "Manage user accounts.", "person.2", "/users"),
             .route("Roles", "Manage user roles.", "person.badge.key", "/role"),
             .route("Organizations", "Browse and switch organizations.", "building.2", "/organizations"),
+            .route("Organization Workspace", "Review organization settings, events, and activity.", "building.2.crop.circle", "/organization-workspace"),
+            .route("Organization Settings", "Review settings for the selected organization.", "slider.horizontal.3", "/organizations/settings"),
+            .route("Organization Events", "Review scoped events and cases.", "list.bullet.rectangle", "/organizations/events"),
+            .route("Organization Activity", "Review recent derived organization activity.", "clock.arrow.circlepath", "/organizations/activity"),
         ]
     }
 }

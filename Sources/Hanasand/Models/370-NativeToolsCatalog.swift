@@ -19,16 +19,16 @@ enum NativeToolsCatalog {
                 ["/system/hosts", "/system/updates", "/traffic", "/system/ai", "/system/rates", "/system/cron", "/system", "/vms"].contains(action.routePath)
             }),
             ("Workspace & content", { action in
-                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/notes", "/s", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts"].contains(action.routePath)
+                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts"].contains(action.routePath)
             }),
             ("Organization", { action in
-                ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts"].contains(action.routePath)
+                ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)
             }),
             ("Account & API", { action in
                 ["/api", "/profile"].contains(action.routePath)
             }),
             ("Administration", { action in
-                ["/logs", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
+                ["/logs", "/logs/realtime", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
             }),
         ]
 

@@ -3,7 +3,7 @@ import SwiftUI
 struct OrganizationWorkspaceNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @State private var section: OrganizationWorkspaceSection = .settings
+    @State private var section: OrganizationWorkspaceSection
     @State private var settingsPage: OrganizationWorkspaceSettingsPage?
     @State private var draft: OrganizationWorkspaceSettings?
     @State private var events: [OrganizationWorkspaceRecord] = []
@@ -15,6 +15,10 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var status = ""
     @State private var confirmSave = false
     @State private var search = ""
+
+    init(section: OrganizationWorkspaceSection = .settings) {
+        _section = State(initialValue: section)
+    }
 
     private var organizationID: String { model.selectedOrganizationID }
     private var impersonating: Bool { !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty }

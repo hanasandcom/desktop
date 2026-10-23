@@ -36,6 +36,29 @@ final class NativeToolsCatalogTests: XCTestCase {
 
         XCTAssertTrue(NativeToolsCatalog.sections(dashboard: dashboard, administration: []).isEmpty)
     }
+
+    func testParityRoutesAreDiscoverableInTheirNativeSections() {
+        let dashboard = [
+            DesktopAction.route("Health Checks", "Monitor services.", "heart", "/automation/health"),
+            DesktopAction.route("Personal Cron Jobs", "Schedule jobs.", "calendar", "/automation/cron"),
+        ]
+        let administration = [
+            DesktopAction.route("Realtime Logs", "Review recent events.", "waveform", "/logs/realtime"),
+            DesktopAction.route("Organization Workspace", "Manage organization settings.", "building", "/organization-workspace"),
+            DesktopAction.route("Organization Settings", "Review organization settings.", "slider", "/organizations/settings"),
+            DesktopAction.route("Organization Events", "Review organization events.", "list", "/organizations/events"),
+            DesktopAction.route("Organization Activity", "Review organization activity.", "clock", "/organizations/activity"),
+        ]
+
+        let sections = NativeToolsCatalog.sections(dashboard: dashboard, administration: administration)
+        let routesBySection = Dictionary(uniqueKeysWithValues: sections.map { ($0.title, Set($0.actions.compactMap(\.routePath))) })
+
+        XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron"]))
+        XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime"]))
+        XCTAssertEqual(routesBySection["Organization"], Set([
+            "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity",
+        ]))
+    }
 }
 
 private extension DesktopAction {

@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/logs", "/logs/realtime", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/s", "/vulnerabilities", "/db/backups"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -65,6 +65,14 @@ struct NativeDashboardDetail: View {
             DashboardOverviewNativePanel()
         case "/cases":
             MonitoringCasesNativePanel()
+        case "/organization-workspace":
+            OrganizationWorkspaceNativePanel()
+        case "/organizations/settings":
+            OrganizationWorkspaceNativePanel(section: .settings)
+        case "/organizations/events":
+            OrganizationWorkspaceNativePanel(section: .events)
+        case "/organizations/activity":
+            OrganizationWorkspaceNativePanel(section: .activity)
         case "/organizations":
             OrganizationDirectoryNativePanel()
         case "/ti":
@@ -121,6 +129,10 @@ struct NativeDashboardDetail: View {
             RecentTestsNativePanel()
         case "/dashboard/automations", "/dashboard/automation":
             AutomationsNativePanel()
+        case "/automation/health":
+            AutomationsNativePanel(scope: .health)
+        case "/automation/cron":
+            AutomationsNativePanel(scope: .personalCron)
         case "/system/cron":
             SystemCronNativePanel()
         case "/mail":
@@ -131,6 +143,8 @@ struct NativeDashboardDetail: View {
             VMsNativePanel()
         case "/logs":
             LogsNativePanel()
+        case "/logs/realtime":
+            LogsRealtimeNativePanel()
         case "/system/ai":
             AIModelsNativePanel()
         case "/system/rates":

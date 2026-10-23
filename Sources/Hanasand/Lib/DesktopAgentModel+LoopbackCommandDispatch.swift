@@ -214,6 +214,24 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_logs" {
             openNativeDashboard(path: "/logs", label: "Logs")
             append(meta: "Dashboard", body: "Opened native Logs panel.", kind: .command)
+        } else if command == "open_dashboard_realtime_logs" {
+            openNativeDashboard(path: "/logs/realtime", label: "Realtime Logs")
+            append(meta: "Dashboard", body: "Opened native Realtime Logs panel.", kind: .command)
+        } else if command == "open_dashboard_health_checks" {
+            openNativeDashboard(path: "/automation/health", label: "Health Checks")
+            append(meta: "Dashboard", body: "Opened native Health Checks panel.", kind: .command)
+        } else if command == "open_dashboard_personal_cron" {
+            openNativeDashboard(path: "/automation/cron", label: "Personal Cron Jobs")
+            append(meta: "Dashboard", body: "Opened native Personal Cron Jobs panel.", kind: .command)
+        } else if command == "open_dashboard_organization_settings" {
+            openNativeDashboard(path: "/organizations/settings", label: "Organization Settings")
+            append(meta: "Dashboard", body: "Opened native Organization Settings panel.", kind: .command)
+        } else if command == "open_dashboard_organization_events" {
+            openNativeDashboard(path: "/organizations/events", label: "Organization Events")
+            append(meta: "Dashboard", body: "Opened native Organization Events panel.", kind: .command)
+        } else if command == "open_dashboard_organization_activity" {
+            openNativeDashboard(path: "/organizations/activity", label: "Organization Activity")
+            append(meta: "Dashboard", body: "Opened native Organization Activity panel.", kind: .command)
         } else if command == "open_dashboard_system" {
             openNativeDashboard(path: "/system", label: "System")
             append(meta: "Dashboard", body: "Opened native System panel.", kind: .command)

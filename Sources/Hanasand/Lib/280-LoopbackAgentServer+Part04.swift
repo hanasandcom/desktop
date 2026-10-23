@@ -187,6 +187,24 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_logs" || lowercasedRequest == "dashboard_logs" {
             return "open_dashboard_logs"
         }
+        if lowercasedRequest == "open_dashboard_realtime_logs" || lowercasedRequest == "realtime_logs" || lowercasedRequest == "logs_realtime" {
+            return "open_dashboard_realtime_logs"
+        }
+        if lowercasedRequest == "open_dashboard_health_checks" || lowercasedRequest == "health_checks" || lowercasedRequest == "automation_health" {
+            return "open_dashboard_health_checks"
+        }
+        if lowercasedRequest == "open_dashboard_personal_cron" || lowercasedRequest == "personal_cron" || lowercasedRequest == "automation_cron" {
+            return "open_dashboard_personal_cron"
+        }
+        if lowercasedRequest == "open_dashboard_organization_settings" || lowercasedRequest == "organization_settings" {
+            return "open_dashboard_organization_settings"
+        }
+        if lowercasedRequest == "open_dashboard_organization_events" || lowercasedRequest == "organization_events" {
+            return "open_dashboard_organization_events"
+        }
+        if lowercasedRequest == "open_dashboard_organization_activity" || lowercasedRequest == "organization_activity" {
+            return "open_dashboard_organization_activity"
+        }
         if lowercasedRequest == "open_dashboard_system" || lowercasedRequest == "system" || lowercasedRequest == "containers" {
             return "open_dashboard_system"
         }
