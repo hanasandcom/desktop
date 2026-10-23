@@ -121,22 +121,24 @@ struct ThesisWorkspaceEditor: View {
                         if table.kind == .plan {
                             thesisPlanPanel(table, tableIndex: index)
                         } else {
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                ForEach(Array(table.cells.prefix(100).enumerated()), id: \.offset) { row, cells in
-                                    HStack(spacing: 5) {
-                                        ForEach(Array(cells.prefix(20).enumerated()), id: \.offset) { column, _ in
-                                            TextField(row == 0 ? "Column \(column + 1)" : "", text: cellBinding(tableIndex: index, row: row, column: column))
-                                                .textFieldStyle(.roundedBorder)
-                                                .font(.system(size: 11, weight: row == 0 ? .semibold : .regular))
-                                                .frame(minWidth: 130, idealWidth: 170)
-                                                .accessibilityLabel("Row \(row + 1), column \(column + 1)")
-                                                .disabled(!editable)
+                        ScrollView(.vertical, showsIndicators: true) {
+                            ScrollView(.horizontal, showsIndicators: true) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    ForEach(Array(table.cells.prefix(100).enumerated()), id: \.offset) { row, cells in
+                                        HStack(spacing: 5) {
+                                            ForEach(Array(cells.prefix(20).enumerated()), id: \.offset) { column, _ in
+                                                TextField(row == 0 ? "Column \(column + 1)" : "", text: cellBinding(tableIndex: index, row: row, column: column))
+                                                    .textFieldStyle(.roundedBorder)
+                                                    .font(.system(size: 11, weight: row == 0 ? .semibold : .regular))
+                                                    .frame(minWidth: 130, idealWidth: 170)
+                                                    .accessibilityLabel("Row \(row + 1), column \(column + 1)")
+                                                    .disabled(!editable)
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
+                        }.frame(maxHeight: 360)
                         if table.cells.count > 100 || (table.cells.first?.count ?? 0) > 20 {
                             Text("Showing up to 100 rows and 20 columns in the grid. Use Markdown source to edit the rest.")
                                 .font(.system(size: 10)).foregroundStyle(theme.textTertiary)

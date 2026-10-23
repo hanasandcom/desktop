@@ -64,6 +64,7 @@ extension HanasandLoginGate {
                     ),
                     isBusy: model.isResettingPassword
                 )
+                .id(Field.resetCode)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 2)
             }
@@ -121,6 +122,7 @@ extension HanasandLoginGate {
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(theme.text)
             .focused($focusedField, equals: field)
+            .id(field)
             .onSubmit(onSubmit)
             .padding(.horizontal, 14)
             .frame(height: 40)
@@ -143,6 +145,7 @@ extension HanasandLoginGate {
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(theme.text)
             .focused($focusedField, equals: field)
+            .id(field)
             .onSubmit(onSubmit)
             .padding(.horizontal, 14)
             .frame(height: 40)

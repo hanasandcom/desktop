@@ -10,6 +10,55 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum WindowFrameRestorationLayout {
+    private static let minimumVisibleWidth: CGFloat = 80
+    private static let minimumVisibleHeight: CGFloat = 44
+
+    static func restoredFrame(
+        for savedFrame: CGRect,
+        on screens: [CGRect],
+        fallbackScreen: CGRect?
+    ) -> CGRect? {
+        guard savedFrame.width > 0, savedFrame.height > 0,
+              savedFrame.origin.x.isFinite, savedFrame.origin.y.isFinite,
+              savedFrame.width.isFinite, savedFrame.height.isFinite else {
+            return nil
+        }
+
+        let screen = screens
+            .filter { !$0.isEmpty }
+            .max { intersectionArea(of: savedFrame, and: $0) < intersectionArea(of: savedFrame, and: $1) }
+            .flatMap { intersectionArea(of: savedFrame, and: $0) > 0 ? $0 : nil }
+            ?? fallbackScreen.flatMap { $0.isEmpty ? nil : $0 }
+
+        guard let screen else { return nil }
+
+        let visibleWidth = min(minimumVisibleWidth, screen.width)
+        let visibleHeight = min(minimumVisibleHeight, screen.height)
+        let minimumX = savedFrame.width <= screen.width
+            ? screen.minX
+            : screen.minX - savedFrame.width + visibleWidth
+        let maximumX = savedFrame.width <= screen.width
+            ? screen.maxX - savedFrame.width
+            : screen.maxX - visibleWidth
+        let minimumY = savedFrame.height <= screen.height
+            ? screen.minY
+            : screen.minY + visibleHeight - savedFrame.height
+        let maximumY = screen.maxY - savedFrame.height
+
+        var restoredFrame = savedFrame
+        restoredFrame.origin.x = min(max(savedFrame.minX, minimumX), maximumX)
+        restoredFrame.origin.y = min(max(savedFrame.minY, minimumY), maximumY)
+        return restoredFrame
+    }
+
+    private static func intersectionArea(of lhs: CGRect, and rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else { return 0 }
+        return intersection.width * intersection.height
+    }
+}
+
 struct WindowFrameRestorer: NSViewRepresentable {
     let storageKey: String
 
@@ -54,8 +103,13 @@ struct WindowFrameRestorer: NSViewRepresentable {
 
             if let saved = UserDefaults.standard.string(forKey: storageKey) {
                 let frame = NSRectFromString(saved)
-                if !frame.isEmpty, let screenFrame = window.screen?.visibleFrame, screenFrame.intersects(frame) {
-                    window.setFrame(frame, display: true)
+                let screenFrames = NSScreen.screens.map(\.visibleFrame)
+                if let restoredFrame = WindowFrameRestorationLayout.restoredFrame(
+                    for: frame,
+                    on: screenFrames,
+                    fallbackScreen: window.screen?.visibleFrame
+                ) {
+                    window.setFrame(restoredFrame, display: true)
                 }
             }
 

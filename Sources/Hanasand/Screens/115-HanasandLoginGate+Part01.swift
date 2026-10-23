@@ -12,32 +12,52 @@ import WebKit
 
 extension HanasandLoginGate {
 
-    enum Field {
+    enum Field: Hashable {
         case username
         case password
         case resetUsername
         case resetCode
         case resetPassword
         case resetConfirm
+        case signupName
+        case signupUsername
+        case signupEmail
+        case signupPassword
+        case signupCode
     }
 
     var body: some View {
         ZStack {
             theme.background
-            VStack(alignment: .leading, spacing: 16) {
-                masthead
-                if model.pendingDeletionUserID.isEmpty {
-                    loginCard
-                    if model.passwordResetStep != .idle {
-                        recoveryCard
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+            GeometryReader { geometry in
+                ScrollViewReader { scrollProxy in
+                    ScrollView(.vertical) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            masthead
+                            if model.pendingDeletionUserID.isEmpty {
+                                loginCard
+                                if model.passwordResetStep != .idle {
+                                    recoveryCard
+                                        .transition(.opacity.combined(with: .move(edge: .top)))
+                                }
+                            } else {
+                                pendingDeletionCard
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                        .frame(width: 392, alignment: .leading)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
                     }
-                } else {
-                    pendingDeletionCard
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    .scrollIndicators(.hidden)
+                    .onChange(of: focusedField) { _, field in
+                        guard let field else { return }
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            scrollProxy.scrollTo(field, anchor: .center)
+                        }
+                    }
                 }
             }
-            .frame(width: 392, alignment: .leading)
         }
         .onAppear {
             focusedField = .username
@@ -105,7 +125,7 @@ extension HanasandLoginGate {
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }
-            AccountSignupForm()
+            AccountSignupForm(focusedField: $focusedField)
         }
         .padding(14)
         .background(theme.card)
@@ -118,6 +138,7 @@ extension HanasandLoginGate {
     }
 
 private struct AccountSignupForm: View {
+    @FocusState.Binding var focusedField: HanasandLoginGate.Field?
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var expanded = false
@@ -134,6 +155,7 @@ private struct AccountSignupForm: View {
             Button {
                 expanded.toggle()
                 model.loginStatus = ""
+                focusedField = expanded ? .signupName : .username
             } label: {
                 Text(expanded ? "Already have an account? Log in" : "Create an account")
                     .font(.system(size: 11, weight: .semibold))
@@ -149,18 +171,30 @@ private struct AccountSignupForm: View {
                     .foregroundStyle(theme.text)
                 TextField("Full name", text: $name)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .signupName)
+                    .id(HanasandLoginGate.Field.signupName)
+                    .onSubmit { focusedField = .signupUsername }
                     .disabled(model.isLoggingIn || waitingForCode)
                 TextField("Username", text: $username)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
+                    .focused($focusedField, equals: .signupUsername)
+                    .id(HanasandLoginGate.Field.signupUsername)
+                    .onSubmit { focusedField = .signupEmail }
                     .disabled(model.isLoggingIn || waitingForCode)
                 TextField("Email address", text: $email)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
+                    .focused($focusedField, equals: .signupEmail)
+                    .id(HanasandLoginGate.Field.signupEmail)
+                    .onSubmit { focusedField = .signupPassword }
                     .disabled(model.isLoggingIn || waitingForCode)
                 SecureField("Password", text: $password)
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .signupPassword)
+                    .id(HanasandLoginGate.Field.signupPassword)
+                    .onSubmit { if canSubmit { Task { await submit() } } }
                     .disabled(model.isLoggingIn || waitingForCode)
                 Text("Use at least 16 characters with an uppercase letter, lowercase letter, number, and symbol.")
                     .font(.system(size: 10))
@@ -170,6 +204,9 @@ private struct AccountSignupForm: View {
                 if waitingForCode {
                     TextField("Six-digit email code", text: $code)
                         .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .signupCode)
+                        .id(HanasandLoginGate.Field.signupCode)
+                        .onSubmit { if canSubmit { Task { await submit() } } }
                         .onChange(of: code) { _, value in
                             code = String(value.filter(\.isNumber).prefix(6))
                         }
@@ -197,6 +234,7 @@ private struct AccountSignupForm: View {
                             challengeID = nil
                             code = ""
                             model.loginStatus = ""
+                            focusedField = .signupName
                         }
                         .disabled(model.isLoggingIn)
                     }
