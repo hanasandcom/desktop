@@ -56,7 +56,7 @@ struct APIReferenceNativePanel: View {
                             NativeEmptyState(title: "No matching schemas", message: "Try a different search term.")
                         } else {
                             ForEach(reference.filteredSchemas, id: \.0) { name, value in
-                                NativeGroupPanel(title: name, subtitle: reference.expandedSchemas.contains(name) ? "Schema definition" : "Select to inspect") {
+                                NativeGroupPanel(title: name, subtitle: reference.expandedSchemas.contains(name) ? "Schema definition" : "Select to inspect", fillsAvailableWidth: true) {
                                     Button(reference.expandedSchemas.contains(name) ? "Hide schema" : "Show schema") {
                                         reference.toggleSchema(name)
                                     }
@@ -93,7 +93,7 @@ struct APIReferenceNativePanel: View {
             } else {
                 ForEach(rows) { row in
                     let example = isApplication ? APIReferenceSnapshot.current.responseExamples[row.id] : nil
-                    NativeGroupPanel(title: "\(row.method)  \(row.path)", subtitle: row.operation.summary ?? row.operation.operationId ?? "Endpoint") {
+                    NativeGroupPanel(title: "\(row.method)  \(row.path)", subtitle: row.operation.summary ?? row.operation.operationId ?? "Endpoint", fillsAvailableWidth: true) {
                         Button(reference.expandedRows.contains(row.id) ? "Hide details" : "Show details") {
                             reference.toggleOperation(row.id)
                         }
@@ -103,7 +103,6 @@ struct APIReferenceNativePanel: View {
                             operationDetails(document: document, operation: row.operation, isApplication: isApplication, example: example)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

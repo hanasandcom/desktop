@@ -14,10 +14,27 @@ struct NativeGroupPanel<Content: View>: View {
     @Environment(\.desktopTheme) var theme
     let title: String
     let subtitle: String
+    var fillsAvailableWidth = false
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        panelContent
+        .padding(14)
+        .background(theme.card)
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(
+                    LinearGradient(colors: [theme.divider.opacity(1.5), theme.divider.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .black.opacity(theme.isLight ? 0.05 : 0.20), radius: 18, x: 0, y: 10)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var panelContent: some View {
+        let stack = VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 16, weight: .black))
@@ -33,16 +50,10 @@ struct NativeGroupPanel<Content: View>: View {
             }
             content
         }
-        .padding(14)
-        .background(theme.card)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(
-                    LinearGradient(colors: [theme.divider.opacity(1.5), theme.divider.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: .black.opacity(theme.isLight ? 0.05 : 0.20), radius: 18, x: 0, y: 10)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        if fillsAvailableWidth {
+            stack.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            stack
+        }
     }
 }
