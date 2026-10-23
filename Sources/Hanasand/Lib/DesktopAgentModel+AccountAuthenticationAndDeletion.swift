@@ -171,6 +171,10 @@ extension DesktopAgentModel {
         profile = nil
         profileSessions = []
         profileCertificates = []
+        profileSshKeys = []
+        profileSshKeyError = nil
+        profileSshKeyNotice = nil
+        profileSshKeyLoadError = nil
         nativeDashboardStatus = "Logged out"
     }
 

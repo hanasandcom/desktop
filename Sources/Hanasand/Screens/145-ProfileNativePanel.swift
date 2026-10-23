@@ -15,6 +15,8 @@ struct ProfileNativePanel: View {
     @Environment(\.desktopTheme) var theme
     @State var pendingSessionRevoke: DashboardAuthSession?
     @State var pendingCertificateDelete: DashboardCertificate?
+    @State var pendingSshKeyDelete: ProfileSshKey?
+    @State var isAddingSshKey = false
     @State var confirmRevokeOtherSessions = false
     @State var confirmLogout = false
     @State var confirmDeleteAccount = false
@@ -78,11 +80,12 @@ struct ProfileNativePanel: View {
                     if let roles = profile.roles, !roles.isEmpty {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 10)], spacing: 10) {
                             ForEach(roles) { role in
+                                let priorityText: String = role.priority.map { String($0) } ?? "unknown"
                                 CompactInfoCard(
                                     title: role.displayName,
                                     lines: [
                                         role.description ?? role.id,
-                                        "Priority: \(role.priority.map(String.init) ?? "unknown")",
+                                        "Priority: \(priorityText)",
                                     ]
                                 )
                             }
@@ -161,6 +164,8 @@ struct ProfileNativePanel: View {
                             }
                         }
                     }
+
+                    sshKeysSection
                 }
             }
             .alert("Revoke session?", isPresented: sessionRevokePresented) {
@@ -184,6 +189,15 @@ struct ProfileNativePanel: View {
                 }
             } message: {
                 Text("This removes \(pendingCertificateDelete?.name ?? "the selected certificate") from the account.")
+            }
+            .alert("Remove SSH key?", isPresented: sshKeyDeletePresented) {
+                Button("Remove", role: .destructive) {
+                    guard let pendingSshKeyDelete else { return }
+                    Task { await model.deleteProfileSshKey(pendingSshKeyDelete) }
+                }
+                Button("Cancel", role: .cancel) { pendingSshKeyDelete = nil }
+            } message: {
+                Text("This removes \(pendingSshKeyDelete?.name ?? "the selected key") from your profile and managed hosts.")
             }
             .alert("Logout other devices?", isPresented: $confirmRevokeOtherSessions) {
                 Button("Logout others", role: .destructive) {
@@ -214,6 +228,74 @@ struct ProfileNativePanel: View {
         }
     }
 
+    @ViewBuilder
+    var sshKeysSection: some View {
+        Divider().overlay(theme.divider)
+        if let message = model.profileSshKeyError {
+            NativeNotice(message: message, title: "SSH key was not changed")
+        }
+        if let message = model.profileSshKeyNotice {
+            NativeNotice(message: message, title: "SSH key updated", tone: .success)
+        }
+        if model.profileSshKeys.isEmpty, let message = model.profileSshKeyLoadError {
+            NativeNotice(message: message, title: "SSH keys unavailable")
+        }
+        HStack(alignment: .firstTextBaseline) {
+            Text("SSH keys").font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.text)
+            Spacer()
+            ActionButton(title: isAddingSshKey ? "Cancel" : "Add SSH key", icon: isAddingSshKey ? "xmark" : "plus") {
+                isAddingSshKey.toggle()
+            }
+            .disabled(model.isLoadingNativeDashboard || model.isProfileIdentityImpersonating)
+        }
+        if model.isProfileIdentityImpersonating {
+            NativeNotice(message: "Return to your own account to manage SSH keys.", tone: .info)
+        }
+        if isAddingSshKey {
+            TextField("Key name", text: $model.profileSshKeyName)
+                .textFieldStyle(.roundedBorder)
+            TextEditor(text: $model.profileSshPublicKey)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minHeight: 86)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.divider))
+            ActionButton(title: model.isLoadingNativeDashboard ? "Saving…" : "Save SSH key", icon: "checkmark") {
+                Task {
+                    await model.addProfileSshKey()
+                    if model.profileSshKeyName.isEmpty && model.profileSshPublicKey.isEmpty {
+                        isAddingSshKey = false
+                    }
+                }
+            }
+            .disabled(model.isLoadingNativeDashboard || model.profileSshKeyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.profileSshPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isProfileIdentityImpersonating)
+        }
+        if model.profileSshKeys.isEmpty && model.profileSshKeyLoadError == nil {
+            CompactInfoCard(title: "SSH keys", lines: ["No SSH keys added."])
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
+                ForEach(model.profileSshKeys) { key in
+                    VStack(alignment: .leading, spacing: 8) {
+                        CompactInfoCard(
+                            title: "\(key.name) · \(key.keyType)",
+                            lines: [
+                                key.fingerprint,
+                                "Added: \(key.addedAt.map { formatDateText($0, fallback: $0) } ?? "unknown")",
+                                "Last used: \(key.lastUsedAt.map { formatDateText($0, fallback: $0) } ?? "never")",
+                                [key.lastUsedServer, key.lastUsedIp].compactMap { $0 }.joined(separator: " · "),
+                            ].filter { !$0.isEmpty }
+                        )
+                        HStack {
+                            Spacer()
+                            ActionButton(title: "Remove", icon: "trash", tone: .danger) {
+                                pendingSshKeyDelete = key
+                            }
+                            .disabled(model.isLoadingNativeDashboard || model.isProfileIdentityImpersonating)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     var sessionRevokePresented: Binding<Bool> {
         Binding(
             get: { pendingSessionRevoke != nil },
@@ -232,6 +314,15 @@ struct ProfileNativePanel: View {
                 if !visible {
                     pendingCertificateDelete = nil
                 }
+            }
+        )
+    }
+
+    var sshKeyDeletePresented: Binding<Bool> {
+        Binding(
+            get: { pendingSshKeyDelete != nil },
+            set: { visible in
+                if !visible { pendingSshKeyDelete = nil }
             }
         )
     }

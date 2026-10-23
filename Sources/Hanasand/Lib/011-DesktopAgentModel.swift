@@ -120,7 +120,9 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var articleEditContent = ""; @Published var thoughts: [DashboardThought] = []; @Published var thoughtDraftTitle = ""; @Published var selectedThoughtID = ""
 
-    @Published var thoughtEditTitle = ""; @Published var profile: DashboardProfile?; @Published var profileSessions: [DashboardAuthSession] = []; @Published var profileCertificates: [DashboardCertificate] = []
+    @Published var thoughtEditTitle = ""; @Published var profile: DashboardProfile?; @Published var profileSessions: [DashboardAuthSession] = []; @Published var profileCertificates: [DashboardCertificate] = []; @Published var profileSshKeys: [ProfileSshKey] = []
+    @Published var profileSshKeyName = ""; @Published var profileSshPublicKey = ""
+    @Published var profileSshKeyError: String?; @Published var profileSshKeyNotice: String?; @Published var profileSshKeyLoadError: String?
     @Published var profileEditName = ""; @Published var profileEditUsername = ""; @Published var profileIdentityOriginalName = ""; @Published var profileIdentityOriginalUsername = ""
     @Published var profileIdentityLoaded = false; @Published var isLoadingProfileIdentity = false; @Published var isSavingProfileIdentity = false
     @Published var profileIdentityError: String?; @Published var profileIdentityNotice: String?

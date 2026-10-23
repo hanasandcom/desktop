@@ -12,6 +12,61 @@ import WebKit
 
 extension DesktopAgentModel {
 
+    func addProfileSshKey() async {
+        profileSshKeyError = nil
+        profileSshKeyNotice = nil
+        guard hasHanasandAuth, !isProfileIdentityImpersonating else {
+            profileSshKeyError = "Manage SSH keys from your own account."
+            return
+        }
+
+        do {
+            let payload = try ProfileSshKeyPayload(name: profileSshKeyName, publicKey: profileSshPublicKey)
+            let body = try JSONEncoder().encode(payload)
+            isLoadingNativeDashboard = true
+            defer { isLoadingNativeDashboard = false }
+            let _: ProfileSshKeyEnvelope = try await requestJSON(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys"),
+                method: "POST",
+                body: body,
+                authenticated: true
+            )
+            profileSshKeyName = ""
+            profileSshPublicKey = ""
+            profileSshKeyNotice = "SSH key added."
+            append(meta: "SSH key added", body: payload.name, kind: .change)
+            await loadProfileSecurityData()
+        } catch {
+            profileSshKeyError = error.localizedDescription
+            append(meta: "SSH key add failed", body: error.localizedDescription, kind: .error)
+        }
+    }
+
+    func deleteProfileSshKey(_ key: ProfileSshKey) async {
+        profileSshKeyError = nil
+        profileSshKeyNotice = nil
+        guard hasHanasandAuth, !isProfileIdentityImpersonating else {
+            profileSshKeyError = "Manage SSH keys from your own account."
+            return
+        }
+
+        isLoadingNativeDashboard = true
+        defer { isLoadingNativeDashboard = false }
+        do {
+            _ = try await requestPrettyText(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys/\(key.id)"),
+                method: "DELETE",
+                authenticated: true
+            )
+            profileSshKeyNotice = "SSH key removed."
+            append(meta: "SSH key removed", body: key.name, kind: .change)
+            await loadProfileSecurityData()
+        } catch {
+            profileSshKeyError = error.localizedDescription
+            append(meta: "SSH key removal failed", body: error.localizedDescription, kind: .error)
+        }
+    }
+
     func revokeProfileSession(_ session: DashboardAuthSession) async {
         guard hasHanasandAuth else {
             nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."

@@ -157,6 +157,8 @@ extension DesktopAgentModel {
         guard hasHanasandAuth else {
             profileSessions = []
             profileCertificates = []
+            profileSshKeys = []
+            profileSshKeyLoadError = nil
             return
         }
 
@@ -164,6 +166,18 @@ extension DesktopAgentModel {
             settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("certificates/user/\(userIDForRequests)"),
             authenticated: true
         )) ?? []
+
+        do {
+            let sshKeys: ProfileSshKeyList = try await requestJSON(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys"),
+                authenticated: true
+            )
+            profileSshKeys = sshKeys.keys
+            profileSshKeyLoadError = nil
+        } catch {
+            profileSshKeys = []
+            profileSshKeyLoadError = error.localizedDescription
+        }
 
         let sessionsEnvelope: DashboardSessionsEnvelope? = try? await requestJSON(
             settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("auth/sessions"),
