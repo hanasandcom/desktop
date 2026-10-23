@@ -56,6 +56,8 @@ extension DesktopAgentModel {
             .route("Monitoring cases", "Review health-check incidents, evidence, and case history.", "tray.full", "/cases"),
             .route("Threat intelligence", "Search threat actors, vulnerabilities, and source-backed activity.", "magnifyingglass", "/ti"),
             .route("Watchlists", "Manage organization threat-monitoring terms.", "list.bullet.rectangle", "/watchlists"),
+            .route("Hosts", "Check host health and review SSH access.", "server.rack", "/system/hosts"),
+            .route("Host Updates", "Review automatic update status and history.", "arrow.down.circle", "/system/updates"),
             .route("Mail", "Open Mail.", "envelope", "/mail"),
             .route("Automations", "Schedule agent check-ins and inspect completed runs.", "alarm.waves.left.and.right", "/dashboard/automations"),
             .route("Notes", "Shared notes and operational memory.", "note.text", "/notes"),

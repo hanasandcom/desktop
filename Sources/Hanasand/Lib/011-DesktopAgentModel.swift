@@ -85,6 +85,9 @@ final class DesktopAgentModel: ObservableObject {
     @Published var organizationMembersStatus = ""
     @Published var organizationInviteEmailDraft = ""
     @Published var organizationInviteRoleDraft = "reader"
+    @Published var hostOverview: HostOverviewEnvelope?; @Published var hostOverviewStatus = "Select Hosts to load server access."; @Published var isLoadingHostOverview = false; @Published var hostAccessSearch = ""; @Published var expandedHostID = ""; @Published var hostUserSearch = ""; @Published var visibleHostUserLimit = 30
+    @Published var hostUpdates: HostUpdateEnvelope?; @Published var hostUpdatesStatus = "Select Host Updates to load automatic package status."; @Published var isLoadingHostUpdates = false; @Published var selectedHostUpdatesHost: HostUpdateTarget = .inspur; @Published var selectedHostUpdatesView: HostUpdateView = .pending; @Published var hostUpdatesSearch = ""; @Published var visibleHostUpdateLimit = 30
+    var hostOverviewLoadID = UUID(); var hostUpdatesLoadID = UUID()
 
     @Published var selectedDashboardTitle = "Dashboard"; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
     var nativeDashboardLoadID = UUID()

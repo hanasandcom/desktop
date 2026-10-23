@@ -59,6 +59,14 @@ extension DesktopAgentModel {
             await loadOrganizationWatchlists()
             return
         }
+        if path == "/system/hosts" {
+            await loadHostOverview()
+            return
+        }
+        if path == "/system/updates" {
+            await loadHostUpdateStatus(for: selectedHostUpdatesHost)
+            return
+        }
         guard let endpoint = nativeEndpoint(for: path) else {
             guard nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
             nativeDashboardStatus = "Native controls"

@@ -71,6 +71,10 @@ struct NativeDashboardDetail: View {
             ThreatIntelligenceNativePanel()
         case "/watchlists":
             OrganizationWatchlistsNativePanel()
+        case "/system/hosts":
+            HostsNativePanel()
+        case "/system/updates":
+            HostUpdatesNativePanel()
         case "/g":
             LinksNativePanel()
         case "/dashboard/tests":
