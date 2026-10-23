@@ -151,6 +151,32 @@ enum DesktopAutomationEditorRules {
     static let operators = ["gt", "gte", "lt", "lte", "eq", "ne"]
     static let aggregates = ["max", "min", "avg", "first"]
 
+    static func wouldClearExistingDestinations(
+        existingModelName: String?,
+        existingDestinations: [String],
+        requestedDestinations: [String]
+    ) -> Bool {
+        requestedDestinations.isEmpty
+            && (!(existingModelName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+                || !existingDestinations.isEmpty)
+    }
+
+    static func createMayHaveCommitted(_ error: Error) -> Bool {
+        guard let clientError = error as? AutomationClientError else { return true }
+        switch clientError {
+        case .requestFailed(let status):
+            return status == 408 || !(400..<500).contains(status)
+        case .invalidResponse:
+            return true
+        case .signInRequired, .invalidBaseURL, .invalidInput, .impersonationReadOnly:
+            return false
+        }
+    }
+
+    static func canCreate(hasLoadedList: Bool, isLoading: Bool, outcomeUncertain: Bool, canMutate: Bool) -> Bool {
+        hasLoadedList && !isLoading && !outcomeUncertain && canMutate
+    }
+
     static func value(from raw: String) -> DesktopAutomationRuleValue? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }

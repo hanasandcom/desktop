@@ -121,6 +121,44 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertNil(DesktopAutomationEditorRules.value(from: "  "))
     }
 
+    func testAutomationEditorRejectsUnsupportedDestinationClearing() {
+        XCTAssertTrue(DesktopAutomationEditorRules.wouldClearExistingDestinations(
+            existingModelName: "https://discord.example/webhook",
+            existingDestinations: ["https://discord.example/webhook"],
+            requestedDestinations: []
+        ))
+        XCTAssertTrue(DesktopAutomationEditorRules.wouldClearExistingDestinations(
+            existingModelName: nil,
+            existingDestinations: ["destination"],
+            requestedDestinations: []
+        ))
+        XCTAssertFalse(DesktopAutomationEditorRules.wouldClearExistingDestinations(
+            existingModelName: "https://discord.example/webhook",
+            existingDestinations: ["https://discord.example/webhook"],
+            requestedDestinations: ["https://discord.example/webhook"]
+        ))
+        XCTAssertFalse(DesktopAutomationEditorRules.wouldClearExistingDestinations(
+            existingModelName: nil,
+            existingDestinations: [],
+            requestedDestinations: []
+        ))
+    }
+
+    func testAmbiguousCreateFailureRequiresSuccessfulListReconciliation() {
+        XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.invalidResponse))
+        XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(503)))
+        XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(408)))
+        XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(URLError(.timedOut)))
+        XCTAssertFalse(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(400)))
+        XCTAssertFalse(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.invalidInput))
+
+        XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: false, isLoading: false, outcomeUncertain: false, canMutate: true))
+        XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: true, isLoading: true, outcomeUncertain: false, canMutate: true))
+        XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: true, isLoading: false, outcomeUncertain: true, canMutate: true))
+        XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: true, isLoading: false, outcomeUncertain: false, canMutate: false))
+        XCTAssertTrue(DesktopAutomationEditorRules.canCreate(hasLoadedList: true, isLoading: false, outcomeUncertain: false, canMutate: true))
+    }
+
     func testAutomationEditorValidatesJSONRuleAndSystemCapabilities() {
         func validate(path: String = "metrics.*.latency", op: String = "gt", value: DesktopAutomationRuleValue = .number(80), monitoring: String = "json",
                       aggregate: String? = "max", target: String = "https://example.test/metrics", canManage: Bool = false,

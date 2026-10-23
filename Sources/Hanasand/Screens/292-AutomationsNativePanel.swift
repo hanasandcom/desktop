@@ -35,6 +35,8 @@ struct AutomationsNativePanel: View {
     @State private var selectedID = ""
     @State private var searchText = ""
     @State private var isLoading = false
+    @State private var hasLoadedAutomationList = false
+    @State private var createOutcomeUncertain = false
     @State private var busyAction = ""
     @State private var detailRequestID = UUID()
     @State private var message = ""
@@ -68,6 +70,9 @@ struct AutomationsNativePanel: View {
 
     private var selected: DesktopAutomation? { automations.first { $0.id == selectedID } }
     private var canMutate: Bool { model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty }
+    private var canStartCreate: Bool {
+        DesktopAutomationEditorRules.canCreate(hasLoadedList: hasLoadedAutomationList, isLoading: isLoading, outcomeUncertain: createOutcomeUncertain, canMutate: canMutate)
+    }
     private var statusCounts: [(String, Int)] {
         var counts = ["Up": 0, "Down": 0, "Maintenance": 0, "Pending": 0, "Warning": 0]
         for automation in automations {
@@ -102,7 +107,7 @@ struct AutomationsNativePanel: View {
                 }
                 compactControl(title: "New", icon: "plus", label: "Create automation", prominent: true) {
                     beginCreate()
-                }.disabled(!canMutate)
+                }.disabled(!canStartCreate)
             }
 
             if !message.isEmpty && (!automations.isEmpty || isEditing) {
@@ -110,6 +115,16 @@ struct AutomationsNativePanel: View {
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(theme.textSecondary)
                     .textSelection(.enabled)
+            }
+
+            if createOutcomeUncertain {
+                HStack(spacing: 8) {
+                    Text("Refresh the list to check whether the previous create request saved before creating another automation.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                    ActionButton(title: "Refresh list", icon: "arrow.clockwise") { Task { await load() } }
+                        .disabled(isLoading || busyAction == "save")
+                }
             }
 
             if isEditing {
@@ -273,7 +288,7 @@ struct AutomationsNativePanel: View {
             HStack(spacing: 10) {
                 ActionButton(title: "Cancel", icon: "xmark") { isEditing = false; message = "" }
                 ActionButton(title: selected == nil ? "Create" : "Save", icon: "checkmark") { Task { await save() } }
-                    .disabled(busyAction == "save" || !canMutate)
+                    .disabled(busyAction == "save" || !canMutate || (selected == nil && !canStartCreate))
             }
         }
     }
@@ -436,11 +451,15 @@ struct AutomationsNativePanel: View {
         defer { isLoading = false }
         do {
             let overview = try await model.fetchDesktopAutomationOverview(scope: scope.listScope)
+            let wasReconcilingCreate = createOutcomeUncertain
             automations = overview.automations
+            hasLoadedAutomationList = true
+            createOutcomeUncertain = false
+            if wasReconcilingCreate { isEditing = false }
             canManageSystemAutomations = overview.canManageSystem == true
             if selectedID.isEmpty || !automations.contains(where: { $0.id == selectedID }) { selectedID = automations.first?.id ?? "" }
             if let selected { await loadDetail(selected) }
-            message = ""
+            message = wasReconcilingCreate ? "Automation list refreshed to check the previous create request." : ""
         } catch { message = error.localizedDescription }
     }
 
@@ -481,6 +500,7 @@ struct AutomationsNativePanel: View {
     }
 
     private func beginCreate() {
+        guard canStartCreate else { return }
         selectedID = ""
         draftName = ""
         draftURL = ""
@@ -546,6 +566,10 @@ struct AutomationsNativePanel: View {
     }
 
     private func save() async {
+        guard selected != nil || canStartCreate else {
+            message = "Refresh the list before creating another automation."
+            return
+        }
         let interval = Int(draftInterval) ?? selected?.intervalMinutes ?? 15
         guard draftScheduleKind != "interval" || interval > 0 else { message = "Enter a repeat interval in minutes."; return }
         let timeoutSeconds = Int(draftTimeout) ?? selected?.timeoutSeconds ?? 5
@@ -554,6 +578,14 @@ struct AutomationsNativePanel: View {
         guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "Name is required."; return }
         guard !draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "A description is required."; return }
         let destinations = draftDestinations.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if let selected, DesktopAutomationEditorRules.wouldClearExistingDestinations(
+            existingModelName: selected.modelName,
+            existingDestinations: selected.notificationDestinations,
+            requestedDestinations: destinations
+        ) {
+            message = "Clearing notification destinations is not supported by the API yet. Keep at least one destination or cancel this edit."
+            return
+        }
         let jsonRule: DesktopAutomationJSONRule? = draftMonitoringType == "json" && draftActionType == "agent_prompt"
             ? DesktopAutomationEditorRules.value(from: draftJSONValue).map { DesktopAutomationJSONRule(path: draftJSONPath.trimmingCharacters(in: .whitespacesAndNewlines), operatorName: draftJSONOperator, value: $0, aggregate: draftJSONAggregate) }
             : nil
@@ -594,7 +626,14 @@ struct AutomationsNativePanel: View {
             message = "Saved \(saved.name)."
             await load()
             selectedID = saved.id
-        } catch { message = error.localizedDescription }
+        } catch {
+            if selected == nil && DesktopAutomationEditorRules.createMayHaveCommitted(error) {
+                createOutcomeUncertain = true
+                message = "The create request’s outcome is unclear. Refresh the list before creating again; it may already have saved."
+            } else {
+                message = error.localizedDescription
+            }
+        }
     }
 
     private var availableActionTypes: [String] {
