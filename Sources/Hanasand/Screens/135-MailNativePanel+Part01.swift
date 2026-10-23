@@ -74,6 +74,21 @@ extension MailNativePanel {
                 await model.loadMailOverview()
             }
         }
+        .task(id: "\(searchText)|\(model.selectedMailboxID)") {
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else {
+                model.resetMailSearch()
+                return
+            }
+            model.resetMailSearch()
+            model.mailSearchPending = true
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
+            await model.searchMail(query)
+        }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)

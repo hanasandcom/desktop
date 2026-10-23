@@ -70,16 +70,9 @@ extension MailNativePanel {
     }
 
     var filteredMessages: [MailOverviewEnvelope.Message] {
-        guard let messages = overview?.messages else { return [] }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return messages }
-        return messages.filter { message in
-            [
-                message.subjectLabel,
-                message.fromLabel,
-                message.preview ?? "",
-                message.bodyText,
-            ].joined(separator: " ").lowercased().contains(query)
-        }
+        guard !query.isEmpty else { return overview?.messages ?? [] }
+        guard model.mailSearchQuery.lowercased() == query else { return [] }
+        return model.mailSearchResults
     }
 }

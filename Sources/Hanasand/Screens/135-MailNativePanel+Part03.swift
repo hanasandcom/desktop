@@ -35,8 +35,31 @@ extension MailNativePanel {
                 }
             }
 
+            if !model.mailSearchError.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(theme.danger)
+                    Text(model.mailSearchError)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer()
+                    if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Retry") { Task { await model.searchMail(searchText) } }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                }
+                .padding(10)
+                .background(theme.danger.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
             if filteredMessages.isEmpty {
-                NativeEmptyState(title: "No matching mail", message: "Try another mailbox or search term.")
+                if model.mailSearchPending {
+                    NativeEmptyState(title: "Searching mailbox", message: "Looking for messages in this folder.")
+                } else if model.mailSearchError.isEmpty {
+                    NativeEmptyState(title: searchText.isEmpty ? "No messages" : "No matching mail", message: searchText.isEmpty ? "This folder is empty." : "Try another mailbox or search term.")
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -54,6 +77,15 @@ extension MailNativePanel {
                         }
                     }
                 }
+            }
+
+            if model.mailSearchCursor != nil {
+                ActionButton(title: model.mailSearchPending ? "Loading…" : "Load more results", icon: "arrow.down.circle") {
+                    guard let cursor = model.mailSearchCursor else { return }
+                    Task { await model.searchMail(searchText, after: cursor) }
+                }
+                .disabled(model.mailSearchPending)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

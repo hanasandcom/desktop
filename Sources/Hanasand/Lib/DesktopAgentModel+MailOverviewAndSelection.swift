@@ -49,7 +49,8 @@ extension DesktopAgentModel {
             selectedMailAccountUser = overview.mailboxUser ?? selectedMailAccountUser
             selectedMailboxID = overview.selectedMailboxId ?? selectedMailboxID
             selectedMailMessageID = overview.selectedMessage?.id ?? overview.messages.first?.id ?? selectedMailMessageID
-            selectedMailMessageIDs = selectedMailMessageIDs.intersection(Set(overview.messages.map(\.id)))
+            let availableMessageIDs = Set((overview.messages + mailSearchResults).map(\.id))
+            selectedMailMessageIDs = selectedMailMessageIDs.intersection(availableMessageIDs)
             if let mailboxName = overview.mailboxes.first(where: { $0.id == selectedMailboxID })?.displayName, mailMoveTargetMailboxName.isEmpty {
                 mailMoveTargetMailboxName = mailboxName
             }
@@ -70,6 +71,7 @@ extension DesktopAgentModel {
     }
 
     func selectMailbox(_ mailbox: MailOverviewEnvelope.Mailbox) async {
+        resetMailSearch()
         selectedMailboxID = mailbox.id
         selectedMailMessageID = ""
         selectedMailMessageIDs = []
@@ -78,6 +80,7 @@ extension DesktopAgentModel {
     }
 
     func selectMailAccount(_ account: MailOverviewEnvelope.Account) async {
+        resetMailSearch()
         selectedMailAccountUser = account.id
         selectedMailboxID = ""
         selectedMailMessageID = ""
@@ -152,6 +155,9 @@ extension DesktopAgentModel {
 
     var selectedMailMessages: [MailOverviewEnvelope.Message] {
         guard let overview = mailOverview else { return [] }
-        return overview.messages.filter { selectedMailMessageIDs.contains($0.id) }
+        var seen: Set<String> = []
+        return (overview.messages + mailSearchResults).filter {
+            selectedMailMessageIDs.contains($0.id) && seen.insert($0.id).inserted
+        }
     }
 }

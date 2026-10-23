@@ -105,6 +105,12 @@ final class DesktopAgentModel: ObservableObject {
     @Published var mailNewMailboxName = ""; @Published var mailFilterName = ""; @Published var mailFilterContains = ""; @Published var mailFilterTargetMailbox = ""
 
     @Published var mailLastSuccessAt: Date?; @Published var mailBackgroundIssue = ""; @Published var mailAutoRefreshEnabled = true; @Published var shares: [DashboardShare] = []
+    @Published var mailSearchResults: [MailOverviewEnvelope.Message] = []
+    @Published var mailSearchCursor: String?
+    @Published var mailSearchQuery = ""
+    @Published var mailSearchError = ""
+    @Published var mailSearchPending = false
+    var mailSearchRequestGeneration = 0
 
     @Published var shareDraftName = ""; @Published var shareDraftContent = ""; @Published var selectedShareID = ""; @Published var shareEditName = ""
 
