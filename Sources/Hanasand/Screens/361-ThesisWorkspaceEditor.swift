@@ -24,6 +24,11 @@ struct ThesisWorkspaceEditor: View {
     @State private var expandedActivityWeek = ""
     @State private var showingActivityForm = false
     @State private var activityMessage = ""
+    @State private var planBoardView = false
+    @State private var planSprintFilter = ""
+    @State private var expandedPlanRow: Int?
+    @State private var newPlanSubgoal = ""
+    @State private var planTaskLimit = 30
 
     private var sheets: [ThesisSheet] { ThesisWorkspaceCodec.sheets(title: documentTitle, body: bodyText) }
     private var activeIndex: Int { max(0, sheets.firstIndex(where: { $0.id == selectedID }) ?? 0) }
@@ -113,6 +118,9 @@ struct ThesisWorkspaceEditor: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(table.kind == .plan ? "Project plan · Table \(index + 1)" : table.kind == .timetable ? "Timetable · Table \(index + 1)" : "Table \(index + 1)")
                             .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                        if table.kind == .plan {
+                            thesisPlanPanel(table, tableIndex: index)
+                        } else {
                         ScrollView(.horizontal, showsIndicators: true) {
                             VStack(alignment: .leading, spacing: 5) {
                                 ForEach(Array(table.cells.prefix(100).enumerated()), id: \.offset) { row, cells in
@@ -138,12 +146,10 @@ struct ThesisWorkspaceEditor: View {
                             ActionButton(title: "Add column", icon: "plus") { reshape(tableIndex: index, addingRow: false) }.disabled(!editable)
                             ActionButton(title: "Delete table", icon: "trash") { deleteTable(table) }.disabled(!editable)
                         }
+                        }
                     }
                     if table.kind == .timetable { timetableActivityPanel(table) }
                     if index + 1 < tables.count { Divider() }
-                }
-                if tables.contains(where: { $0.kind == .plan }) {
-                    NativeNotice(message: "Edit plan task rows here. For status boards, subgoals, and sprint filters, open the Thesis plan in the web workspace.")
                 }
             }
         }
@@ -233,6 +239,174 @@ struct ThesisWorkspaceEditor: View {
         let ns = active.body as NSString
         guard table.start >= 0, table.end <= ns.length, table.end >= table.start else { return }
         updateBody(ns.replacingCharacters(in: NSRange(location: table.start, length: table.end - table.start), with: ""))
+    }
+
+    @ViewBuilder private func thesisPlanPanel(_ table: ThesisTable, tableIndex: Int) -> some View {
+        let model = ThesisPlanModel(table: table)
+        let tasks = model.tasks(filteredToSprint: planSprintFilter)
+        NativeGroupPanel(title: "Project plan", subtitle: "Track tasks, estimates, status, and subgoals.") {
+            HStack(spacing: 12) {
+                if model.fields.task >= 0, model.fields.status >= 0 {
+                    Text("\(model.completedCount)/\(model.tasks.count) completed")
+                }
+                if model.fields.hours >= 0 {
+                    Text("\(Self.hoursText(model.completedHours))/\(Self.hoursText(model.estimatedHours)) estimated hours")
+                }
+                if model.fields.status >= 0 { Text("\(model.inProgressCount) in progress") }
+            }
+            .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+
+            HStack(spacing: 8) {
+                ActionButton(title: "Table view", icon: "tablecells") { planBoardView = false }
+                if model.fields.task >= 0, model.fields.status >= 0 {
+                    ActionButton(title: "Board view", icon: "rectangle.split.3x1") { planBoardView = true }
+                }
+                if model.fields.sprint >= 0 {
+                    Picker("Sprint", selection: $planSprintFilter) {
+                        Text("All sprints").tag("")
+                        ForEach(model.sprints, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
+
+            HStack(spacing: 8) {
+                ActionButton(title: "Add row", icon: "plus") { reshape(tableIndex: tableIndex, addingRow: true) }
+                    .disabled(!editable || table.cells.count >= 10_000)
+                ActionButton(title: "Add column", icon: "plus") { reshape(tableIndex: tableIndex, addingRow: false) }
+                    .disabled(!editable || (table.cells.first?.count ?? 0) >= 100)
+                ActionButton(title: "Delete table", icon: "trash") { deleteTable(table) }.disabled(!editable)
+            }
+
+            if planBoardView && model.fields.task >= 0 && model.fields.status >= 0 {
+                ForEach(ThesisPlanModel.statuses, id: \.self) { status in
+                    NativeGroupPanel(title: "\(status) · \(model.tasks(inStatus: status, sprint: planSprintFilter).count)", subtitle: "Tasks in this status") {
+                        ForEach(model.tasks(inStatus: status, sprint: planSprintFilter).prefix(planTaskLimit)) { task in
+                            planTaskCard(task, model: model, tableIndex: tableIndex, board: true)
+                        }
+                    }
+                }
+            } else {
+                ForEach(tasks.prefix(planTaskLimit)) { task in
+                    planTaskCard(task, model: model, tableIndex: tableIndex, board: false)
+                }
+            }
+            if tasks.count > planTaskLimit {
+                ActionButton(title: "Show more tasks", icon: "chevron.down") { planTaskLimit += 30 }
+            }
+            if !editable {
+                Text("This thesis is read only.").font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+            }
+        }
+        .onChange(of: active.id) { _, _ in
+            planSprintFilter = ""
+            expandedPlanRow = nil
+            planTaskLimit = 30
+        }
+    }
+
+    @ViewBuilder private func planTaskCard(_ task: ThesisPlanModel.Task, model: ThesisPlanModel, tableIndex: Int, board: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .top, spacing: 8) {
+                if model.fields.task >= 0 {
+                    TextField("Task", text: planCellBinding(tableIndex: tableIndex, row: task.rowIndex, column: model.fields.task))
+                        .textFieldStyle(.roundedBorder).disabled(!editable)
+                } else {
+                    Text("Row \(task.rowIndex)").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                }
+                if model.fields.status >= 0 {
+                    Picker("Status", selection: Binding(get: {
+                        ThesisPlanModel.displayStatus(task.cells.indices.contains(model.fields.status) ? task.cells[model.fields.status] : "")
+                    }, set: { updatePlan(tableIndex: tableIndex, row: task.rowIndex, column: model.fields.status, value: $0) })) {
+                        ForEach(ThesisPlanModel.statuses, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.menu).disabled(!editable)
+                }
+            }
+
+            let primaryColumns = board
+                ? [model.fields.hours, model.fields.sprint, model.fields.progress].filter { $0 >= 0 }
+                : Array(task.cells.indices).filter { $0 != model.fields.task && $0 != model.fields.status && $0 != model.fields.notes && $0 != model.fields.details && $0 != model.fields.subgoals }
+            ForEach(primaryColumns, id: \.self) { column in
+                HStack(spacing: 7) {
+                    Text(model.cells[0].indices.contains(column) ? model.cells[0][column] : "Column \(column + 1)")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary).frame(width: 90, alignment: .leading)
+                    TextField("", text: planCellBinding(tableIndex: tableIndex, row: task.rowIndex, column: column))
+                        .textFieldStyle(.roundedBorder).disabled(!editable)
+                }
+            }
+
+            if model.fields.subgoals >= 0 || model.fields.notes >= 0 || model.fields.details >= 0 {
+                ActionButton(title: expandedPlanRow == task.rowIndex ? "Hide details" : "Details and subgoals", icon: "chevron.down") {
+                    expandedPlanRow = expandedPlanRow == task.rowIndex ? nil : task.rowIndex
+                    newPlanSubgoal = ""
+                }
+                if expandedPlanRow == task.rowIndex {
+                    ForEach([model.fields.notes, model.fields.details].filter { $0 >= 0 }, id: \.self) { column in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.cells[0][column]).font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                            TextEditor(text: planCellBinding(tableIndex: tableIndex, row: task.rowIndex, column: column))
+                                .font(.system(size: 11)).frame(minHeight: 48)
+                                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.divider, lineWidth: 1)).disabled(!editable)
+                        }
+                    }
+                    if model.fields.subgoals >= 0 {
+                        let source = task.cells.indices.contains(model.fields.subgoals) ? task.cells[model.fields.subgoals] : ""
+                        let goals = ThesisPlanModel.subgoals(in: source)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Subgoals · \(goals.filter(\.done).count)/\(goals.count)").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                            ForEach(Array(goals.enumerated()), id: \.offset) { index, goal in
+                                HStack(spacing: 7) {
+                                    Toggle(goal.text, isOn: Binding(get: { goal.done }, set: { _ in updatePlanSubgoals(tableIndex: tableIndex, row: task.rowIndex, action: .toggle(index)) }))
+                                        .toggleStyle(.checkbox).disabled(!editable)
+                                    ActionButton(title: "Remove", icon: "minus") { updatePlanSubgoals(tableIndex: tableIndex, row: task.rowIndex, action: .remove(index)) }.disabled(!editable)
+                                }
+                            }
+                            HStack {
+                                TextField("New subgoal", text: $newPlanSubgoal).textFieldStyle(.roundedBorder).disabled(!editable)
+                                ActionButton(title: "Add subgoal", icon: "plus") { updatePlanSubgoals(tableIndex: tableIndex, row: task.rowIndex, action: .add(newPlanSubgoal)); newPlanSubgoal = "" }
+                                    .disabled(!editable || newPlanSubgoal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(theme.cardRaised.opacity(0.45), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private enum PlanSubgoalAction { case toggle(Int), remove(Int), add(String) }
+
+    private func updatePlanSubgoals(tableIndex: Int, row: Int, action: PlanSubgoalAction) {
+        let tables = ThesisWorkspaceCodec.tables(in: active.body)
+        guard tables.indices.contains(tableIndex), editable else { return }
+        let table = tables[tableIndex]
+        let model = ThesisPlanModel(table: table)
+        let cells: [[String]]
+        switch action {
+        case .toggle(let index): cells = model.togglingSubgoal(at: index, row: row)
+        case .remove(let index): cells = model.removingSubgoal(at: index, row: row)
+        case .add(let text): cells = model.addingSubgoal(text, row: row)
+        }
+        updateBody(ThesisWorkspaceCodec.replacing(table, in: active.body, with: cells))
+    }
+
+    private func updatePlan(tableIndex: Int, row: Int, column: Int, value: String) {
+        guard editable else { return }
+        let tables = ThesisWorkspaceCodec.tables(in: active.body)
+        guard tables.indices.contains(tableIndex) else { return }
+        let table = tables[tableIndex]
+        let cells = ThesisPlanModel(table: table).updating(row: row, column: column, value: value)
+        updateBody(ThesisWorkspaceCodec.replacing(table, in: active.body, with: cells))
+    }
+
+    private func planCellBinding(tableIndex: Int, row: Int, column: Int) -> Binding<String> {
+        Binding(get: {
+            let tables = ThesisWorkspaceCodec.tables(in: active.body)
+            guard tables.indices.contains(tableIndex), tables[tableIndex].cells.indices.contains(row), tables[tableIndex].cells[row].indices.contains(column) else { return "" }
+            return tables[tableIndex].cells[row][column]
+        }, set: { updatePlan(tableIndex: tableIndex, row: row, column: column, value: $0) })
     }
 
     @ViewBuilder private func timetableActivityPanel(_ table: ThesisTable) -> some View {
