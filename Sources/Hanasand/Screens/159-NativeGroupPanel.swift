@@ -51,7 +51,11 @@ struct NativeGroupPanel<Content: View>: View {
             content
         }
         if fillsAvailableWidth {
-            stack.frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 0) {
+                stack
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             stack
         }
