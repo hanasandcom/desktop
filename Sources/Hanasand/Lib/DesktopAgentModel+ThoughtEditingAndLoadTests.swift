@@ -39,7 +39,6 @@ extension DesktopAgentModel {
             let client = try thoughtsClient()
             _ = try await client.update(id: selectedThoughtID, markdown: markdown)
             nativeDashboardStatus = "Saved thought"
-            thoughtMutationSafety = .ready
             append(meta: "Thought saved", body: selectedThoughtID, kind: .change)
             await loadNativeDashboardData()
         } catch {

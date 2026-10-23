@@ -39,6 +39,10 @@ extension DesktopAgentModel {
             isLoadingNativeDashboard = false
             return
         }
+        let thoughtsRefreshTicket = path == "/content/thoughts"
+            ? thoughtMutationSafety.beginRefresh(organizationID: selectedOrganizationID, loadID: loadID)
+            : nil
+        let thoughtsRefreshScope = thoughtsRefreshTicket?.organizationID
         if path == "/traffic" {
             await loadHanasandTrafficMetrics(loadID: loadID)
             return
@@ -86,10 +90,9 @@ extension DesktopAgentModel {
         do {
             let text: String
             if path == "/content/thoughts" {
-                let rows = try await thoughtsClient().load()
+                let rows = try await thoughtsClient(organizationID: thoughtsRefreshScope ?? "").load()
                 let data = try JSONEncoder().encode(rows)
                 text = String(data: data, encoding: .utf8) ?? "[]"
-                thoughtMutationSafety = .ready
             } else {
                 text = try await requestPrettyText(
                     endpoint.baseURL.appendingAPIPath(endpoint.path),
@@ -97,7 +100,16 @@ extension DesktopAgentModel {
                     userAgent: endpoint.userAgent
                 )
             }
-            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
+            let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
+            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path, thoughtsScopeIsCurrent else { return }
+            if let thoughtsRefreshTicket {
+                thoughtMutationSafety.recordSuccessfulRefresh(
+                    thoughtsRefreshTicket,
+                    organizationID: selectedOrganizationID,
+                    loadID: nativeDashboardLoadID,
+                    isThoughtsPath: selectedDashboardPath == "/content/thoughts"
+                )
+            }
             nativeDashboardStatus = "Loaded \(endpoint.label)"
             nativeDashboardPayload = text.isEmpty ? "No data returned." : String(text.prefix(24_000))
             updateTypedDashboardState(from: text, path: path)

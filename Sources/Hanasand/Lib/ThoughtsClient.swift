@@ -186,11 +186,33 @@ enum ThoughtsClientError: LocalizedError, Equatable {
 
 struct ThoughtMutationSafety: Equatable {
     private(set) var requiresRefresh = false
-    static let ready = ThoughtMutationSafety()
+    private(set) var generation: UInt64 = 0
 
     var mayRetry: Bool { !requiresRefresh }
 
     mutating func recordFailure(_ error: Error) {
-        if (error as? ThoughtsClientError)?.isUncertain == true { requiresRefresh = true }
+        if (error as? ThoughtsClientError)?.isUncertain == true {
+            generation &+= 1
+            requiresRefresh = true
+        }
     }
+
+    func beginRefresh(organizationID: String, loadID: UUID) -> ThoughtsRefreshTicket {
+        ThoughtsRefreshTicket(generation: generation, organizationID: organizationID, loadID: loadID)
+    }
+
+    mutating func recordSuccessfulRefresh(_ ticket: ThoughtsRefreshTicket, organizationID: String,
+                                         loadID: UUID, isThoughtsPath: Bool) {
+        guard isThoughtsPath,
+              ticket.generation == generation,
+              ticket.organizationID == organizationID,
+              ticket.loadID == loadID else { return }
+        requiresRefresh = false
+    }
+}
+
+struct ThoughtsRefreshTicket: Equatable {
+    let generation: UInt64
+    let organizationID: String
+    let loadID: UUID
 }

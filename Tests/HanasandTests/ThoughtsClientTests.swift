@@ -82,15 +82,33 @@ final class ThoughtsClientTests: XCTestCase {
     func testMutationSafetyBlocksRetryUntilRefreshAfterUncertainOutcome() {
         var state = ThoughtMutationSafety()
         XCTAssertTrue(state.mayRetry)
-        state.recordFailure(ThoughtsClientError.uncertainMutation)
-        XCTAssertFalse(state.mayRetry)
-        state = .ready
-        XCTAssertTrue(state.mayRetry)
-
         state.recordFailure(ThoughtsClientError.requestFailed(409))
         XCTAssertTrue(state.mayRetry)
         state.recordFailure(ThoughtsClientError.requestFailed(503))
         XCTAssertFalse(state.mayRetry)
+    }
+
+    func testOnlyCurrentPostFailureRefreshForSameScopeClearsMutationGate() {
+        var state = ThoughtMutationSafety()
+        let originalLoadID = UUID()
+        let inFlightBeforeFailure = state.beginRefresh(organizationID: "org-1", loadID: originalLoadID)
+        state.recordFailure(ThoughtsClientError.uncertainMutation)
+        XCTAssertEqual(state.generation, 1)
+
+        state.recordSuccessfulRefresh(inFlightBeforeFailure, organizationID: "org-1", loadID: originalLoadID, isThoughtsPath: true)
+        XCTAssertFalse(state.mayRetry, "A GET that began before the uncertain write must not clear the gate.")
+
+        let freshLoadID = UUID()
+        let postFailureRefresh = state.beginRefresh(organizationID: "org-1", loadID: freshLoadID)
+        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-2", loadID: freshLoadID, isThoughtsPath: true)
+        XCTAssertFalse(state.mayRetry, "A refresh for a different organization must not clear the gate.")
+        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: UUID(), isThoughtsPath: true)
+        XCTAssertFalse(state.mayRetry, "A superseded GET must not clear the gate.")
+        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: false)
+        XCTAssertFalse(state.mayRetry, "A response from a different route must not clear the gate.")
+
+        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: true)
+        XCTAssertTrue(state.mayRetry)
     }
 
     func testRejectsImpersonationAndEmptyMarkdownAndReportsDefiniteConflict() async throws {
