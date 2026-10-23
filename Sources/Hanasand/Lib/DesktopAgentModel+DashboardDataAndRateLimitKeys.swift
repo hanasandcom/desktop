@@ -40,7 +40,7 @@ extension DesktopAgentModel {
             return
         }
         let thoughtsRefreshTicket = path == "/content/thoughts"
-            ? thoughtMutationSafety.beginRefresh(organizationID: selectedOrganizationID, loadID: loadID)
+            ? thoughtMutationSafety.beginRefresh(userID: userIDForRequests, organizationID: selectedOrganizationID, loadID: loadID)
             : nil
         let thoughtsRefreshScope = thoughtsRefreshTicket?.organizationID
         if path == "/traffic" {
@@ -90,7 +90,18 @@ extension DesktopAgentModel {
         do {
             let text: String
             if path == "/content/thoughts" {
-                let rows = try await thoughtsClient(organizationID: thoughtsRefreshScope ?? "").load()
+                guard let thoughtsRefreshTicket,
+                      thoughtMutationSafety.matchesCurrentRefresh(
+                        thoughtsRefreshTicket,
+                        userID: userIDForRequests,
+                        organizationID: selectedOrganizationID,
+                        loadID: nativeDashboardLoadID,
+                        isThoughtsPath: selectedDashboardPath == "/content/thoughts"
+                      ) else { return }
+                let rows = try await thoughtsClient(
+                    organizationID: thoughtsRefreshScope ?? "",
+                    userID: thoughtsRefreshTicket.userID
+                ).load()
                 let data = try JSONEncoder().encode(rows)
                 text = String(data: data, encoding: .utf8) ?? "[]"
             } else {
@@ -101,10 +112,13 @@ extension DesktopAgentModel {
                 )
             }
             let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
-            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path, thoughtsScopeIsCurrent else { return }
+            let thoughtsUserIsCurrent = thoughtsRefreshTicket.map { $0.userID == userIDForRequests } ?? true
+            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path,
+                  thoughtsScopeIsCurrent, thoughtsUserIsCurrent else { return }
             if let thoughtsRefreshTicket {
                 thoughtMutationSafety.recordSuccessfulRefresh(
                     thoughtsRefreshTicket,
+                    userID: userIDForRequests,
                     organizationID: selectedOrganizationID,
                     loadID: nativeDashboardLoadID,
                     isThoughtsPath: selectedDashboardPath == "/content/thoughts"
@@ -124,7 +138,10 @@ extension DesktopAgentModel {
                 await loadSelectedUserRoles()
             }
         } catch {
-            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
+            let thoughtsUserIsCurrent = thoughtsRefreshTicket.map { $0.userID == userIDForRequests } ?? true
+            let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
+            guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path,
+                  thoughtsUserIsCurrent, thoughtsScopeIsCurrent else { return }
             nativeDashboardStatus = error.localizedDescription
             nativeDashboardPayload = "Could not load \(endpoint.label): \(error.localizedDescription)"
         }

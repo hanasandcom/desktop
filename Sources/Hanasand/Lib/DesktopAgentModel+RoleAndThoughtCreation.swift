@@ -165,10 +165,10 @@ extension DesktopAgentModel {
         }
     }
 
-    func thoughtsClient(organizationID: String? = nil) throws -> ThoughtsClient {
+    func thoughtsClient(organizationID: String? = nil, userID: String? = nil) throws -> ThoughtsClient {
         try ThoughtsClient(
             apiBaseURL: settings.apiBaseURL.normalizedBaseURL,
-            userID: userIDForRequests,
+            userID: userID ?? userIDForRequests,
             token: authTokenForRequests,
             organizationID: organizationID ?? selectedOrganizationID,
             impersonationToken: settings.impersonationToken,

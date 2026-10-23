@@ -197,22 +197,27 @@ struct ThoughtMutationSafety: Equatable {
         }
     }
 
-    func beginRefresh(organizationID: String, loadID: UUID) -> ThoughtsRefreshTicket {
-        ThoughtsRefreshTicket(generation: generation, organizationID: organizationID, loadID: loadID)
+    func beginRefresh(userID: String, organizationID: String, loadID: UUID) -> ThoughtsRefreshTicket {
+        ThoughtsRefreshTicket(generation: generation, userID: userID, organizationID: organizationID, loadID: loadID)
     }
 
-    mutating func recordSuccessfulRefresh(_ ticket: ThoughtsRefreshTicket, organizationID: String,
-                                         loadID: UUID, isThoughtsPath: Bool) {
-        guard isThoughtsPath,
-              ticket.generation == generation,
-              ticket.organizationID == organizationID,
-              ticket.loadID == loadID else { return }
+    func matchesCurrentRefresh(_ ticket: ThoughtsRefreshTicket, userID: String, organizationID: String,
+                               loadID: UUID, isThoughtsPath: Bool) -> Bool {
+        isThoughtsPath && !ticket.userID.isEmpty && ticket.generation == generation && ticket.userID == userID &&
+            ticket.organizationID == organizationID && ticket.loadID == loadID
+    }
+
+    mutating func recordSuccessfulRefresh(_ ticket: ThoughtsRefreshTicket, userID: String,
+                                         organizationID: String, loadID: UUID, isThoughtsPath: Bool) {
+        guard matchesCurrentRefresh(ticket, userID: userID, organizationID: organizationID,
+                                   loadID: loadID, isThoughtsPath: isThoughtsPath) else { return }
         requiresRefresh = false
     }
 }
 
 struct ThoughtsRefreshTicket: Equatable {
     let generation: UInt64
+    let userID: String
     let organizationID: String
     let loadID: UUID
 }

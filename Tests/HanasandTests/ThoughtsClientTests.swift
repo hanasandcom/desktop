@@ -91,23 +91,40 @@ final class ThoughtsClientTests: XCTestCase {
     func testOnlyCurrentPostFailureRefreshForSameScopeClearsMutationGate() {
         var state = ThoughtMutationSafety()
         let originalLoadID = UUID()
-        let inFlightBeforeFailure = state.beginRefresh(organizationID: "org-1", loadID: originalLoadID)
+        let inFlightBeforeFailure = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: originalLoadID)
         state.recordFailure(ThoughtsClientError.uncertainMutation)
         XCTAssertEqual(state.generation, 1)
 
-        state.recordSuccessfulRefresh(inFlightBeforeFailure, organizationID: "org-1", loadID: originalLoadID, isThoughtsPath: true)
+        state.recordSuccessfulRefresh(inFlightBeforeFailure, userID: "user-1", organizationID: "org-1", loadID: originalLoadID, isThoughtsPath: true)
         XCTAssertFalse(state.mayRetry, "A GET that began before the uncertain write must not clear the gate.")
 
         let freshLoadID = UUID()
-        let postFailureRefresh = state.beginRefresh(organizationID: "org-1", loadID: freshLoadID)
-        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-2", loadID: freshLoadID, isThoughtsPath: true)
+        let postFailureRefresh = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: freshLoadID)
+        state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-2", loadID: freshLoadID, isThoughtsPath: true)
         XCTAssertFalse(state.mayRetry, "A refresh for a different organization must not clear the gate.")
-        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: UUID(), isThoughtsPath: true)
+        state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: UUID(), isThoughtsPath: true)
         XCTAssertFalse(state.mayRetry, "A superseded GET must not clear the gate.")
-        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: false)
+        state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: false)
         XCTAssertFalse(state.mayRetry, "A response from a different route must not clear the gate.")
 
-        state.recordSuccessfulRefresh(postFailureRefresh, organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: true)
+        state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: true)
+        XCTAssertTrue(state.mayRetry)
+    }
+
+    func testAccountSwitchWithPersonalScopeCannotSendOrAcceptOldRefresh() {
+        var state = ThoughtMutationSafety()
+        state.recordFailure(ThoughtsClientError.uncertainMutation)
+        let loadID = UUID()
+        let oldAccountRefresh = state.beginRefresh(userID: "user-1", organizationID: "", loadID: loadID)
+
+        XCTAssertTrue(state.matchesCurrentRefresh(oldAccountRefresh, userID: "user-1", organizationID: "", loadID: loadID, isThoughtsPath: true))
+        XCTAssertFalse(state.matchesCurrentRefresh(oldAccountRefresh, userID: "user-2", organizationID: "", loadID: loadID, isThoughtsPath: true),
+                       "The load should be discarded before dispatch if the signed-in account changed.")
+        state.recordSuccessfulRefresh(oldAccountRefresh, userID: "user-2", organizationID: "", loadID: loadID, isThoughtsPath: true)
+        XCTAssertFalse(state.mayRetry, "A personal workspace response from the previous account must not clear the gate.")
+
+        let newAccountRefresh = state.beginRefresh(userID: "user-2", organizationID: "", loadID: UUID())
+        state.recordSuccessfulRefresh(newAccountRefresh, userID: "user-2", organizationID: "", loadID: newAccountRefresh.loadID, isThoughtsPath: true)
         XCTAssertTrue(state.mayRetry)
     }
 
