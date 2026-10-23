@@ -43,14 +43,14 @@ struct SupportDeskNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: isSupport ? "Support Desk" : "Support", subtitle: isSupport ? "Customer conversations · latest 100 maximum" : "Your support conversations", fillsAvailableWidth: true) {
-                HStack(spacing: 8) {
-                    ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
-                    if isSupport { ActionButton(title: searchOpen ? "Hide filters" : "Find conversations", icon: "line.3.horizontal.decrease.circle") { searchOpen.toggle() }.disabled(busy) }
-                    else { ActionButton(title: "New support ticket", icon: "plus") { creatingTicket = true; createSubject = ""; draft = ""; selectedID = ""; messages = [] }.disabled(busy || !canWrite) }
-                    if !selectedID.isEmpty || creatingTicket { ActionButton(title: isSupport ? "Back to queue" : "Back to conversations", icon: "list.bullet") { selectedID = ""; creatingTicket = false; messages = []; accountOpen = false }.disabled(busy) }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { supportActions }
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) { supportActions }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if let snapshot {
-                    Text(snapshot.realtime ? (snapshot.isSupport ? "Live updates are available. Refresh to load the latest queue snapshot." : "Refresh to check your latest conversations.") : "Refresh to check for new conversations.")
+                if snapshot != nil {
+                    Text("Refresh to check for new messages or conversations.")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                 }
                 if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
@@ -91,12 +91,22 @@ struct SupportDeskNativePanel: View {
         } message: { Text(pendingAction?.message ?? "") }
     }
 
+    @ViewBuilder
+    private var supportActions: some View {
+        ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
+        if isSupport { ActionButton(title: searchOpen ? "Hide filters" : "Find conversations", icon: "line.3.horizontal.decrease.circle") { searchOpen.toggle() }.disabled(busy) }
+        else { ActionButton(title: "New support ticket", icon: "plus") { creatingTicket = true; createSubject = ""; draft = ""; selectedID = ""; messages = [] }.disabled(busy || !canWrite) }
+        if !selectedID.isEmpty || creatingTicket { ActionButton(title: isSupport ? "Back to queue" : "Back to conversations", icon: "list.bullet") { selectedID = ""; creatingTicket = false; messages = []; accountOpen = false }.disabled(busy) }
+    }
+
     private var filtersPanel: some View {
         NativeGroupPanel(title: "Find conversations", subtitle: "Search, dates and feedback filters are applied on the server.") {
             TextField("Search support conversations", text: $pendingFilters.search).textFieldStyle(.roundedBorder).disabled(busy)
-            HStack(spacing: 8) {
-                TextField("Created from · YYYY-MM-DD", text: $pendingFilters.from).textFieldStyle(.roundedBorder).disabled(busy)
-                TextField("Created through · YYYY-MM-DD", text: $pendingFilters.to).textFieldStyle(.roundedBorder).disabled(busy)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { supportDateFilters }
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(spacing: 8) { supportDateFilters }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             Picker("Rating", selection: $pendingFilters.stars) { ForEach(SupportDeskStarsFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
             Picker("Feedback", selection: $pendingFilters.feedback) { ForEach(SupportDeskFeedbackFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
@@ -106,6 +116,12 @@ struct SupportDeskNativePanel: View {
                 ActionButton(title: "Clear filters", icon: "xmark") { pendingFilters = SupportDeskFilters(); applyFilters() }.disabled(busy)
             }
         }
+    }
+
+    @ViewBuilder
+    private var supportDateFilters: some View {
+        TextField("Created from · YYYY-MM-DD", text: $pendingFilters.from).textFieldStyle(.roundedBorder).disabled(busy)
+        TextField("Created through · YYYY-MM-DD", text: $pendingFilters.to).textFieldStyle(.roundedBorder).disabled(busy)
     }
 
     private var newTicketComposer: some View {
