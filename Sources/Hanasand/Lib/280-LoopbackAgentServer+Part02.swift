@@ -77,6 +77,7 @@ extension LoopbackAgentServer {
                 "open_section_updates",
                 "open_section_settings",
                 "dashboard_refresh",
+                "open_dashboard_api_reference",
                 "open_dashboard_cases",
                 "open_dashboard_mail",
                 "open_dashboard_articles",

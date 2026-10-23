@@ -4,6 +4,11 @@ import XCTest
 @testable import Hanasand
 
 final class LoopbackAgentServerTests: XCTestCase {
+    func testNormalizesAPIReferenceDashboardCommand() {
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "api-reference", body: Data()), "open_dashboard_api_reference")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "POST /command HTTP/1.1", body: Data(#"{"command":"open_dashboard_api_reference"}"#.utf8)), "open_dashboard_api_reference")
+    }
+
     func testRequestReadStateExtractsExactBodyBytes() {
         let body = Data([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0xa9, 0x22, 0x7d])
         let request = Data("POST /command HTTP/1.1\r\nHost: localhost\r\nContent-Length: \(body.count)\r\n\r\n".utf8) + body
