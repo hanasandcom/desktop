@@ -59,6 +59,7 @@ extension DesktopAgentModel {
             .route("Threat intelligence", "Search actors and vulnerabilities.", "magnifyingglass", "/ti"),
             .route("Actor Profiles", "Browse source-backed threat actor records.", "person.text.rectangle", "/ti/profiles"),
             .route("Intelligence Sources", "Browse the public intelligence source catalogue.", "dot.radiowaves.left.and.right", "/ti/sources"),
+            .url("Collection Runs", "Open the global intelligence collection run history.", "clock.arrow.circlepath", "https://ti.hanasand.com/dashboard/ti/runs"),
             .route("Threat Delivery Health", "Review global intelligence delivery timeliness.", "clock.badge.checkmark", "/ti/timeliness"),
             .route("Watchlists", "Manage threat watch terms.", "list.bullet.rectangle", "/watchlists"),
             .route("Delivery History", "Review organization alert delivery attempts.", "paperplane", "/dashboard/delivery-history"),

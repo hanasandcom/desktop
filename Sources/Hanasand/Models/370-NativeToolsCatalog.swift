@@ -13,7 +13,7 @@ enum NativeToolsCatalog {
         let actions = dashboard + administration
         let categories: [(String, (DesktopAction) -> Bool)] = [
             ("Security & intelligence", { action in
-                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/sandbox", "/pwned", "/scanner"].contains(action.routePath)
+                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/sandbox", "/pwned", "/scanner"].contains(action.routePath)
             }),
             ("Infrastructure", { action in
                 ["/status", "/system/hosts", "/system/updates", "/traffic", "/traffic/blocklist", "/system/ai", "/system/rates", "/system/cron", "/system", "/system/containers", "/vms"].contains(action.routePath)
@@ -44,7 +44,19 @@ enum NativeToolsCatalog {
 
 private extension DesktopAction {
     var routePath: String {
-        guard case .route(let path) = kind else { return "" }
-        return path
+        switch kind {
+        case .route(let path):
+            return path
+        case .url(let value):
+            guard let url = URL(string: value),
+                  url.scheme == "https",
+                  url.host == "ti.hanasand.com",
+                  url.path == "/dashboard/ti/runs",
+                  url.query == nil,
+                  url.fragment == nil else { return "" }
+            return "/ti/runs"
+        case .task:
+            return ""
+        }
     }
 }

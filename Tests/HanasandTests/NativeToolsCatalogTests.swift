@@ -37,6 +37,34 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertTrue(NativeToolsCatalog.sections(dashboard: dashboard, administration: []).isEmpty)
     }
 
+    func testWebsiteOwnedCollectionRunsIsDiscoverableAndKeepsItsExactDestination() {
+        let collectionRuns = DesktopAction.url(
+            "Collection Runs",
+            "Open the global intelligence collection run history.",
+            "clock.arrow.circlepath",
+            "https://ti.hanasand.com/dashboard/ti/runs"
+        )
+
+        let sections = NativeToolsCatalog.sections(dashboard: [collectionRuns], administration: [])
+
+        XCTAssertEqual(sections.map(\.title), ["Security & intelligence"])
+        XCTAssertEqual(sections.flatMap(\.actions).map(\.title), ["Collection Runs"])
+        guard case .url(let destination) = sections[0].actions[0].kind else {
+            return XCTFail("Collection Runs should open the website-owned destination")
+        }
+        XCTAssertEqual(destination, "https://ti.hanasand.com/dashboard/ti/runs")
+    }
+
+    func testCollectionRunsCatalogClassificationRejectsLookalikeOrModifiedURLs() {
+        let actions = [
+            DesktopAction.url("Spoofed host", "", "link", "https://ti.hanasand.com.attacker.example/dashboard/ti/runs"),
+            DesktopAction.url("Insecure scheme", "", "link", "http://ti.hanasand.com/dashboard/ti/runs"),
+            DesktopAction.url("Modified destination", "", "link", "https://ti.hanasand.com/dashboard/ti/runs?user=other"),
+        ]
+
+        XCTAssertTrue(NativeToolsCatalog.sections(dashboard: actions, administration: []).isEmpty)
+    }
+
     func testParityRoutesAreDiscoverableInTheirNativeSections() {
         let dashboard = [
             DesktopAction.route("Health Checks", "Monitor services.", "heart", "/automation/health"),
