@@ -11,6 +11,16 @@ import UniformTypeIdentifiers
 import WebKit
 
 extension DesktopAgentModel {
+    private func organizationDirectoryClient() throws -> OrganizationDirectoryClient {
+        try OrganizationDirectoryClient(settings: settings)
+    }
+
+    private func applyOrganizationDirectory(_ snapshot: DashboardOrganizationDirectorySnapshot, accountID: String) {
+        organizationDirectory = snapshot.organizations
+        organizationMemberships = snapshot.memberships
+        organizationDirectorySnapshotUserID = isImpersonatingForOrganizationSwitch ? "" : accountID
+    }
+
     var isImpersonatingForOrganizationSwitch: Bool {
         !settings.impersonationToken.isEmpty || !settings.impersonatingUserID.isEmpty
     }
@@ -51,37 +61,27 @@ extension DesktopAgentModel {
         }
 
         do {
-            let apiBase = settings.apiBaseURL.normalizedBaseURL
-            let directory: DashboardDirectoryOrganizationsEnvelope = try await requestJSON(
-                apiBase.appendingAPIPath("management/organizations"),
-                authenticated: true
-            )
-            let memberships: DashboardOrganizationMembershipsEnvelope = try await requestJSON(
-                organizationMembershipsURL(),
-                authenticated: true
-            )
+            let snapshot = try await organizationDirectoryClient().loadSnapshot()
             guard organizationDirectoryLoadID == loadID,
                   selectedDashboardPath == "/organizations",
                   accountID == userIDForRequests,
                   sessionToken == authTokenForRequests else { return }
-            organizationDirectory = directory.organizations
-            organizationMemberships = memberships.organizations
-            organizationDirectorySnapshotUserID = isImpersonatingForOrganizationSwitch ? "" : accountID
+            applyOrganizationDirectory(snapshot, accountID: accountID)
             if !isImpersonatingForOrganizationSwitch,
                settings.selectedOrganizationUserID == accountID,
                !settings.selectedOrganizationID.isEmpty,
-               !memberships.organizations.contains(where: { $0.id == settings.selectedOrganizationID && $0.status == "active" }) {
+               !snapshot.memberships.contains(where: { $0.id == settings.selectedOrganizationID && $0.status == "active" }) {
                 usePersonalWorkspace()
             }
         } catch {
             guard organizationDirectoryLoadID == loadID,
                   selectedDashboardPath == "/organizations",
                   accountID == userIDForRequests else { return }
-            if case DashboardRequestError.httpStatus(401) = error {
+            if case OrganizationDirectoryClientError.requestFailed(401, _) = error {
                 organizationDirectoryError = "Your session could not be verified. Sign in again."
-            } else if case DashboardRequestError.httpStatus(403) = error {
-                organizationDirectoryError = "The organization directory requires Hanasand organization administrator access."
-            } else if case DashboardRequestError.httpStatus(429) = error {
+            } else if case OrganizationDirectoryClientError.requestFailed(403, _) = error {
+                organizationDirectoryError = "Your account cannot access its organization memberships."
+            } else if case OrganizationDirectoryClientError.requestFailed(429, _) = error {
                 organizationDirectoryError = "Too many organization requests. Wait, then refresh."
             } else {
                 organizationDirectoryError = error.localizedDescription
@@ -109,39 +109,83 @@ extension DesktopAgentModel {
         }
 
         do {
-            // Re-read both sources so directory visibility alone can never authorize a switch.
-            let directory: DashboardDirectoryOrganizationsEnvelope = try await requestJSON(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("management/organizations"),
-                authenticated: true
-            )
-            let memberships: DashboardOrganizationMembershipsEnvelope = try await requestJSON(
-                organizationMembershipsURL(),
-                authenticated: true
-            )
+            // Re-read the organization list and the caller's active memberships before switching.
+            let snapshot = try await organizationDirectoryClient().loadSnapshot()
             guard organizationDirectoryLoadID == loadID,
                   selectedDashboardPath == "/organizations",
                   accountID == userIDForRequests,
                   sessionToken == authTokenForRequests,
                   !isImpersonatingForOrganizationSwitch else { return }
 
-            let target = directory.organizations.first { $0.id == organization.id }
-            let membership = memberships.organizations.first { $0.id == organization.id }
+            let target = snapshot.organizations.first { $0.id == organization.id }
+            let membership = snapshot.memberships.first { $0.id == organization.id }
             guard let target, target.status == "active", membership?.status == "active" else {
-                organizationDirectory = directory.organizations
-                organizationMemberships = memberships.organizations
-                organizationDirectorySnapshotUserID = accountID
+                applyOrganizationDirectory(snapshot, accountID: accountID)
                 organizationDirectoryError = "This organization is no longer available through an active membership. Refresh to review access."
                 return
             }
 
             settings.selectedOrganizationID = target.id
             settings.selectedOrganizationUserID = accountID
-            organizationDirectory = directory.organizations
-            organizationMemberships = memberships.organizations
-            organizationDirectorySnapshotUserID = accountID
+            applyOrganizationDirectory(snapshot, accountID: accountID)
         } catch {
             organizationDirectoryError = error.localizedDescription
             organizationDirectorySnapshotUserID = ""
+        }
+    }
+
+    func createOrganization(named name: String) async {
+        guard hasHanasandAuth else {
+            organizationDirectoryError = "Sign in to create an organization."
+            return
+        }
+        guard !isImpersonatingForOrganizationSwitch else {
+            organizationDirectoryError = "Return to your own account before creating an organization."
+            return
+        }
+        guard !isLoadingOrganizationDirectory else { return }
+
+        let accountID = userIDForRequests
+        let sessionToken = authTokenForRequests
+        let loadID = UUID()
+        organizationDirectoryLoadID = loadID
+        isLoadingOrganizationDirectory = true
+        organizationDirectoryError = nil
+        defer {
+            if organizationDirectoryLoadID == loadID { isLoadingOrganizationDirectory = false }
+        }
+
+        do {
+            let client = try organizationDirectoryClient()
+            let createdID = try await client.createOrganization(name: name)
+            guard organizationDirectoryLoadID == loadID,
+                  selectedDashboardPath == "/organizations",
+                  accountID == userIDForRequests,
+                  sessionToken == authTokenForRequests,
+                  !isImpersonatingForOrganizationSwitch else { return }
+
+            let snapshot = try await client.loadSnapshot()
+            guard organizationDirectoryLoadID == loadID,
+                  selectedDashboardPath == "/organizations",
+                  accountID == userIDForRequests,
+                  sessionToken == authTokenForRequests,
+                  !isImpersonatingForOrganizationSwitch else { return }
+            applyOrganizationDirectory(snapshot, accountID: accountID)
+
+            guard let created = snapshot.organizations.first(where: { $0.id == createdID }),
+                  created.status == "active",
+                  snapshot.memberships.contains(where: { $0.id == createdID && $0.status == "active" }) else {
+                organizationDirectoryError = "The organization was created, but its active membership could not be verified. Refresh before selecting it."
+                return
+            }
+
+            settings.selectedOrganizationID = created.id
+            settings.selectedOrganizationUserID = accountID
+        } catch {
+            guard organizationDirectoryLoadID == loadID,
+                  selectedDashboardPath == "/organizations",
+                  accountID == userIDForRequests else { return }
+            organizationDirectoryError = error.localizedDescription
         }
     }
 
@@ -151,12 +195,4 @@ extension DesktopAgentModel {
         organizationDirectoryError = nil
     }
 
-    private func organizationMembershipsURL() -> URL {
-        let configured = settings.apiBaseURL.normalizedBaseURL
-        if configured.host?.lowercased() == "api.hanasand.com",
-           let identityURL = URL(string: "https://identity.hanasand.com/api/organizations") {
-            return identityURL
-        }
-        return configured.appendingAPIPath("organizations")
-    }
 }

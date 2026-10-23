@@ -9,6 +9,16 @@ struct DashboardDirectoryOrganization: Decodable, Identifiable, Equatable {
     let createdAt: String?
     let lastActiveAt: String?
 
+    init(id: String, name: String, slug: String, status: String, memberCount: Int?, createdAt: String? = nil, lastActiveAt: String? = nil) {
+        self.id = id
+        self.name = name
+        self.slug = slug
+        self.status = status
+        self.memberCount = memberCount
+        self.createdAt = createdAt
+        self.lastActiveAt = lastActiveAt
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, slug, status
         case memberCount = "member_count"
@@ -52,6 +62,63 @@ struct DashboardDirectoryOrganizationsEnvelope: Decodable {
 
 struct DashboardOrganizationMembershipsEnvelope: Decodable {
     let organizations: [DashboardOrganizationMembership]
+}
+
+struct DashboardIdentityOrganization: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let slug: String?
+    let lifecycleStatus: String
+    let role: String
+    let memberCount: Int?
+
+    var directoryOrganization: DashboardDirectoryOrganization {
+        DashboardDirectoryOrganization(
+            id: id,
+            name: name,
+            slug: slug ?? "",
+            status: lifecycleStatus,
+            memberCount: memberCount
+        )
+    }
+
+    var activeMembership: DashboardOrganizationMembership {
+        // The identity list contains only active memberships for the signed-in user.
+        DashboardOrganizationMembership(id: id, name: name, role: role, status: "active")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, slug, lifecycleStatus, role, memberCount
+        case memberCountSnake = "member_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        slug = try container.decodeIfPresent(String.self, forKey: .slug)
+        lifecycleStatus = try container.decode(String.self, forKey: .lifecycleStatus)
+        role = try container.decode(String.self, forKey: .role)
+        if let count = try? container.decode(Int.self, forKey: .memberCount) {
+            memberCount = count
+        } else {
+            memberCount = try? container.decode(Int.self, forKey: .memberCountSnake)
+        }
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "Organization membership is missing its identity fields")
+        }
+    }
+}
+
+struct DashboardIdentityOrganizationsEnvelope: Decodable {
+    let organizations: [DashboardIdentityOrganization]
+}
+
+struct DashboardOrganizationDirectorySnapshot {
+    let organizations: [DashboardDirectoryOrganization]
+    let memberships: [DashboardOrganizationMembership]
 }
 
 enum DashboardOrganizationSwitchPolicy {

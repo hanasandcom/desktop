@@ -14,6 +14,7 @@ struct OrganizationDirectoryNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State private var searchText = ""
+    @State private var createName = ""
 
     private var filteredOrganizations: [DashboardDirectoryOrganization] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -84,10 +85,34 @@ struct OrganizationDirectoryNativePanel: View {
 
             SearchFieldRow(placeholder: "Search organizations by name, slug, or status", text: $searchText)
 
+            if model.hasHanasandAuth {
+                NativeGroupPanel(title: "Create an organization", subtitle: "Create a workspace for your team") {
+                    HStack(spacing: 10) {
+                        TextField("Organization name", text: $createName)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(model.isLoadingOrganizationDirectory || model.isImpersonatingForOrganizationSwitch)
+                        Button(model.isLoadingOrganizationDirectory ? "Working…" : "Create") {
+                            Task {
+                                await model.createOrganization(named: createName)
+                                if model.organizationDirectoryError == nil { createName = "" }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isLoadingOrganizationDirectory || model.isImpersonatingForOrganizationSwitch
+                                  || createName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if model.isImpersonatingForOrganizationSwitch {
+                        Text("Return to your own account to create an organization.")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                }
+            }
+
             if model.isLoadingOrganizationDirectory && model.organizationDirectory.isEmpty {
                 NativeEmptyState(title: "Loading organizations", message: "Checking directory visibility and your active memberships.")
             } else if model.organizationDirectory.isEmpty {
-                NativeEmptyState(title: "No organizations loaded", message: "Refresh the directory or check that your account has organization administrator access.")
+                NativeEmptyState(title: "No organizations found", message: "Create an organization or refresh to check your active memberships.")
             } else if filteredOrganizations.isEmpty {
                 NativeEmptyState(title: "No matches", message: "No organizations match this search.")
             } else {
