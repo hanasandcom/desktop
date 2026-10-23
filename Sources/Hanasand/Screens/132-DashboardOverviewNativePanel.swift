@@ -19,6 +19,9 @@ struct DashboardOverviewNativePanel: View {
     let columns = [
         GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top),
     ]
+    let metricColumns = [
+        GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .top),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -100,7 +103,7 @@ struct DashboardOverviewNativePanel: View {
                 : "up"
 
         return NativeGroupPanel(title: service, subtitle: "\(checks.count) checks") {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                 FeatureCard(title: "Status", value: worstStatus.capitalized, icon: statusIcon(worstStatus))
                 FeatureCard(title: "Avg latency", value: averageLatencyLabel(checks), icon: "timer")
                 FeatureCard(title: "Uptime", value: averageUptimeLabel(checks), icon: "arrow.up.heart")
