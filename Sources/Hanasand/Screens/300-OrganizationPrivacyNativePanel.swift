@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct OrganizationPrivacyNativePanel: View {
@@ -7,6 +8,13 @@ struct OrganizationPrivacyNativePanel: View {
     @State private var selectedTab: Tab = .summary
     @State private var loading = false
     @State private var error = ""
+    @State private var busy = false
+    @State private var pendingIntent: OrganizationPrivacyIntent?
+    @State private var actionConfirmation: OrganizationPrivacyAction?
+    @State private var showDeletionForm = false
+    @State private var deletionName = ""
+    @State private var currentPassword = ""
+    @State private var resultMessage = ""
 
     private enum Tab: String, CaseIterable, Identifiable {
         case summary = "Summary"
@@ -64,7 +72,8 @@ struct OrganizationPrivacyNativePanel: View {
                 case .requests: recordList(title: "Privacy requests", records: snapshot.requests, empty: "No privacy requests have been recorded.")
                 case .records: retentionRecords(snapshot)
                 }
-                NativeNotice(message: "Privacy actions are not available in this Desktop view. Use the website or mobile app to request an export, run retention, or request deletion.", tone: .info)
+                privacyActions(snapshot)
+                if !resultMessage.isEmpty { NativeNotice(message: resultMessage, tone: .info) }
             } else {
                 NativeEmptyState(title: "Privacy history unavailable", message: error.isEmpty ? "Refresh to load the selected organization’s privacy state." : error)
             }
@@ -73,9 +82,31 @@ struct OrganizationPrivacyNativePanel: View {
         .task(id: scopeFingerprint) {
             snapshot = nil
             error = ""
+            currentPassword = ""
+            deletionName = ""
+            pendingIntent = nil
             selectedTab = .summary
             guard membershipVerified, !isImpersonating else { return }
             await refresh(offset: 0)
+        }
+        .confirmationDialog(actionConfirmation?.title ?? "Confirm privacy action", isPresented: Binding(
+            get: { actionConfirmation != nil }, set: { if !$0 { actionConfirmation = nil } }
+        ), titleVisibility: .visible) {
+            if let actionConfirmation {
+                Button(actionConfirmation.buttonTitle, role: actionConfirmation.isDestructive ? .destructive : nil) {
+                    let selected = actionConfirmation
+                    self.actionConfirmation = nil
+                    Task { await perform(selected) }
+                }
+            }
+            Button("Cancel", role: .cancel) { actionConfirmation = nil; currentPassword = "" }
+        } message: {
+            if let actionConfirmation, let snapshot {
+                Text(actionConfirmation.message(organization: snapshot.organization.name, retentionDays: snapshot.organization.retentionDays))
+            }
+        }
+        .sheet(isPresented: $showDeletionForm, onDismiss: { if actionConfirmation == nil { currentPassword = ""; deletionName = "" } }) {
+            deletionForm
         }
     }
 
@@ -106,6 +137,52 @@ struct OrganizationPrivacyNativePanel: View {
                 countButton("Privacy requests", count: snapshot.requests.count, tab: .requests)
             }
         }
+    }
+
+    @ViewBuilder
+    private func privacyActions(_ snapshot: OrganizationPrivacySnapshot) -> some View {
+        NativeGroupPanel(title: "Privacy actions", subtitle: "Actions use your current organization role and require a fresh authorization check.") {
+            if let permissions = snapshot.permissions {
+                HStack(spacing: 8) {
+                    if permissions.canExport {
+                        ActionButton(title: "Export data", icon: "square.and.arrow.down") { actionConfirmation = .export }
+                            .disabled(busy || pendingIntent != nil)
+                    }
+                    if permissions.canRunRetention {
+                        ActionButton(title: "Run retention", icon: "trash") { actionConfirmation = .runRetention }
+                            .disabled(busy || pendingIntent != nil)
+                    }
+                    if permissions.canRequestDeletion && permissions.deletionRequiresReauthentication {
+                        ActionButton(title: "Request deletion", icon: "exclamationmark.triangle") {
+                            deletionName = ""; currentPassword = ""; showDeletionForm = true
+                        }.disabled(busy || pendingIntent != nil)
+                    }
+                }
+                if !permissions.canExport && !permissions.canRunRetention && !permissions.canRequestDeletion {
+                    Text("Your current role can review privacy history but cannot run privacy actions.").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                }
+            }
+            if let pendingIntent {
+                NativeNotice(message: "The \(pendingIntent.action.title.lowercased()) request \(pendingIntent.requestID) has an unresolved outcome. Refresh to reconcile it before submitting another action.", tone: .info)
+            }
+        }
+    }
+
+    private var deletionForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Request organization deletion").font(.system(size: 17, weight: .semibold))
+            Text("Enter the exact organization name and your current password. Protected evidence remains; this may remove your organization access.")
+                .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+            TextField("Exact organization name", text: $deletionName)
+            SecureField("Current password", text: $currentPassword)
+            HStack {
+                Button("Cancel") { showDeletionForm = false; deletionName = ""; currentPassword = "" }
+                Spacer()
+                Button("Review request", role: .destructive) { showDeletionForm = false; actionConfirmation = .delete }
+                    .disabled(snapshot.map { deletionName != $0.organization.name } ?? true || currentPassword.isEmpty || busy)
+            }
+        }
+        .padding(20).frame(width: 440)
     }
 
     private func metric(_ title: String, _ value: Int) -> some View {
@@ -198,6 +275,46 @@ struct OrganizationPrivacyNativePanel: View {
                   membershipVerified,
                   loaded.organization.id == organizationID else { throw OrganizationPrivacyError.organizationScopeChanged }
             snapshot = loaded
+            if let pendingIntent, OrganizationPrivacyReconciliation.matchingRecord(in: loaded, intent: pendingIntent) != nil {
+                resultMessage = "The request was found in privacy history. Its latest status is shown in the Requests or Runs tab."
+                self.pendingIntent = nil
+            }
         } catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor
+    private func perform(_ action: OrganizationPrivacyAction) async {
+        guard let before = snapshot, membershipVerified, !isImpersonating, !busy, pendingIntent == nil else { return }
+        busy = true; error = ""; resultMessage = ""
+        defer { busy = false; currentPassword = ""; deletionName = "" }
+        let intent = OrganizationPrivacyIntent(action: action, requestID: UUID().uuidString.lowercased())
+        do {
+            let client = try OrganizationPrivacyClient(settings: model.settings, organizationID: organizationID)
+            let receipt = try await client.perform(action, requestID: intent.requestID, expectedName: before.organization.name,
+                                                   deletionName: action == .delete ? deletionName : nil,
+                                                   currentPassword: action == .delete ? currentPassword : nil)
+            guard organizationID == self.organizationID, membershipVerified, !isImpersonating else { throw OrganizationPrivacyError.organizationScopeChanged }
+            if let data = receipt.exportFile {
+                let panel = NSSavePanel(); panel.nameFieldStringValue = "\(before.organization.name)-privacy-export.json"
+                panel.allowedContentTypes = [.json]; panel.canCreateDirectories = true
+                if panel.runModal() == .OK, let url = panel.url { try data.write(to: url, options: .atomic); resultMessage = "Verified export saved to \(url.lastPathComponent). SHA-256: \(receipt.checksum ?? "")" }
+                else { resultMessage = "Export completed, but the save dialog was canceled. The archive is no longer available from request history." }
+            } else {
+                resultMessage = "\(action.title) request status: \(receipt.status). Refreshing privacy history."
+                if let state = receipt.state { snapshot = state }
+                await refresh(offset: 0)
+            }
+        } catch {
+            if case OrganizationPrivacyError.permissionDenied = error {
+                self.error = error.localizedDescription
+            } else if case OrganizationPrivacyError.invalidDeletionConfirmation = error {
+                self.error = error.localizedDescription
+            } else if case OrganizationPrivacyError.requestFailed(let status, _) = error, (400...499).contains(status), status != 409 {
+                self.error = error.localizedDescription
+            } else {
+                pendingIntent = intent
+                resultMessage = "The service did not confirm the outcome. Refresh privacy history to reconcile request \(intent.requestID)."
+            }
+        }
     }
 }

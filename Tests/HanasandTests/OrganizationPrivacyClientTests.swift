@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import XCTest
 @testable import Hanasand
 
@@ -94,5 +95,127 @@ final class OrganizationPrivacyClientTests: XCTestCase {
             XCTAssertEqual(message, "unavailable")
         }
         XCTAssertEqual(request?.httpMethod, "GET")
+    }
+
+    func testRunRetentionRechecksRoleAndPostsIdempotencyKey() async throws {
+        var methods: [String] = []
+        let responseJSON = snapshotJSON
+            .replacingOccurrences(of: #""limit":50"#, with: #""limit":100"#)
+            .replacingOccurrences(of: #""request_id":"req-1"#, with: #""request_id":"stable-123"#)
+            .replacingOccurrences(of: #""status":"completed""#, with: #""status":"completed""#)
+            .replacingOccurrences(of: #""permissions":{"canExport":true,"canRunRetention":true,"canRequestDeletion":false,"deletionRequiresReauthentication":true}"#, with: #""permissions":{"canExport":true,"canRunRetention":true,"canRequestDeletion":false,"deletionRequiresReauthentication":true},"worker":{"runId":"run-1","claimed":true}"#)
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            methods.append(request.httpMethod ?? "")
+            if request.httpMethod == "GET" { return self.http(self.snapshotJSON, request: request) }
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+            XCTAssertEqual(object["action"], "run_retention")
+            XCTAssertEqual(object["requestId"], "stable-123")
+            return self.http(responseJSON, request: request)
+        }
+        let receipt = try await client.perform(.runRetention, requestID: "stable-123", expectedName: "Example Org")
+        XCTAssertEqual(receipt.status, "completed")
+        XCTAssertEqual(methods, ["GET", "POST"])
+    }
+
+    func testRoleDenialStopsBeforePostAndBadDeletionConfirmationIsRejected() async throws {
+        var postCount = 0
+        let denied = snapshotJSON.replacingOccurrences(of: #""canExport":true,"canRunRetention":true"#, with: #""canExport":false,"canRunRetention":false"#)
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            if request.httpMethod == "POST" { postCount += 1 }
+            return self.http(denied, request: request)
+        }
+        do {
+            _ = try await client.perform(.runRetention, requestID: "role-test", expectedName: "Example Org")
+            XCTFail("Expected role check")
+        } catch OrganizationPrivacyError.permissionDenied {}
+        XCTAssertEqual(postCount, 0)
+
+        let ownerClient = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            self.http(self.snapshotJSON.replacingOccurrences(of: #""canRequestDeletion":false"#, with: #""canRequestDeletion":true"#), request: request)
+        }
+        do {
+            _ = try await ownerClient.perform(.delete, requestID: "delete-test", expectedName: "Example Org", deletionName: "wrong", currentPassword: "password")
+            XCTFail("Expected exact-name guard")
+        } catch OrganizationPrivacyError.invalidDeletionConfirmation {}
+    }
+
+    func testIntentRegistryPreventsSecondUnresolvedSubmission() throws {
+        let registry = OrganizationPrivacyIntentRegistry(baseURL: URL(string: "https://api.example.test")!, userID: "owner", organizationID: "org")
+        let first = OrganizationPrivacyIntent(action: .runRetention, requestID: "request-1")
+        try registry.claim(first)
+        XCTAssertThrowsError(try registry.claim(OrganizationPrivacyIntent(action: .delete, requestID: "request-2"))) { error in
+            guard case OrganizationPrivacyError.duplicateSubmission = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        registry.resolve(first)
+        XCTAssertNoThrow(try registry.claim(OrganizationPrivacyIntent(action: .export, requestID: "request-3")))
+    }
+
+    func testExportRequiresMatchingRequestScopeAndRawDataChecksum() async throws {
+        let dataJSON = #"{"public":{"organization":{"id":"org/a"}},"threatIntelligence":{"schemaVersion":"organization.privacy_export.ti.v1","organizationId":"org/a","tenantId":"org/a"}}"#
+        let checksum = SHA256.hash(data: Data(dataJSON.utf8)).map { String(format: "%02x", $0) }.joined()
+        let export = #"{"schemaVersion":"organization.privacy_export.v1","organizationID":"org/a","tenantID":"org/a","exportedAt":"2026-10-21T10:00:00Z","data":\#(dataJSON),"checksum":"\#(checksum)"}"#
+        let response = #"{"export":\#(export),"request":{"id":"privacy-1","status":"completed"}}"#
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            self.http(request.httpMethod == "GET" ? self.snapshotJSON.replacingOccurrences(of: #""request_id":"req-2""#, with: #""request_id":"export-1""#) : response, request: request)
+        }
+        let receipt = try await client.perform(.export, requestID: "export-1", expectedName: "Example Org")
+        XCTAssertEqual(receipt.status, "completed")
+        XCTAssertEqual(receipt.checksum, checksum)
+        XCTAssertTrue(String(data: try XCTUnwrap(receipt.exportFile), encoding: .utf8)?.contains(#""organizationID":"org/a""#) == true)
+
+        let invalid = response.replacingOccurrences(of: checksum, with: String(repeating: "0", count: 64))
+        let badClient = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            self.http(request.httpMethod == "GET" ? self.snapshotJSON.replacingOccurrences(of: #""request_id":"req-2""#, with: #""request_id":"export-2""#) : invalid, request: request)
+        }
+        do {
+            _ = try await badClient.perform(.export, requestID: "export-2", expectedName: "Example Org")
+            XCTFail("Expected checksum rejection")
+        } catch OrganizationPrivacyError.unconfirmedOutcome {}
+    }
+
+    func testDeletionRequiresReauthenticationAndValidatesLinkedRunReceipt() async throws {
+        let ownerRead = snapshotJSON.replacingOccurrences(of: #""canRequestDeletion":false"#, with: #""canRequestDeletion":true"#)
+        let deletionState = #"{"schemaVersion":"organization.privacy_state.v1","organization":{"id":"org/a","name":"Example Org","status":"active","retention_days":90},"runs":[{"id":"delete-run","organization_id":"org/a","status":"completed","request_id":"delete-ok","trigger_type":"privacy_deletion","privacy_request_id":"delete-request"}],"requests":[{"id":"delete-request","organization_id":"org/a","status":"completed","request_id":"delete-ok","request_type":"deletion"}],"items":[],"itemPage":{"offset":0,"limit":100,"nextOffset":null},"protection":{"protected_events":3,"total_retention_items":101,"access_recovery_holds":1,"immutable_system_events":2,"immutable_webhook_audit_events":4,"immutable_log_events":5,"explanation":"Protected records remain."},"worker":{"runId":"delete-run","claimed":true}}"#
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            if request.httpMethod == "GET" { return self.http(ownerRead, request: request) }
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+            XCTAssertEqual(object["confirmation"], "Example Org")
+            XCTAssertEqual(object["currentPassword"], "current-secret")
+            XCTAssertEqual(object["action"], "delete")
+            XCTAssertEqual(object["requestId"], "delete-ok")
+            return self.http(deletionState, request: request)
+        }
+        let receipt = try await client.perform(.delete, requestID: "delete-ok", expectedName: "Example Org", deletionName: "Example Org", currentPassword: "current-secret")
+        XCTAssertEqual(receipt.status, "completed")
+
+        let deniedClient = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            request.httpMethod == "GET" ? self.http(ownerRead, request: request) : self.http(#"{"error":{"message":"Current password is required again."}}"#, request: request, status: 403)
+        }
+        do {
+            _ = try await deniedClient.perform(.delete, requestID: "delete-denied", expectedName: "Example Org", deletionName: "Example Org", currentPassword: "wrong")
+            XCTFail("Expected password reauthentication rejection")
+        } catch OrganizationPrivacyError.requestFailed(let status, _) { XCTAssertEqual(status, 403) }
+    }
+
+    func testAmbiguousConflictLocksOutDuplicateUntilExplicitResolution() async throws {
+        var postCount = 0
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a") { request in
+            if request.httpMethod == "POST" {
+                postCount += 1
+                return self.http(#"{"error":"An active run already exists."}"#, request: request, status: 409)
+            }
+            return self.http(self.snapshotJSON, request: request)
+        }
+        do {
+            _ = try await client.perform(.runRetention, requestID: "conflict-1", expectedName: "Example Org")
+            XCTFail("Expected unresolved conflict")
+        } catch OrganizationPrivacyError.unconfirmedOutcome {}
+        do {
+            _ = try await client.perform(.export, requestID: "conflict-2", expectedName: "Example Org")
+            XCTFail("Expected duplicate submission guard")
+        } catch OrganizationPrivacyError.duplicateSubmission {}
+        XCTAssertEqual(postCount, 1)
     }
 }
