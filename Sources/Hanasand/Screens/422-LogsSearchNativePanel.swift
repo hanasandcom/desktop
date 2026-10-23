@@ -1,0 +1,239 @@
+import SwiftUI
+
+struct LogsSearchNativePanel: View {
+  @EnvironmentObject private var model: DesktopAgentModel
+  @Environment(\.desktopTheme) private var theme
+  @State private var filters = LogsSearchFilters()
+  @State private var events: [LogsSearchEvent] = []
+  @State private var nextCursor: String?
+  @State private var loadedFilters: LogsSearchFilters?
+  @State private var errorMessage = ""
+  @State private var isLoading = false
+  @State private var hasLoaded = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Search logs")
+          .font(.system(size: 18, weight: .bold))
+          .foregroundStyle(theme.text)
+        Text("Filter recent events by time, service, severity, and message.")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(theme.textSecondary)
+      }
+
+      VStack(alignment: .leading, spacing: 10) {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 10) {
+            timeRangePicker
+            severityPicker
+            Spacer(minLength: 0)
+          }
+          VStack(alignment: .leading, spacing: 8) {
+            timeRangePicker
+            severityPicker
+          }
+        }
+
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 10) {
+            serviceField
+              .frame(maxWidth: 240)
+            searchField
+            searchButton
+          }
+          VStack(alignment: .leading, spacing: 8) {
+            serviceField
+            searchField
+            searchButton
+          }
+        }
+      }
+
+      HStack(spacing: 8) {
+        Circle()
+          .fill(errorMessage.isEmpty ? theme.green : theme.danger)
+          .frame(width: 8, height: 8)
+        Text(statusText)
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(theme.textSecondary)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+        if hasLoaded {
+          Text("\(events.count) events")
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(theme.textTertiary)
+        }
+      }
+
+      if let loadedFilters, loadedFilters != filters {
+        NativeNotice(message: "Filters changed. Search again to apply them.", tone: .info)
+      }
+
+      if !errorMessage.isEmpty {
+        NativeNotice(message: errorMessage, title: "Search failed", tone: .error)
+      }
+
+      if events.isEmpty {
+        NativeEmptyState(
+          title: isLoading
+            ? "Searching log events" : hasLoaded ? "No matching events" : "Search logs",
+          message: isLoading
+            ? "The service is searching the selected time range."
+            : hasLoaded
+              ? "No events matched these filters. Try a wider time range or fewer filters."
+              : "Choose filters, then search your organization's processed log events."
+        )
+      } else {
+        LazyVStack(alignment: .leading, spacing: 9) {
+          ForEach(events) { event in eventRow(event) }
+        }
+      }
+
+      if nextCursor != nil, loadedFilters == filters {
+        HStack {
+          Spacer()
+          ActionButton(title: isLoading ? "Loading…" : "Load older events", icon: "arrow.down") {
+            Task { await search(reset: false) }
+          }
+          .disabled(isLoading)
+          Spacer()
+        }
+      }
+    }
+    .task { await search(reset: true) }
+  }
+
+  private var statusText: String {
+    if isLoading { return "Loading authenticated organization logs" }
+    if !errorMessage.isEmpty { return "Results may be out of date" }
+    if loadedFilters != nil, loadedFilters != filters { return "Filters changed · Search to apply" }
+    return hasLoaded ? "Search complete" : "Ready"
+  }
+
+  private var timeRangePicker: some View {
+    Picker("Time range", selection: $filters.hours) {
+      Text("1 hour").tag(1)
+      Text("24 hours").tag(24)
+      Text("7 days").tag(168)
+      Text("30 days").tag(720)
+      Text("90 days").tag(2_160)
+    }
+    .frame(maxWidth: 190, alignment: .leading)
+  }
+
+  private var severityPicker: some View {
+    Picker("Severity", selection: $filters.severity) {
+      Text("All severities").tag("all")
+      Text("Low").tag("low")
+      Text("Medium").tag("medium")
+      Text("High").tag("high")
+      Text("Critical").tag("critical")
+    }
+    .frame(maxWidth: 190, alignment: .leading)
+  }
+
+  private var serviceField: some View {
+    TextField("Service (optional)", text: $filters.service)
+      .textFieldStyle(.roundedBorder)
+  }
+
+  private var searchField: some View {
+    TextField("Search message text", text: $filters.search)
+      .textFieldStyle(.roundedBorder)
+      .onSubmit { Task { await search(reset: true) } }
+  }
+
+  private var searchButton: some View {
+    ActionButton(title: isLoading ? "Searching…" : "Search", icon: "magnifyingglass") {
+      Task { await search(reset: true) }
+    }
+    .disabled(isLoading)
+  }
+
+  @ViewBuilder
+  private func eventRow(_ event: LogsSearchEvent) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(
+        systemName: event.severity == "critical" || event.severity == "high"
+          ? "exclamationmark.triangle.fill" : "text.alignleft"
+      )
+      .font(.system(size: 14, weight: .bold))
+      .foregroundStyle(
+        event.severity == "critical" || event.severity == "high"
+          ? theme.danger : theme.accent
+      )
+      .frame(width: 28, height: 28)
+      .background(theme.cardRaised)
+      .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+      VStack(alignment: .leading, spacing: 5) {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 7) { eventHeading(event) }
+          VStack(alignment: .leading, spacing: 3) { eventHeading(event) }
+        }
+        .font(.system(size: 11, weight: .bold))
+        Text(event.message.isEmpty ? "No message" : event.message)
+          .font(.system(size: 13, weight: .medium))
+          .foregroundStyle(theme.textSecondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .textSelection(.enabled)
+        Text(event.timestamp)
+          .font(.system(size: 10, weight: .medium, design: .monospaced))
+          .foregroundStyle(theme.textTertiary)
+          .lineLimit(1)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(11)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(theme.card)
+    .overlay(
+      RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(theme.divider, lineWidth: 1)
+    )
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+
+  @ViewBuilder
+  private func eventHeading(_ event: LogsSearchEvent) -> some View {
+    Text(event.severity.uppercased()).foregroundStyle(
+      event.severity == "critical" || event.severity == "high" ? theme.danger : theme.textTertiary)
+    Text(event.service).foregroundStyle(theme.text)
+    if !event.host.isEmpty { Text(event.host).foregroundStyle(theme.textTertiary).lineLimit(1) }
+    if !event.type.isEmpty { Text(event.type).foregroundStyle(theme.textTertiary).lineLimit(1) }
+  }
+
+  @MainActor
+  private func search(reset: Bool) async {
+    guard !isLoading else { return }
+    isLoading = true
+    defer { isLoading = false }
+    if reset {
+      events = []
+      nextCursor = nil
+      loadedFilters = nil
+      errorMessage = ""
+    }
+    do {
+      let activeFilters = filters
+      let client = try LogsSearchClient(
+        apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+        userID: model.settings.userID,
+        token: model.settings.authToken,
+        impersonationToken: model.settings.impersonationToken,
+        impersonatingUserID: model.settings.impersonatingUserID
+      )
+      let page = try await client.load(filters: activeFilters, cursor: reset ? nil : nextCursor)
+      var seen = Set(events.map(\.id))
+      events = (events + page.rows).filter { seen.insert($0.id).inserted }.prefix(600).map { $0 }
+      nextCursor = page.nextCursor
+      loadedFilters = activeFilters
+      hasLoaded = true
+      errorMessage = ""
+    } catch {
+      errorMessage = error.localizedDescription
+      if reset { hasLoaded = false }
+    }
+  }
+}
