@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard/automations", "/dashboard/automation", "/system/cron"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -71,6 +71,8 @@ struct NativeDashboardDetail: View {
             ThreatIntelligenceNativePanel()
         case "/watchlists":
             OrganizationWatchlistsNativePanel()
+        case "/api":
+            APIReferenceNativePanel()
         case "/system/hosts":
             HostsNativePanel()
         case "/system/updates":
