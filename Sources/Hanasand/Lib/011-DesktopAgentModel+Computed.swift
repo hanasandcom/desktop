@@ -80,6 +80,7 @@ extension DesktopAgentModel {
             .route("Notes", "Open shared notes.", "note.text", "/notes"),
             .route("Traffic", "Inspect live traffic and maps.", "point.3.connected.trianglepath.dotted", "/traffic"),
             .route("Live Traffic Map", "Explore recent requests by country.", "map", "/traffic/map"),
+            .route("CDN Image Library", "Search, preview, and favorite private CDN images.", "photo.on.rectangle.angled", "/images/library"),
             .route("AI Metrics", "View AI model and usage metrics.", "sparkles", "/system/ai"),
             .route("Rate Limits", "Manage traffic policies and keys.", "gauge.with.needle", "/system/rates"),
             .route("Cron Jobs", "Check scheduled host jobs.", "calendar.badge.clock", "/system/cron"),

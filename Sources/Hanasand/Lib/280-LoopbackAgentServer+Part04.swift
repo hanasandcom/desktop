@@ -91,6 +91,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_traffic_map" || lowercasedRequest == "traffic-map" || lowercasedRequest == "open_traffic_map" {
             return "open_dashboard_traffic_map"
         }
+        if lowercasedRequest == "open_dashboard_image_library" || lowercasedRequest == "cdn-images" || lowercasedRequest == "image-library" {
+            return "open_dashboard_image_library"
+        }
         if lowercasedRequest == "open_dashboard_api_reference" || lowercasedRequest == "api_reference" || lowercasedRequest == "api-reference" {
             return "open_dashboard_api_reference"
         }

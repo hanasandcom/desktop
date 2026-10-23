@@ -115,6 +115,9 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_traffic_map" {
             openNativeDashboard(path: "/traffic/map", label: "Live Traffic Map")
             append(meta: "Dashboard", body: "Opened the Live Traffic Map panel.", kind: .command)
+        } else if command == "open_dashboard_image_library" {
+            openNativeDashboard(path: "/images/library", label: "CDN Image Library")
+            append(meta: "Dashboard", body: "Opened the CDN Image Library panel.", kind: .command)
         } else if command == "open_dashboard_password_check" {
             openNativeDashboard(path: "/pwned", label: "Password Check")
             append(meta: "Dashboard", body: "Opened Password Check panel.", kind: .command)

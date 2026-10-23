@@ -433,6 +433,7 @@ run_dashboard_smoke() {
   run_step "48-thesis" "open_dashboard_thesis"
   run_step "49-explore-tools" "open_dashboard_tools"
   run_step "50-traffic-map" "open_dashboard_traffic_map"
+  run_step "51-cdn-image-library" "open_dashboard_image_library"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

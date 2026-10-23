@@ -79,6 +79,7 @@ extension LoopbackAgentServer {
                 "dashboard_refresh",
                 "open_dashboard_tools",
                 "open_dashboard_traffic_map",
+                "open_dashboard_image_library",
                 "open_dashboard_api_reference",
                 "open_dashboard_password_check",
                 "open_support_desk",
