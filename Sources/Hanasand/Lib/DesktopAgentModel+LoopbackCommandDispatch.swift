@@ -247,6 +247,12 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_system" {
             openNativeDashboard(path: "/system", label: "System")
             append(meta: "Dashboard", body: "Opened native System panel.", kind: .command)
+        } else if command == "open_dashboard_containers" {
+            openNativeDashboard(path: "/system/containers", label: "Containers")
+            append(meta: "Dashboard", body: "Opened native Containers panel.", kind: .command)
+        } else if command == "open_dashboard_blocklist" {
+            openNativeDashboard(path: "/traffic/blocklist", label: "Traffic Blocklist")
+            append(meta: "Dashboard", body: "Opened native Traffic Blocklist panel.", kind: .command)
         } else if command == "open_dashboard_vms" {
             openNativeDashboard(path: "/vms", label: "VMs")
             append(meta: "Dashboard", body: "Opened native VMs panel.", kind: .command)

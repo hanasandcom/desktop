@@ -444,6 +444,8 @@ run_dashboard_smoke() {
   run_step "59-ti-profiles" "open_dashboard_ti_profiles"
   run_step "60-ti-sources" "open_dashboard_ti_sources"
   run_step "61-ti-timeliness" "open_dashboard_ti_timeliness"
+  run_step "62-containers" "open_dashboard_containers"
+  run_step "63-blocklist" "open_dashboard_blocklist"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

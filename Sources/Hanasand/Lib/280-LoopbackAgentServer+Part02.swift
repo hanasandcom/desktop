@@ -122,6 +122,8 @@ extension LoopbackAgentServer {
                 "open_dashboard_organization_events",
                 "open_dashboard_organization_activity",
                 "open_dashboard_system",
+                "open_dashboard_containers",
+                "open_dashboard_blocklist",
                 "open_dashboard_vms",
                 "open_dashboard_ai_models",
                 "open_dashboard_notes",
@@ -229,6 +231,12 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_organization_activity" {
                 return http(body: #"{"ok":true,"message":"Native Organization Activity panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_containers" {
+                return http(body: #"{"ok":true,"message":"Native Containers panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_blocklist" {
+                return http(body: #"{"ok":true,"message":"Native Traffic Blocklist panel opened in the Desktop app."}"#)
             }
             if command.hasPrefix("open_dashboard_") {
                 return http(body: #"{"ok":true,"message":"Native dashboard panel opened in the Desktop app."}"#)
