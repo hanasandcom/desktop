@@ -48,7 +48,8 @@ struct ChangedFilesDock: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 18)
-                    .frame(width: 760, height: 34)
+                    .frame(maxWidth: 760)
+                    .frame(height: 34)
                     .background(theme.commandBar)
                     .clipShape(UnevenRoundedRectangle(
                         topLeadingRadius: 18,
@@ -81,11 +82,12 @@ struct ChangedFilesDock: View {
                             if file.id != visibleFiles.last?.id {
                                 Rectangle()
                                     .fill(theme.divider)
-                                    .frame(width: 760, height: 1)
+                                    .frame(maxWidth: 760)
+                                    .frame(height: 1)
                             }
                         }
                     }
-                    .frame(width: 760)
+                    .frame(maxWidth: 760)
                     .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 18, bottomTrailingRadius: 18, topTrailingRadius: 0))
                 }
             }

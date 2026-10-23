@@ -6,6 +6,7 @@ struct IntegrationsNativePanel: View {
     @State private var page: IntegrationPage?
     @State private var draft: IntegrationDraft?
     @State private var search = ""
+    @State private var typeFilter = ""
     @State private var statusFilter = ""
     @State private var busy = false
     @State private var error = ""
@@ -21,7 +22,8 @@ struct IntegrationsNativePanel: View {
     private var canManage: Bool { !isImpersonating && page?.destinationAdminProof.access?.canManage == true }
     private var visible: [IntegrationDestination] {
         (page?.destinations ?? []).filter { item in
-            item.status != "archived" && (statusFilter.isEmpty || item.status == statusFilter)
+            item.status != "archived" && (typeFilter.isEmpty || item.kind.rawValue == typeFilter)
+                && (statusFilter.isEmpty || item.status == statusFilter)
                 && "\(item.name) \(item.endpointHint ?? "")".localizedCaseInsensitiveContains(search.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }
@@ -34,6 +36,10 @@ struct IntegrationsNativePanel: View {
                     ActionButton(title: "Add destination", icon: "plus") { beginNew() }.disabled(busy || !canManage || refreshRequired)
                 }
                 TextField("Search destinations", text: $search).textFieldStyle(.roundedBorder)
+                Picker("Type", selection: $typeFilter) {
+                    Text("All types").tag("")
+                    ForEach(IntegrationKind.allCases) { kind in Text(kind.title).tag(kind.rawValue) }
+                }.pickerStyle(.segmented)
                 Picker("Status", selection: $statusFilter) {
                     Text("All statuses").tag("")
                     Text("Active").tag("active")
@@ -65,11 +71,32 @@ struct IntegrationsNativePanel: View {
     }
 
     @ViewBuilder private func destinationRow(_ destination: IntegrationDestination, page: IntegrationPage) -> some View {
+        let test = page.destinationTests.first(where: { $0.destinationId == destination.id })
+        let latestTest = test?.latestTest
+        let testStatus = latestTest?.status ?? test?.status ?? destination.lastTestStatus
         VStack(alignment: .leading, spacing: 7) {
             Text(destination.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
             Text("\(destination.kind.title) · \(destination.status.capitalized)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
             Text(destination.endpointHint ?? "Configured destination").font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
-            Text("Last test: \(destination.lastTestedAt ?? "Not recorded")").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+            Text("Last test: \(testStatus?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not recorded")\(destination.lastTestedAt.map { " · \($0)" } ?? "")")
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+            if let latestTest {
+                HStack(spacing: 6) {
+                    if let dryRun = latestTest.dryRun { Label(dryRun ? "Dry run" : "Live test", systemImage: dryRun ? "checkmark.shield" : "paperplane") }
+                    if let responseStatus = latestTest.responseStatus { Text("HTTP \(responseStatus)") }
+                    if let source = latestTest.source { Text(source.replacingOccurrences(of: "_", with: " ")) }
+                }.font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                if let error = latestTest.error, !error.isEmpty {
+                    Text("Last test detail: \(error)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+            }
+            ForEach(test?.blockers ?? []) { blocker in
+                Text("\(blocker.blocking == true ? "Blocked" : "Note")\(blocker.code.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""): \(blocker.message)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(blocker.blocking == true ? theme.danger : theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
             HStack(spacing: 8) {
                 ActionButton(title: "Edit", icon: "pencil") { beginEdit(destination) }.disabled(busy || !canManage || !permission(destination.id, page: page, keyPath: \.canUpdate))
                 ActionButton(title: "Test", icon: "paperplane") { pendingAction = PendingAction(kind: .test, destination: destination) }.disabled(busy || !canManage || !testAllowed(destination.id, page: page))

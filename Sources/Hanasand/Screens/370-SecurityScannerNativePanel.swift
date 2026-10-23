@@ -325,10 +325,17 @@ struct SecurityScannerNativePanel: View {
 
     private var historyView: some View {
         NativeGroupPanel(title: "Scanner runs", subtitle: "\(uniqueRuns.count) loaded") {
-            HStack {
-                TextField("Search target, profile, or run ID", text: $runQuery).textFieldStyle(.roundedBorder)
-                Picker("Engine", selection: $runEngine) { Text("All engines").tag("all"); ForEach(SecurityScannerEngineID.allCases) { Text($0.title).tag($0.rawValue) } }.frame(maxWidth: 180)
-                Picker("Status", selection: $runStatus) { Text("All statuses").tag("all"); ForEach(["queued", "launching", "running", "exporting", "succeeded", "partial", "failed", "cancelling", "cancelled"], id: \.self) { Text($0.capitalized).tag($0) } }.frame(maxWidth: 180)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    runSearchField
+                    runEnginePicker
+                    runStatusPicker
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    runSearchField
+                    runEnginePicker
+                    runStatusPicker
+                }
             }
             if uniqueRuns.isEmpty { NativeEmptyState(title: "No scanner runs", message: "Runs appear here after an asset scan or assessment starts.") }
             if !uniqueRuns.isEmpty && visibleRuns.isEmpty { NativeEmptyState(title: "No matching runs", message: "Change or clear a filter to see more scanner runs.") }
@@ -354,11 +361,19 @@ struct SecurityScannerNativePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             NativeGroupPanel(title: "Findings", subtitle: "\(snapshot.findingSummary?.total ?? snapshot.findings.count) total · \(snapshot.findingSummary?.actionable ?? snapshot.findings.filter { ["open", "in_progress", "pending_verification"].contains($0.status) }.count) actionable") {
                 TextField("Search title, CVE, asset, or evidence", text: $findingQuery).textFieldStyle(.roundedBorder)
-                HStack {
-                    Picker("Engine", selection: $findingEngine) { Text("All engines").tag("all"); ForEach(SecurityScannerEngineID.allCases) { Text($0.title).tag($0.rawValue) } }.frame(maxWidth: 180)
-                    Picker("Severity", selection: $findingSeverity) { Text("All severities").tag("all"); ForEach(["critical", "high", "medium", "low", "unknown"], id: \.self) { Text($0.capitalized).tag($0) } }.frame(maxWidth: 150)
-                    Picker("Status", selection: $findingStatus) { Text("Actionable").tag("actionable"); Text("All statuses").tag("all"); ForEach(["open", "in_progress", "pending_verification", "accepted_risk", "false_positive", "resolved"], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) } }.frame(maxWidth: 180)
-                    Picker("Asset", selection: $findingAsset) { Text("All assets").tag("all"); ForEach(snapshot.assets) { Text($0.hostname).tag($0.id) } }.frame(maxWidth: 200)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        findingEnginePicker
+                        findingSeverityPicker
+                        findingStatusPicker
+                        findingAssetPicker
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        findingEnginePicker
+                        findingSeverityPicker
+                        findingStatusPicker
+                        findingAssetPicker
+                    }
                 }
                 if uniqueFindings.isEmpty { NativeEmptyState(title: "No findings", message: "Findings appear after supported scanners complete runs.") }
                 if !uniqueFindings.isEmpty && visibleFindings.isEmpty { NativeEmptyState(title: "No matching findings", message: "Change or clear a filter to see more findings.") }
@@ -366,6 +381,65 @@ struct SecurityScannerNativePanel: View {
                 if let findingCursor { ActionButton(title: busy == "older:finding" ? "Loading…" : "Load older findings", icon: "arrow.down.page") { Task { await loadOlderFindings(findingCursor) } }.disabled(busy == "older:finding") }
             }
         }
+    }
+
+    private var runSearchField: some View {
+        TextField("Search target, profile, or run ID", text: $runQuery)
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var runEnginePicker: some View {
+        Picker("Engine", selection: $runEngine) {
+            Text("All engines").tag("all")
+            ForEach(SecurityScannerEngineID.allCases) { Text($0.title).tag($0.rawValue) }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+    }
+
+    private var runStatusPicker: some View {
+        Picker("Status", selection: $runStatus) {
+            Text("All statuses").tag("all")
+            ForEach(["queued", "launching", "running", "exporting", "succeeded", "partial", "failed", "cancelling", "cancelled"], id: \.self) {
+                Text($0.capitalized).tag($0)
+            }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+    }
+
+    private var findingEnginePicker: some View {
+        Picker("Engine", selection: $findingEngine) {
+            Text("All engines").tag("all")
+            ForEach(SecurityScannerEngineID.allCases) { Text($0.title).tag($0.rawValue) }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+    }
+
+    private var findingSeverityPicker: some View {
+        Picker("Severity", selection: $findingSeverity) {
+            Text("All severities").tag("all")
+            ForEach(["critical", "high", "medium", "low", "unknown"], id: \.self) { Text($0.capitalized).tag($0) }
+        }
+        .frame(maxWidth: 150, alignment: .leading)
+    }
+
+    private var findingStatusPicker: some View {
+        Picker("Status", selection: $findingStatus) {
+            Text("Actionable").tag("actionable")
+            Text("All statuses").tag("all")
+            ForEach(["open", "in_progress", "pending_verification", "accepted_risk", "false_positive", "resolved"], id: \.self) {
+                Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0)
+            }
+        }
+        .frame(maxWidth: 180, alignment: .leading)
+    }
+
+    private var findingAssetPicker: some View {
+        Picker("Asset", selection: $findingAsset) {
+            Text("All assets").tag("all")
+            ForEach(snapshot.assets) { Text($0.hostname).tag($0.id) }
+        }
+        .frame(maxWidth: 200, alignment: .leading)
     }
 
     private func findingCard(_ finding: SecurityScannerFinding) -> some View {

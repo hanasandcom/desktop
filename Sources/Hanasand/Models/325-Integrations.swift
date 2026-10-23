@@ -15,6 +15,7 @@ struct IntegrationDestination: Decodable, Identifiable, Equatable {
     let status: String
     let endpointHint: String?
     let lastTestedAt: String?
+    let lastTestStatus: String?
 }
 
 struct IntegrationPermission: Decodable {
@@ -30,14 +31,29 @@ struct IntegrationAccessRow: Decodable {
 }
 
 struct IntegrationBlocker: Decodable, Identifiable {
-    var id: String { message }
+    var id: String { "\(code ?? "blocker"): \(message)" }
+    let code: String?
     let blocking: Bool?
     let message: String
+}
+
+struct IntegrationLatestTest: Decodable {
+    let requestId: String?
+    let deliveryId: String?
+    let status: String?
+    let dryRun: Bool?
+    let live: Bool?
+    let responseStatus: Int?
+    let error: String?
+    let attemptedAt: String?
+    let source: String?
 }
 
 struct IntegrationTestRow: Decodable {
     let destinationId: String?
     let access: IntegrationPermission?
+    let status: String?
+    let latestTest: IntegrationLatestTest?
     let blockers: [IntegrationBlocker]?
 }
 

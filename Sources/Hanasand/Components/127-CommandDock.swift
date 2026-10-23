@@ -33,7 +33,8 @@ struct CommandDock: View {
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 18)
-                .frame(width: 760, height: 34)
+                .frame(maxWidth: 760)
+                .frame(height: 34)
                 .background(theme.commandBar)
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 22, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 22))
             }
@@ -90,7 +91,7 @@ struct CommandDock: View {
             .padding(.horizontal, 18)
             .padding(.top, 26)
             .padding(.bottom, 22)
-            .frame(width: 760)
+            .frame(maxWidth: 760)
             .background(theme.commandPanel)
             .clipShape(UnevenRoundedRectangle(
                 topLeadingRadius: showHeader || !model.promptQueue.isEmpty ? 0 : 22,
@@ -135,10 +136,11 @@ struct CommandDock: View {
             .buttonStyle(.plain)
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(model.isAIRateLimited ? theme.textTertiary : theme.textSecondary)
-            .frame(width: 760, alignment: .leading)
+            .frame(maxWidth: 760, alignment: .leading)
             .padding(.top, 14)
             .help("Working folder and quota")
         }
+        .frame(maxWidth: .infinity)
         .padding(.bottom, 20)
     }
 
@@ -148,7 +150,7 @@ struct CommandDock: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(width: 760)
+        .frame(maxWidth: 760)
         .background(theme.commandPanel.opacity(0.78))
         .overlay(alignment: .bottom) {
             Rectangle()

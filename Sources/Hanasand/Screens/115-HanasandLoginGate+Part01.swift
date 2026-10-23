@@ -105,6 +105,7 @@ extension HanasandLoginGate {
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }
+            AccountSignupForm()
         }
         .padding(14)
         .background(theme.card)
@@ -115,6 +116,126 @@ extension HanasandLoginGate {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: .black.opacity(theme.isLight ? 0.08 : 0.24), radius: 22, x: 0, y: 14)
     }
+
+private struct AccountSignupForm: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    @State private var expanded = false
+    @State private var waitingForCode = false
+    @State private var challengeID: String?
+    @State private var name = ""
+    @State private var username = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                expanded.toggle()
+                model.loginStatus = ""
+            } label: {
+                Text(expanded ? "Already have an account? Log in" : "Create an account")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isLoggingIn)
+
+            if expanded {
+                Divider().overlay(theme.divider)
+                Text("Create your Hanasand account")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                TextField("Full name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(model.isLoggingIn || waitingForCode)
+                TextField("Username", text: $username)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .disabled(model.isLoggingIn || waitingForCode)
+                TextField("Email address", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.emailAddress)
+                    .autocorrectionDisabled()
+                    .disabled(model.isLoggingIn || waitingForCode)
+                SecureField("Password", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(model.isLoggingIn || waitingForCode)
+                Text("Use at least 16 characters with an uppercase letter, lowercase letter, number, and symbol.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if waitingForCode {
+                    TextField("Six-digit email code", text: $code)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: code) { _, value in
+                            code = String(value.filter(\.isNumber).prefix(6))
+                        }
+                    Text("The code expires after 10 minutes. Your signup details must stay the same while you verify.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await submit() }
+                    } label: {
+                        HStack(spacing: 7) {
+                            if model.isLoggingIn { ProgressView().controlSize(.small) }
+                            Text(waitingForCode ? "Verify email and create account" : "Send verification code")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isLoggingIn || !canSubmit)
+
+                    if waitingForCode {
+                        Button("Start over") {
+                            waitingForCode = false
+                            challengeID = nil
+                            code = ""
+                            model.loginStatus = ""
+                        }
+                        .disabled(model.isLoggingIn)
+                    }
+                }
+            }
+        }
+    }
+
+    private var canSubmit: Bool {
+        let cleanUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let emailLooksValid = cleanEmail.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil,
+              emailLooksValid, AccountSignupClient.passwordMeetsRequirements(password) else { return false }
+        return !waitingForCode || (challengeID != nil && code.count == 6)
+    }
+
+    @MainActor private func submit() async {
+        guard canSubmit else { return }
+        do {
+            let result = try await model.submitAccountSignup(
+                name: name,
+                username: username,
+                email: email,
+                password: password,
+                challengeID: challengeID,
+                code: waitingForCode ? code : nil
+            )
+            if case let .verificationRequired(value) = result {
+                challengeID = value
+                waitingForCode = true
+                code = ""
+            }
+        } catch {
+            // The model publishes a safe, user-facing error message.
+        }
+    }
+}
 
     var pendingDeletionCard: some View {
         VStack(alignment: .leading, spacing: 13) {

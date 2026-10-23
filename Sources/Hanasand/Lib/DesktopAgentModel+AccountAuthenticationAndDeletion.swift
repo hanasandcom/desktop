@@ -10,7 +10,163 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct AccountSignupResponse: Decodable {
+    let id: String?
+    let token: String?
+    let expiresAt: String?
+    let error: String?
+    let verificationRequired: Bool?
+    let challengeId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, token, error
+        case expiresAt = "expires_at"
+        case verificationRequired, challengeId
+    }
+}
+
+enum AccountSignupResult {
+    case verificationRequired(challengeID: String)
+    case authenticated(HanasandLoginResponse)
+}
+
+enum AccountSignupError: LocalizedError {
+    case invalidBaseURL
+    case invalidName
+    case invalidUsername
+    case invalidEmail
+    case weakPassword
+    case invalidVerification
+    case invalidResponse
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL: "Account creation requires a valid secure API address."
+        case .invalidName: "Enter your name (up to 100 characters)."
+        case .invalidUsername: "Use 3–40 letters, numbers, dots, underscores or hyphens for your username."
+        case .invalidEmail: "Enter a valid email address."
+        case .weakPassword: "Use at least 16 characters, including one uppercase letter, one lowercase letter, one number, and one special character."
+        case .invalidVerification: "Enter the six-digit code sent to your email."
+        case .invalidResponse: "The account service returned an invalid response. Try again."
+        case let .requestFailed(message): message
+        }
+    }
+}
+
+private final class AccountSignupRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum AccountSignupSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration, delegate: AccountSignupRedirectDelegate(), delegateQueue: nil)
+    }()
+}
+
+struct AccountSignupClient {
+    let endpoint: URL
+    var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
+        try await AccountSignupSession.shared.data(for: request)
+    }
+
+    init(baseURL: URL, send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
+        guard baseURL.scheme?.lowercased() == "https", baseURL.host != nil,
+              baseURL.user == nil, baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil else {
+            throw AccountSignupError.invalidBaseURL
+        }
+        let normalized = baseURL.appendingAPIPath("user")
+        guard normalized.scheme?.lowercased() == "https", normalized.host == baseURL.host else {
+            throw AccountSignupError.invalidBaseURL
+        }
+        endpoint = normalized
+        if let send { self.send = send }
+    }
+
+    func submit(name: String, username: String, email: String, password: String, challengeID: String? = nil, code: String? = nil) async throws -> AccountSignupResult {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !cleanName.isEmpty, cleanName.count <= 100 else { throw AccountSignupError.invalidName }
+        guard cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil else {
+            throw AccountSignupError.invalidUsername
+        }
+        guard cleanEmail.count <= 254, cleanEmail.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil else {
+            throw AccountSignupError.invalidEmail
+        }
+        guard Self.passwordMeetsRequirements(password) else { throw AccountSignupError.weakPassword }
+        if challengeID != nil || code != nil {
+            guard let challengeID, challengeID.range(of: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", options: [.regularExpression, .caseInsensitive]) != nil,
+                  let code, code.range(of: "^\\d{6}$", options: .regularExpression) != nil else {
+                throw AccountSignupError.invalidVerification
+            }
+        }
+
+        var payload: [String: String] = ["id": cleanUsername, "name": cleanName, "email": cleanEmail, "password": password]
+        if let challengeID, let code { payload["challengeId"] = challengeID; payload["code"] = code }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse else { throw AccountSignupError.invalidResponse }
+        let result = try? JSONDecoder().decode(AccountSignupResponse.self, from: data)
+        if http.statusCode == 202, result?.verificationRequired == true,
+           let challengeID = result?.challengeId, UUID(uuidString: challengeID) != nil {
+            return .verificationRequired(challengeID: challengeID)
+        }
+        if (200..<300).contains(http.statusCode), let result, let token = result.token, !token.isEmpty {
+            return .authenticated(HanasandLoginResponse(id: result.id, token: token, expiresAt: result.expiresAt, error: nil, pendingDeletion: nil, deletionScheduledAt: nil, restoreToken: nil))
+        }
+        let message = result?.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+        throw AccountSignupError.requestFailed(message?.isEmpty == false ? message! : "Account creation failed (HTTP \(http.statusCode)).")
+    }
+
+    static func passwordMeetsRequirements(_ password: String) -> Bool {
+        password.count >= 16
+            && password.range(of: "[A-Z]", options: .regularExpression) != nil
+            && password.range(of: "[a-z]", options: .regularExpression) != nil
+            && password.range(of: "[0-9]", options: .regularExpression) != nil
+            && password.range(of: "[^a-zA-Z0-9\\s]", options: .regularExpression) != nil
+    }
+}
+
 extension DesktopAgentModel {
+
+    func submitAccountSignup(name: String, username: String, email: String, password: String, challengeID: String? = nil, code: String? = nil) async throws -> AccountSignupResult {
+        guard !isLoggingIn else { throw AccountSignupError.requestFailed("Account creation is already in progress.") }
+        isLoggingIn = true
+        loginStatus = challengeID == nil ? "Creating account" : "Verifying email"
+        defer { isLoggingIn = false }
+        do {
+            let client = try AccountSignupClient(baseURL: settings.apiBaseURL.normalizedBaseURL)
+            let result = try await client.submit(name: name, username: username, email: email, password: password, challengeID: challengeID, code: code)
+            switch result {
+            case .verificationRequired:
+                loginStatus = "Verification code sent. Check your email and enter the six-digit code."
+            case let .authenticated(response):
+                try activateHanasandSession(response, fallbackUserID: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+                loginStatus = ""
+            }
+            return result
+        } catch {
+            loginStatus = error.localizedDescription
+            throw error
+        }
+    }
 
     func loginToHanasand() async {
         let username = loginUsername.trimmingCharacters(in: .whitespacesAndNewlines)
