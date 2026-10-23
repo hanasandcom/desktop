@@ -10,6 +10,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum BrowserAgentControlsLayout {
+    static let minimumTextFieldWidth: CGFloat = 190
+    static let coordinateFieldWidth: CGFloat = 72
+    static let compactContentWidth: CGFloat = 535
+    static let wideContentWidth: CGFloat = 967
+    static let horizontalSpacing: CGFloat = 8
+    static let pointerButtonsWidthBudget: CGFloat = 188
+    static let inputRowMinimumWidth = minimumTextFieldWidth * 2 + horizontalSpacing
+    static let coordinateRowMinimumWidth = coordinateFieldWidth * 2 + pointerButtonsWidthBudget + horizontalSpacing * 4
+    static let combinedRowMinimumWidth = inputRowMinimumWidth + coordinateRowMinimumWidth + horizontalSpacing
+}
+
 extension BrowserWorkspace {
 
     func browserToolbar(_ browser: BrowserTabState) -> some View {
@@ -79,66 +91,36 @@ extension BrowserWorkspace {
 
     func agentControlPanel(_ browser: BrowserTabState) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Label("Agent controls", systemImage: "cursorarrow.motionlines")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.text)
-                Text(browser.agentStatus)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.textTertiary)
-                    .lineLimit(1)
-                Spacer()
-                BrowserAgentButton(title: "Inspect", icon: "scope") {
-                    browser.refreshAgentElements()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+                    agentControlsHeading(browser)
+                    Spacer(minLength: 0)
+                    agentActionButtons(browser)
                 }
-                BrowserAgentButton(title: "Click", icon: "cursorarrow.click") {
-                    browser.clickAgentSelector()
-                }
-                BrowserAgentButton(title: "Focus", icon: "selection.pin.in.out") {
-                    browser.focusAgentSelector()
-                }
-                BrowserAgentButton(title: "Type", icon: "keyboard") {
-                    browser.typeAgentText()
-                }
-                BrowserAgentButton(title: "Enter", icon: "return") {
-                    browser.pressAgentKey("Enter")
-                }
-                BrowserAgentButton(title: "Esc", icon: "escape") {
-                    browser.pressAgentKey("Escape")
+                .fixedSize(horizontal: true, vertical: false)
+
+                VStack(alignment: .leading, spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+                    agentControlsHeading(browser)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        agentActionButtons(browser)
+                    }
                 }
             }
 
-            HStack(spacing: 8) {
-                BrowserAgentField(
-                    title: "Selector",
-                    text: Binding(get: { browser.agentSelector }, set: { browser.agentSelector = $0 }),
-                    placeholder: "#login, button[type=submit], .save"
-                )
-                BrowserAgentField(
-                    title: "Text",
-                    text: Binding(get: { browser.agentText }, set: { browser.agentText = $0 }),
-                    placeholder: "Text to type"
-                )
-                BrowserAgentField(
-                    title: "X",
-                    text: Binding(get: { browser.agentX }, set: { browser.agentX = $0 }),
-                    placeholder: "120",
-                    width: 72
-                )
-                BrowserAgentField(
-                    title: "Y",
-                    text: Binding(get: { browser.agentY }, set: { browser.agentY = $0 }),
-                    placeholder: "120",
-                    width: 72
-                )
-                BrowserAgentButton(title: "Point", icon: "target") {
-                    browser.clickAgentPoint()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+                    selectorAgentField(browser)
+                    textAgentField(browser)
+                    coordinateAndPointerControls(browser)
                 }
-                BrowserAgentButton(title: "Up", icon: "arrow.up") {
-                    browser.scrollAgentPage(deltaY: -520)
-                }
-                BrowserAgentButton(title: "Down", icon: "arrow.down") {
-                    browser.scrollAgentPage(deltaY: 520)
+                .fixedSize(horizontal: true, vertical: false)
+
+                VStack(alignment: .leading, spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+                    HStack(spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+                        selectorAgentField(browser)
+                        textAgentField(browser)
+                    }
+                    coordinateAndPointerControls(browser)
                 }
             }
 
@@ -181,6 +163,86 @@ extension BrowserWorkspace {
             Rectangle()
                 .fill(theme.divider)
                 .frame(height: 1)
+        }
+    }
+
+    private func agentControlsHeading(_ browser: BrowserTabState) -> some View {
+        HStack(spacing: BrowserAgentControlsLayout.horizontalSpacing) {
+            Label("Agent controls", systemImage: "cursorarrow.motionlines")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(theme.text)
+            Text(browser.agentStatus)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.textTertiary)
+                .lineLimit(1)
+                .frame(maxWidth: 240, alignment: .leading)
+        }
+    }
+
+    private func agentActionButtons(_ browser: BrowserTabState) -> some View {
+        HStack(spacing: 8) {
+            BrowserAgentButton(title: "Inspect", icon: "scope") {
+                browser.refreshAgentElements()
+            }
+            BrowserAgentButton(title: "Click", icon: "cursorarrow.click") {
+                browser.clickAgentSelector()
+            }
+            BrowserAgentButton(title: "Focus", icon: "selection.pin.in.out") {
+                browser.focusAgentSelector()
+            }
+            BrowserAgentButton(title: "Type", icon: "keyboard") {
+                browser.typeAgentText()
+            }
+            BrowserAgentButton(title: "Enter", icon: "return") {
+                browser.pressAgentKey("Enter")
+            }
+            BrowserAgentButton(title: "Esc", icon: "escape") {
+                browser.pressAgentKey("Escape")
+            }
+        }
+    }
+
+    private func selectorAgentField(_ browser: BrowserTabState) -> some View {
+        BrowserAgentField(
+            title: "Selector",
+            text: Binding(get: { browser.agentSelector }, set: { browser.agentSelector = $0 }),
+            placeholder: "#login, button[type=submit], .save"
+        )
+        .frame(minWidth: BrowserAgentControlsLayout.minimumTextFieldWidth)
+    }
+
+    private func textAgentField(_ browser: BrowserTabState) -> some View {
+        BrowserAgentField(
+            title: "Text",
+            text: Binding(get: { browser.agentText }, set: { browser.agentText = $0 }),
+            placeholder: "Text to type"
+        )
+        .frame(minWidth: BrowserAgentControlsLayout.minimumTextFieldWidth)
+    }
+
+    private func coordinateAndPointerControls(_ browser: BrowserTabState) -> some View {
+        HStack(spacing: 8) {
+            BrowserAgentField(
+                title: "X",
+                text: Binding(get: { browser.agentX }, set: { browser.agentX = $0 }),
+                placeholder: "120",
+                width: BrowserAgentControlsLayout.coordinateFieldWidth
+            )
+            BrowserAgentField(
+                title: "Y",
+                text: Binding(get: { browser.agentY }, set: { browser.agentY = $0 }),
+                placeholder: "120",
+                width: BrowserAgentControlsLayout.coordinateFieldWidth
+            )
+            BrowserAgentButton(title: "Point", icon: "target") {
+                browser.clickAgentPoint()
+            }
+            BrowserAgentButton(title: "Up", icon: "arrow.up") {
+                browser.scrollAgentPage(deltaY: -520)
+            }
+            BrowserAgentButton(title: "Down", icon: "arrow.down") {
+                browser.scrollAgentPage(deltaY: 520)
+            }
         }
     }
 }
