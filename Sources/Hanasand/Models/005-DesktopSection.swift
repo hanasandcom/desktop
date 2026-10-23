@@ -20,6 +20,7 @@ enum DesktopSection: String, CaseIterable, Identifiable {
     case mail
     case documents
     case images
+    case albums
     case server
     case updates
     case settings
@@ -37,6 +38,7 @@ enum DesktopSection: String, CaseIterable, Identifiable {
         case .mail: return "Mail"
         case .documents: return "Documents"
         case .images: return "Images"
+        case .albums: return "Albums"
         case .server: return "Server"
         case .updates: return "Updates"
         case .settings: return "Settings"
@@ -54,6 +56,7 @@ enum DesktopSection: String, CaseIterable, Identifiable {
         case .mail: return "envelope"
         case .documents: return "doc.viewfinder"
         case .images: return "photo.on.rectangle.angled"
+        case .albums: return "photo.stack"
         case .server: return "server.rack"
         case .updates: return "arrow.triangle.2.circlepath"
         case .settings: return "gearshape"
@@ -71,6 +74,7 @@ enum DesktopSection: String, CaseIterable, Identifiable {
         case .mail: return "7"
         case .documents: return "8"
         case .images: return "9"
+        case .albums: return "0"
         case .server: return "r"
         case .updates: return "u"
         case .settings: return ","

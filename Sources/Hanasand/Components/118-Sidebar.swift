@@ -30,7 +30,7 @@ struct Sidebar: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach([DesktopSection.command, .control, .dashboard, .browser, .ide, .mac, .mail, .documents, .images, .server, .updates], id: \.id) { section in
+                    ForEach([DesktopSection.command, .control, .dashboard, .browser, .ide, .mac, .mail, .documents, .images, .albums, .server, .updates], id: \.id) { section in
                         NavRow(icon: section.icon, title: section.title, isSelected: model.selectedSection == section) {
                             model.selectedSection = section
                         }

@@ -23,6 +23,7 @@ struct ImageReviewWorkspace: View {
         FeatureWorkspace(title: "Images", subtitle: model.imageReviewStatus) {
             HStack(spacing: 10) {
                 ActionButton(title: "Import images", icon: "photo.stack") { model.importImagesForReview() }
+                ActionButton(title: "Albums", icon: "rectangle.stack") { model.selectedSection = .albums }
                 ActionButton(title: "Undo", icon: "arrow.uturn.backward") { model.undoImageDecision() }
                 ActionButton(title: "Restart", icon: "arrow.counterclockwise") { model.restartImageReview() }
                 ActionButton(title: "Trash marked (\(discardCount))", icon: "trash", tone: .danger) { confirmTrash = true }

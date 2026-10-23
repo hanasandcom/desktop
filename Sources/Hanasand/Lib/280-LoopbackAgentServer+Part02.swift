@@ -71,6 +71,7 @@ extension LoopbackAgentServer {
                 "open_section_mail",
                 "open_section_documents",
                 "open_section_images",
+                "open_section_albums",
                 "open_section_ai",
                 "open_section_server",
                 "open_section_updates",

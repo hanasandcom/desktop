@@ -85,6 +85,9 @@ extension DesktopAgentModel {
         } else if command == "open_section_images" {
             selectedSection = .images
             append(meta: "Navigation", body: "Opened Images section.", kind: .command)
+        } else if command == "open_section_albums" {
+            selectedSection = .albums
+            append(meta: "Navigation", body: "Opened Albums section.", kind: .command)
         } else if command == "open_section_ai" {
             selectedSection = .command
             append(meta: "Navigation", body: "Opened Chat section.", kind: .command)

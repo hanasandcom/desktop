@@ -67,6 +67,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_section_images" || lowercasedRequest == "images" || lowercasedRequest == "photos" {
             return "open_section_images"
         }
+        if lowercasedRequest == "open_section_albums" || lowercasedRequest == "albums" || lowercasedRequest == "gallery albums" {
+            return "open_section_albums"
+        }
         if lowercasedRequest == "open_section_ai" || lowercasedRequest == "ai" || lowercasedRequest == "hanasand_ai" {
             return "open_section_ai"
         }

@@ -12,6 +12,8 @@ swift run Hanasand
 
 The package requires macOS 14 or later. The app starts its embedded Swift HTTPS bridge on port `45731`. It creates a unique P-256 TLS key in the macOS Keychain and a self-signed leaf certificate for `localhost` plus every active advertised IPv4 address. The private key stays in Keychain. The app reuses the certificate while its address set is unchanged, reissues it when that set changes, and publishes the lowercase SHA-256 fingerprint of the certificate's DER bytes with the LAN endpoints. The bridge also accepts requests on the Mac itself. Its requests require a short-lived, nonce-protected HMAC session proof derived from the current Hanasand login; unauthenticated requests receive HTTP 401 inside the TLS connection.
 
+The **Albums** section manages private-by-default CDN photo albums, including album names, contents, and invited viewer or contributor access. The **Images** section remains the local image-review workspace. Album thumbnails are loaded through the authenticated CDN session and kept out of the shared URL cache.
+
 ### Embedded Swift bridge routes
 
 The bridge exposes these HTTPS routes:

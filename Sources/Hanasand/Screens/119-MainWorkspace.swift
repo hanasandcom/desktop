@@ -56,6 +56,8 @@ struct MainWorkspace: View {
                 DocumentWorkspace()
             case .images:
                 ImageReviewWorkspace()
+            case .albums:
+                GalleryAlbumsNativePanel()
             case .server:
                 ServerWorkspace()
             case .updates:
