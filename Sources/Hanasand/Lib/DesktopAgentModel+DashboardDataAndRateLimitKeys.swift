@@ -51,6 +51,14 @@ extension DesktopAgentModel {
             await loadOrganizationDirectory()
             return
         }
+        if path == "/ti" {
+            await loadThreatSavedSearches()
+            return
+        }
+        if path == "/watchlists" {
+            await loadOrganizationWatchlists()
+            return
+        }
         guard let endpoint = nativeEndpoint(for: path) else {
             guard nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
             nativeDashboardStatus = "Native controls"

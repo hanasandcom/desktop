@@ -124,6 +124,10 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var monitoringCases: [MonitoringCase] = []; @Published var selectedMonitoringCase: MonitoringCase?; @Published var monitoringCaseSearch = ""; @Published var monitoringCaseStatusFilter = "active"; @Published var monitoringCaseSeverityFilter = "all"; @Published var monitoringCaseOwnerFilter = "all"; @Published var monitoringCaseReviewFilter = "all"; @Published var monitoringCaseResolutionFilter = "all"; @Published var monitoringCaseComment = ""
 
+    @Published var threatSearchQuery = ""; @Published var threatSearchResult: ThreatIntelSearchResult?; @Published var threatSearchStatus = ""; @Published var isLoadingThreatSearch = false; @Published var threatSearchResultLimit = 20; @Published var threatSavedSearches: [ThreatSavedSearch] = []; @Published var threatSavedSearchStatus = ""; @Published var isMutatingThreatSavedSearch = false
+
+    @Published var organizationWatchlistPage: OrganizationWatchlistPage?; @Published var organizationWatchlistStatusFilter = "all"; @Published var organizationWatchlistSearch = ""; @Published var selectedOrganizationWatchlistItemID = ""; @Published var organizationWatchlistDraftKind = OrganizationWatchlistKind.domain; @Published var organizationWatchlistDraftValue = ""; @Published var organizationWatchlistDraftNotes = ""; @Published var organizationWatchlistEditingID = ""; @Published var organizationWatchlistFormPresented = false; @Published var isLoadingOrganizationWatchlists = false; @Published var isMutatingOrganizationWatchlists = false; @Published var organizationWatchlistStatus = ""
+
     @Published var rateLimitKeyOwnerID = ""; @Published var rateLimitKeyName = ""; @Published var rateLimitKeyTier = "starter"; @Published var rateLimitKeyRoute = ""
 
     @Published var rateLimitIssuedSecret: String?; @Published var rateLimitOverrideRoute = ""; @Published var rateLimitOverrideScope = "anonymous"; @Published var rateLimitOverrideWindowMs = "60000"
