@@ -446,6 +446,10 @@ run_dashboard_smoke() {
   run_step "61-ti-timeliness" "open_dashboard_ti_timeliness"
   run_step "62-containers" "open_dashboard_containers"
   run_step "63-blocklist" "open_dashboard_blocklist"
+  run_step "64-log-search" "open_dashboard_log_search"
+  run_step "65-openapi-json" "open_dashboard_openapi_json"
+  run_step "66-organization-team" "open_dashboard_organization_team"
+  run_step "67-sandbox-history" "open_dashboard_sandbox_history"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {
