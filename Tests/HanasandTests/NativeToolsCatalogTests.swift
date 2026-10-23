@@ -60,6 +60,8 @@ final class NativeToolsCatalogTests: XCTestCase {
             DesktopAction.url("Spoofed host", "", "link", "https://ti.hanasand.com.attacker.example/dashboard/ti/runs"),
             DesktopAction.url("Insecure scheme", "", "link", "http://ti.hanasand.com/dashboard/ti/runs"),
             DesktopAction.url("Modified destination", "", "link", "https://ti.hanasand.com/dashboard/ti/runs?user=other"),
+            DesktopAction.url("Credential URL", "", "link", "https://user@ti.hanasand.com/dashboard/ti/runs"),
+            DesktopAction.url("Alternate port", "", "link", "https://ti.hanasand.com:8443/dashboard/ti/runs"),
         ]
 
         XCTAssertTrue(NativeToolsCatalog.sections(dashboard: actions, administration: []).isEmpty)

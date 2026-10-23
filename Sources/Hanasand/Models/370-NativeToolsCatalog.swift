@@ -51,6 +51,9 @@ private extension DesktopAction {
             guard let url = URL(string: value),
                   url.scheme == "https",
                   url.host == "ti.hanasand.com",
+                  url.user == nil,
+                  url.password == nil,
+                  url.port == nil,
                   url.path == "/dashboard/ti/runs",
                   url.query == nil,
                   url.fragment == nil else { return "" }
