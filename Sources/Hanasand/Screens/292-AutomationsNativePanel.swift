@@ -43,6 +43,7 @@ struct AutomationsNativePanel: View {
     @State private var draftName = ""
     @State private var draftURL = ""
     @State private var draftPrompt = ""
+    @State private var draftActionType = "agent_prompt"
     @State private var draftInterval = "15"
     @State private var draftMonitoringType = "fetch"
     @State private var draftScheduleKind = "interval"
@@ -57,6 +58,11 @@ struct AutomationsNativePanel: View {
     @State private var draftExpectedDown = false
     @State private var draftUpsideDown = false
     @State private var draftNotifyWarnings = false
+    @State private var canManageSystemAutomations = false
+    @State private var draftJSONPath = ""
+    @State private var draftJSONOperator = "gt"
+    @State private var draftJSONAggregate = "max"
+    @State private var draftJSONValue = "80"
     @State private var nextPage: Int?
     @State private var issues: [DesktopAutomationIssue] = []
 
@@ -181,22 +187,75 @@ struct AutomationsNativePanel: View {
     private var editor: some View {
         NativeGroupPanel(title: selected == nil ? "New automation" : "Edit automation", subtitle: "") {
             field("Name", text: $draftName, placeholder: "Production website")
-            field("URL", text: $draftURL, placeholder: "https://example.com")
-            field("Check prompt", text: $draftPrompt, placeholder: "Describe what this check should confirm")
-            Picker("Check type", selection: $draftMonitoringType) {
-                ForEach(["fetch", "post", "tcp", "ssh", "json"], id: \.self) { Text($0.uppercased()).tag($0) }
+            Picker("Action", selection: Binding(
+                get: { draftActionType },
+                set: { action in
+                    draftActionType = action
+                    if action != "agent_prompt" { draftMonitoringType = "fetch" }
+                }
+            )) {
+                ForEach(availableActionTypes, id: \.self) { Text(actionLabel($0)).tag($0) }
+            }.disabled(selected?.monitoringType == "push" || selected?.actionType == "organization_report")
+            field("Description", text: $draftPrompt, placeholder: "Describe this scheduled action")
+            if draftActionType == "agent_prompt" {
+                field(draftMonitoringType == "push" ? "Source ID" : "URL or host", text: $draftURL, placeholder: draftMonitoringType == "push" ? "uptime.source" : "https://example.com")
+                    .disabled(selected?.monitoringType == "push")
+                Picker("Check type", selection: Binding(
+                    get: { draftMonitoringType },
+                    set: { type in
+                        draftMonitoringType = type
+                        if type == "push" {
+                            draftURL = ""
+                            draftTimeout = "180"
+                            draftRetries = "0"
+                            draftInterval = "1"
+                            draftScheduleKind = "interval"
+                            draftExpectedDown = false
+                            draftUpsideDown = false
+                        } else {
+                            draftTimeout = "5"
+                        }
+                    }
+                )) {
+                    ForEach(["fetch", "post", "tcp", "ssh", "json"] + (selected == nil || selected?.monitoringType == "push" ? ["push"] : []), id: \.self) {
+                        Text($0 == "push" ? "External events" : $0.uppercased()).tag($0)
+                    }
+                }.disabled(selected?.monitoringType == "push")
+                if draftMonitoringType == "push" {
+                    Text("External events use a one-minute heartbeat. Existing source IDs and check types cannot be changed.")
+                        .font(.system(size: 10, weight: .regular)).foregroundStyle(theme.textTertiary)
+                }
+                if draftMonitoringType == "json" {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("JSON comparison").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+                        field("Field path · use . for nesting and * for array items", text: $draftJSONPath, placeholder: "results.*.latency")
+                        Picker("Combine values", selection: $draftJSONAggregate) {
+                            ForEach(DesktopAutomationEditorRules.aggregates, id: \.self) { Text($0.capitalized).tag($0) }
+                        }
+                        Picker("Alert when", selection: $draftJSONOperator) {
+                            ForEach(DesktopAutomationEditorRules.operators, id: \.self) { Text(operatorLabel($0)).tag($0) }
+                        }
+                        field("Comparison value · numbers, true/false, or text", text: $draftJSONValue, placeholder: "80")
+                        Text("Text values can be entered directly; quote them as JSON strings when the text starts with a number or needs surrounding whitespace.")
+                            .font(.system(size: 10, weight: .regular)).foregroundStyle(theme.textTertiary)
+                    }
+                    .padding(10)
+                    .background(theme.cardRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
             }
             Picker("Schedule", selection: $draftScheduleKind) {
                 Text("Recurring").tag("interval")
                 Text("Once").tag("once")
-            }
+            }.disabled(draftMonitoringType == "push")
             if draftScheduleKind == "interval" {
                 field("Repeat every (minutes)", text: $draftInterval, placeholder: "15")
+                    .disabled(draftMonitoringType == "push")
             } else {
                 field("Run at (ISO 8601)", text: $draftRunAt, placeholder: "2026-10-23T18:00:00Z")
             }
-            field("Response timeout (seconds)", text: $draftTimeout, placeholder: "5")
-            field("Retries before failure", text: $draftRetries, placeholder: "4")
+            field(draftMonitoringType == "push" ? "Mark offline after (seconds)" : "Response timeout (seconds)", text: $draftTimeout, placeholder: draftMonitoringType == "push" ? "180" : "5")
+            if draftMonitoringType != "push" { field("Retries before failure", text: $draftRetries, placeholder: "4") }
             field("Timezone", text: $draftTimezone, placeholder: "UTC")
             field("Alert when", text: $draftNotifyOn, placeholder: "failure, always, or never")
             VStack(alignment: .leading, spacing: 5) {
@@ -204,11 +263,13 @@ struct AutomationsNativePanel: View {
                 TextEditor(text: $draftDestinations).font(.system(size: 12, weight: .medium)).frame(minHeight: 52)
                     .padding(6).background(theme.field).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
-            field("User agent", text: $draftUserAgent, placeholder: "Hanasand health check")
-            Toggle("Follow redirects", isOn: $draftFollowRedirects)
-            Toggle("Expected down (maintenance)", isOn: $draftExpectedDown)
-            Toggle("Invert result", isOn: $draftUpsideDown)
-            Toggle("Notify on warnings", isOn: $draftNotifyWarnings)
+            if draftMonitoringType != "push" {
+                field("User agent", text: $draftUserAgent, placeholder: "Hanasand health check")
+                Toggle("Follow redirects", isOn: $draftFollowRedirects)
+                Toggle("Notify on warnings", isOn: $draftNotifyWarnings)
+            }
+            Toggle("Expected down (maintenance)", isOn: $draftExpectedDown).disabled(draftMonitoringType == "push")
+            Toggle("Invert result", isOn: $draftUpsideDown).disabled(draftMonitoringType == "push")
             HStack(spacing: 10) {
                 ActionButton(title: "Cancel", icon: "xmark") { isEditing = false; message = "" }
                 ActionButton(title: selected == nil ? "Create" : "Save", icon: "checkmark") { Task { await save() } }
@@ -265,7 +326,7 @@ struct AutomationsNativePanel: View {
                     Task { await setStatus(automation, status: automation.status == "active" ? "paused" : "active") }
                 }.disabled(busyAction == automation.id || !canMutate)
                 ActionButton(title: "Run now", icon: "bolt.fill") { Task { await runNow(automation) } }.disabled(busyAction == automation.id || !canMutate)
-                if automation.actionType == "agent_prompt" {
+                if canEdit(automation) {
                     ActionButton(title: "Edit", icon: "pencil") { beginEdit(automation) }.disabled(!canMutate)
                 }
                 ActionButton(title: "Delete", icon: "trash", tone: .danger) { confirmsDelete = true }.disabled(busyAction == automation.id || !canMutate)
@@ -371,9 +432,12 @@ struct AutomationsNativePanel: View {
 
     private func load() async {
         isLoading = true
+        canManageSystemAutomations = false
         defer { isLoading = false }
         do {
-            automations = try await model.fetchDesktopAutomations(scope: scope.listScope)
+            let overview = try await model.fetchDesktopAutomationOverview(scope: scope.listScope)
+            automations = overview.automations
+            canManageSystemAutomations = overview.canManageSystem == true
             if selectedID.isEmpty || !automations.contains(where: { $0.id == selectedID }) { selectedID = automations.first?.id ?? "" }
             if let selected { await loadDetail(selected) }
             message = ""
@@ -421,6 +485,7 @@ struct AutomationsNativePanel: View {
         draftName = ""
         draftURL = ""
         draftPrompt = "Check that the page is available."
+        draftActionType = "agent_prompt"
         draftInterval = "15"
         draftMonitoringType = "fetch"
         draftScheduleKind = "interval"
@@ -435,6 +500,10 @@ struct AutomationsNativePanel: View {
         draftExpectedDown = false
         draftUpsideDown = false
         draftNotifyWarnings = false
+        draftJSONPath = ""
+        draftJSONOperator = "gt"
+        draftJSONAggregate = "max"
+        draftJSONValue = "80"
         isEditing = true
     }
 
@@ -442,6 +511,7 @@ struct AutomationsNativePanel: View {
         draftName = automation.name
         draftURL = automation.targetUrl ?? ""
         draftPrompt = automation.prompt
+        draftActionType = automation.actionType
         draftInterval = String(automation.intervalMinutes ?? 15)
         draftMonitoringType = automation.monitoringType
         draftScheduleKind = automation.scheduleKind
@@ -456,25 +526,65 @@ struct AutomationsNativePanel: View {
         draftExpectedDown = automation.expectedDown
         draftUpsideDown = automation.upsideDown
         draftNotifyWarnings = automation.notifyWarnings
+        if let rule = automation.jsonRule {
+            draftJSONPath = rule.path
+            draftJSONOperator = rule.operatorName
+            draftJSONAggregate = rule.aggregate ?? "max"
+            switch rule.value {
+            case .string(let value): draftJSONValue = value
+            case .number(let value): draftJSONValue = String(value)
+            case .bool(let value): draftJSONValue = String(value)
+            case .null: draftJSONValue = ""
+            }
+        } else {
+            draftJSONPath = ""
+            draftJSONOperator = "gt"
+            draftJSONAggregate = "max"
+            draftJSONValue = "80"
+        }
         isEditing = true
     }
 
     private func save() async {
         let interval = Int(draftInterval) ?? selected?.intervalMinutes ?? 15
         guard draftScheduleKind != "interval" || interval > 0 else { message = "Enter a repeat interval in minutes."; return }
+        let timeoutSeconds = Int(draftTimeout) ?? selected?.timeoutSeconds ?? 5
+        let retryCount = draftMonitoringType == "push" ? 0 : Int(draftRetries) ?? selected?.retryCount ?? 0
         let url = draftURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !url.isEmpty else { message = "Name and URL are required."; return }
-        guard !draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "A check prompt is required."; return }
+        guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "Name is required."; return }
+        guard !draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "A description is required."; return }
         let destinations = draftDestinations.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        let payload = DesktopAutomationPayload(
-            name: draftName, prompt: draftPrompt, targetUrl: url, monitoringType: draftMonitoringType,
-            scheduleKind: draftScheduleKind, intervalMinutes: interval, status: selected?.status ?? "active", actionType: "agent_prompt",
+        let jsonRule: DesktopAutomationJSONRule? = draftMonitoringType == "json" && draftActionType == "agent_prompt"
+            ? DesktopAutomationEditorRules.value(from: draftJSONValue).map { DesktopAutomationJSONRule(path: draftJSONPath.trimmingCharacters(in: .whitespacesAndNewlines), operatorName: draftJSONOperator, value: $0, aggregate: draftJSONAggregate) }
+            : nil
+        if let error = DesktopAutomationEditorRules.validate(
+            actionType: draftActionType, monitoringType: draftMonitoringType, targetURL: url,
+            jsonRule: jsonRule, canManageSystem: canManageSystemAutomations,
+            scheduleKind: draftScheduleKind, intervalMinutes: interval, timeoutSeconds: timeoutSeconds,
+            expectedDown: draftExpectedDown, upsideDown: draftUpsideDown
+        ) {
+            message = error
+            return
+        }
+        guard (draftMonitoringType == "push" ? (1...86_400) : (1...120)).contains(timeoutSeconds) else {
+            message = draftMonitoringType == "push" ? "Enter an offline timeout between 1 and 86400 seconds." : "Enter a response timeout between 1 and 120 seconds."
+            return
+        }
+        guard (0...5).contains(retryCount) else { message = "Enter between 0 and 5 retries."; return }
+        let destinationRequired = draftActionType == "system_alert" || (draftActionType == "mail_health_check" && draftNotifyOn != "never")
+        if (selected?.status ?? "active") == "active" && destinationRequired && destinations.isEmpty {
+            message = "Add a notification destination before activating this action."
+            return
+        }
+            let payload = DesktopAutomationPayload(
+            name: draftName, prompt: draftPrompt, targetUrl: draftActionType == "agent_prompt" ? url : "", monitoringType: draftActionType == "agent_prompt" ? draftMonitoringType : "fetch",
+            scheduleKind: draftScheduleKind, intervalMinutes: interval, status: selected?.status ?? "active", actionType: draftActionType,
             followRedirects: draftFollowRedirects, userAgent: draftUserAgent.isEmpty ? nil : draftUserAgent,
             expectedDown: draftExpectedDown, upsideDown: draftUpsideDown,
-            timeoutSeconds: Int(draftTimeout) ?? 5, retryCount: Int(draftRetries) ?? 0,
+            timeoutSeconds: timeoutSeconds, retryCount: retryCount,
             runAt: draftScheduleKind == "once" ? draftRunAt : nil,
-            timezone: draftTimezone, notificationDestinations: destinations,
-            notifyOn: draftNotifyOn, notifyWarnings: draftNotifyWarnings
+            timezone: draftTimezone, modelName: destinations.first, notificationDestinations: destinations,
+            notifyOn: draftNotifyOn, notifyWarnings: draftNotifyWarnings, jsonRule: jsonRule
         )
         busyAction = "save"
         defer { busyAction = "" }
@@ -485,6 +595,37 @@ struct AutomationsNativePanel: View {
             await load()
             selectedID = saved.id
         } catch { message = error.localizedDescription }
+    }
+
+    private var availableActionTypes: [String] {
+        DesktopAutomationEditorRules.actions.filter { $0 != "mail_health_check" || canManageSystemAutomations }
+    }
+
+    private func canEdit(_ automation: DesktopAutomation) -> Bool {
+        DesktopAutomationEditorRules.actions.contains(automation.actionType)
+            && (automation.actionType != "mail_health_check" || canManageSystemAutomations)
+    }
+
+    private func actionLabel(_ action: String) -> String {
+        switch action {
+        case "agent_prompt": "Monitoring check"
+        case "system_alert": "Scheduled message"
+        case "mail_health_check": "Mail health check"
+        case "echo": "History reminder"
+        default: action
+        }
+    }
+
+    private func operatorLabel(_ op: String) -> String {
+        switch op {
+        case "gt": "Greater than (>)"
+        case "gte": "Greater than or equal (≥)"
+        case "lt": "Less than (<)"
+        case "lte": "Less than or equal (≤)"
+        case "eq": "Equal (=)"
+        case "ne": "Not equal (≠)"
+        default: op
+        }
     }
 
     private func setStatus(_ automation: DesktopAutomation, status: String) async {

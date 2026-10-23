@@ -69,6 +69,89 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertEqual(sends, 0)
     }
 
+    func testAutomationEditorEncodesJSONRuleAndSupportedActions() throws {
+        let rule = DesktopAutomationJSONRule(path: "results.*.latency", operatorName: "gte", value: .number(80), aggregate: "max")
+        let payload = DesktopAutomationPayload(
+            name: "Latency", prompt: "Watch latency", targetUrl: "https://example.test/health",
+            monitoringType: "json", scheduleKind: "interval", intervalMinutes: 5,
+            status: "active", actionType: "agent_prompt", jsonRule: rule
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+        let encodedRule = try XCTUnwrap(object["jsonRule"] as? [String: Any])
+        XCTAssertEqual(encodedRule["path"] as? String, "results.*.latency")
+        XCTAssertEqual(encodedRule["operator"] as? String, "gte")
+        XCTAssertEqual(encodedRule["aggregate"] as? String, "max")
+        XCTAssertEqual(encodedRule["value"] as? Double, 80)
+        XCTAssertEqual(DesktopAutomationEditorRules.actions, ["agent_prompt", "system_alert", "echo", "mail_health_check"])
+    }
+
+    func testAutomationSavePreservesPushSourceAndFirstNotificationDestination() async throws {
+        var captured: URLRequest?
+        let client = try AutomationClient(settings: settings()) { request in
+            captured = request
+            return self.response(#"{"automation":{"id":"push-1","name":"Heartbeat","prompt":"Check in","actionType":"agent_prompt","targetUrl":"uptime.site","monitoringType":"push","scheduleKind":"interval","intervalMinutes":1,"status":"active"}}"#, request)
+        }
+        let payload = DesktopAutomationPayload(
+            name: "Heartbeat", prompt: "Check in", targetUrl: "uptime.site", monitoringType: "push",
+            scheduleKind: "interval", intervalMinutes: 1, status: "active", actionType: "agent_prompt",
+            timeoutSeconds: 180, retryCount: 0, modelName: "https://discord.example/webhook",
+            notificationDestinations: ["https://discord.example/webhook"]
+        )
+
+        _ = try await client.save(payload)
+        let body = try XCTUnwrap(captured?.httpBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(object["actionType"] as? String, "agent_prompt")
+        XCTAssertEqual(object["monitoringType"] as? String, "push")
+        XCTAssertEqual(object["targetUrl"] as? String, "uptime.site")
+        XCTAssertEqual(object["intervalMinutes"] as? Int, 1)
+        XCTAssertEqual(object["timeoutSeconds"] as? Int, 180)
+        XCTAssertEqual(object["retryCount"] as? Int, 0)
+        XCTAssertEqual(object["modelName"] as? String, "https://discord.example/webhook")
+        XCTAssertEqual(object["notificationDestinations"] as? [String], ["https://discord.example/webhook"])
+    }
+
+    func testAutomationEditorParsesJSONScalarValuesWithoutLosingTypes() throws {
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "42"), .number(42))
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "true"), .bool(true))
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "false"), .bool(false))
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "degraded"), .string("degraded"))
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "\" 42 \""), .string(" 42 "))
+        XCTAssertEqual(DesktopAutomationEditorRules.value(from: "null"), .string("null"))
+        XCTAssertNil(DesktopAutomationEditorRules.value(from: "  "))
+    }
+
+    func testAutomationEditorValidatesJSONRuleAndSystemCapabilities() {
+        func validate(path: String = "metrics.*.latency", op: String = "gt", value: DesktopAutomationRuleValue = .number(80), monitoring: String = "json",
+                      aggregate: String? = "max", target: String = "https://example.test/metrics", canManage: Bool = false,
+                      schedule: String = "interval", interval: Int? = nil, timeout: Int? = nil, expectedDown: Bool = false, upsideDown: Bool = false,
+                      action: String = "agent_prompt") -> String? {
+            let rule = DesktopAutomationJSONRule(path: path, operatorName: op, value: value, aggregate: aggregate)
+            return DesktopAutomationEditorRules.validate(actionType: action, monitoringType: monitoring, targetURL: target, jsonRule: rule, canManageSystem: canManage, scheduleKind: schedule, intervalMinutes: interval, timeoutSeconds: timeout, expectedDown: expectedDown, upsideDown: upsideDown)
+        }
+
+        XCTAssertNil(validate())
+        XCTAssertNotNil(validate(path: "metrics.__proto__.latency"))
+        XCTAssertNotNil(validate(path: String(repeating: "a", count: 301)))
+        XCTAssertNotNil(validate(op: "bad"))
+        XCTAssertNotNil(validate(aggregate: "sum"))
+        XCTAssertNotNil(validate(op: "eq", value: .null))
+        XCTAssertNotNil(validate(value: .string("slow")))
+        XCTAssertNil(validate(op: "eq", value: .string("slow")))
+        XCTAssertNotNil(validate(target: "system:metrics"))
+        XCTAssertNil(validate(target: "system:metrics", canManage: true))
+        XCTAssertNotNil(validate(monitoring: "fetch", target: "system:metrics", canManage: true))
+        XCTAssertNotNil(validate(canManage: false, action: "mail_health_check"))
+        XCTAssertNil(validate(canManage: true, action: "mail_health_check"))
+        XCTAssertNotNil(validate(action: "organization_report"))
+        XCTAssertNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 86_400))
+        XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 2, timeout: 180))
+        XCTAssertNotNil(validate(monitoring: "push", target: "system:metrics", canManage: true, interval: 1, timeout: 180))
+        XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 86_401))
+        XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 180, expectedDown: true))
+        XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 180, action: "system_alert"))
+    }
+
     private func settings() -> HanasandDesktopSettings {
         var value = HanasandDesktopSettings()
         value.userID = "eirik"

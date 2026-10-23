@@ -146,6 +146,101 @@ enum DesktopAutomationRuleValue: Codable, Equatable {
     }
 }
 
+enum DesktopAutomationEditorRules {
+    static let actions = ["agent_prompt", "system_alert", "echo", "mail_health_check"]
+    static let operators = ["gt", "gte", "lt", "lte", "eq", "ne"]
+    static let aggregates = ["max", "min", "avg", "first"]
+
+    static func value(from raw: String) -> DesktopAutomationRuleValue? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value == "true" { return .bool(true) }
+        if value == "false" { return .bool(false) }
+        if let number = Double(value), number.isFinite { return .number(number) }
+        if value.first == "\"", value.last == "\"",
+           let data = value.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(String.self, from: data) {
+            return .string(decoded)
+        }
+        return .string(value)
+    }
+
+    static func validate(
+        actionType: String,
+        monitoringType: String,
+        targetURL: String,
+        jsonRule: DesktopAutomationJSONRule?,
+        canManageSystem: Bool,
+        scheduleKind: String = "interval",
+        intervalMinutes: Int? = nil,
+        timeoutSeconds: Int? = nil,
+        expectedDown: Bool = false,
+        upsideDown: Bool = false
+    ) -> String? {
+        guard actions.contains(actionType), actionType != "mail_health_check" || canManageSystem else {
+            return "This action is not available for this account. Refresh permissions and try again."
+        }
+        guard ["fetch", "post", "tcp", "ssh", "json", "push"].contains(monitoringType) else {
+            return "Choose a supported check type."
+        }
+        if monitoringType == "push" && actionType != "agent_prompt" {
+            return "External events require a monitoring check."
+        }
+        guard actionType == "agent_prompt" else { return nil }
+
+        let target = targetURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return monitoringType == "push" ? "Enter a source ID." : "Enter a monitoring target." }
+        if monitoringType == "push" {
+            guard target.range(of: "^[\\w./:-]{1,128}$", options: .regularExpression) != nil, !target.hasPrefix("system:") else {
+                return "Enter a source ID using letters, numbers, dots, slashes, colons, hyphens or underscores."
+            }
+            guard scheduleKind == "interval", intervalMinutes == 1, !expectedDown, !upsideDown else {
+                return "External checks require a one-minute heartbeat without inverted conditions."
+            }
+            if let timeoutSeconds, !(1...86_400).contains(timeoutSeconds) {
+                return "Enter an offline timeout between 1 and 86400 seconds."
+            }
+            return nil
+        }
+        if target.hasPrefix("system:") {
+            guard canManageSystem, monitoringType == "json" else {
+                return "System monitoring requires a JSON check and Hanasand organization editor access."
+            }
+        }
+        if monitoringType == "tcp" || monitoringType == "ssh" {
+            guard target.range(of: "^[^:/\\s]+(?::\\d+)?$", options: .regularExpression) != nil else {
+                return "Enter a host with an optional port."
+            }
+        } else if monitoringType == "json" {
+            guard let rule = jsonRule,
+                  !rule.path.isEmpty,
+                  rule.path.utf8.count <= 300,
+                  rule.path.range(of: "^[\\w*-]+(?:\\.[\\w*-]+)*$", options: .regularExpression) != nil,
+                  !rule.path.split(separator: ".").contains(where: { ["__proto__", "constructor", "prototype"].contains(String($0)) }) else {
+                return "Enter a dot-separated JSON field, using * for array items."
+            }
+            guard operators.contains(rule.operatorName), aggregates.contains(rule.aggregate ?? "") else {
+                return "Choose a supported JSON comparison and aggregation."
+            }
+            switch rule.value {
+            case .number(let number):
+                guard number.isFinite else { return "Enter a finite comparison value." }
+            case .bool, .string:
+                guard ["eq", "ne"].contains(rule.operatorName) else { return "This comparison needs a number." }
+                if case .string(let text) = rule.value, text.utf8.count > 500 { return "Text comparison values must be 500 characters or fewer." }
+            case .null:
+                return "Choose a number, true/false, or text comparison value."
+            }
+        } else if !target.hasPrefix("system:") {
+            let normalized = target.contains("://") ? target : "https://\(target)"
+            guard let url = URL(string: normalized), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+                return "Enter a valid HTTP or HTTPS target."
+            }
+        }
+        return nil
+    }
+}
+
 struct DesktopAutomationDetailEnvelope: Decodable {
     let automation: DesktopAutomation
     let runs: [DesktopAutomationRun]

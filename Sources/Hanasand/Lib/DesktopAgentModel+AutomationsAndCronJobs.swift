@@ -22,6 +22,10 @@ extension DesktopAgentModel {
         try await desktopAutomationClient().list(scope: scope).automations
     }
 
+    func fetchDesktopAutomationOverview(scope: String? = nil) async throws -> DesktopAutomationEnvelope {
+        try await desktopAutomationClient().list(scope: scope)
+    }
+
     func fetchDesktopAutomationDetail(_ id: String, page: Int = 1) async throws -> DesktopAutomationDetailEnvelope {
         try await desktopAutomationClient().detail(id: id, page: page)
     }
