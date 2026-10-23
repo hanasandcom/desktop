@@ -431,6 +431,8 @@ run_dashboard_smoke() {
   run_step "46-password-check" "open_dashboard_password_check"
   run_step "47-support-desk" "open_support_desk"
   run_step "48-thesis" "open_dashboard_thesis"
+  run_step "49-explore-tools" "open_dashboard_tools"
+  run_step "50-traffic-map" "open_dashboard_traffic_map"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

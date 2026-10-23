@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -81,6 +81,10 @@ struct NativeDashboardDetail: View {
             SupportDeskNativePanel()
         case "/thesis":
             ThesisNativePanel()
+        case "/tools":
+            NativeToolsExplorePanel()
+        case "/traffic/map":
+            TrafficMapNativePanel()
         case "/organization-privacy":
             OrganizationPrivacyNativePanel()
         case "/dashboard/delivery-history":

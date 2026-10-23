@@ -90,7 +90,7 @@ struct TrafficMapNativePanel: View {
     }
 
     private var countryPicker: some View {
-        NativeGroupPanel(title: "Countries in this snapshot", subtitle: "Select a marker or country to inspect its requests") {
+        NativeGroupPanel(title: "Countries in this snapshot", subtitle: "Select a country to inspect its requests") {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(countries) { country in
                     Button {

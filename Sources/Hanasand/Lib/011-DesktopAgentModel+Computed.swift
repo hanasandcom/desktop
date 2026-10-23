@@ -53,6 +53,7 @@ extension DesktopAgentModel {
     var dashboardActions: [DesktopAction] {
         [
             .route("Overview", "Service and account overview.", "gauge.with.dots.needle", "/dashboard"),
+            .route("Explore", "Find every desktop tool by category or search.", "magnifyingglass", "/tools"),
             .route("Monitoring cases", "Review health checks and cases.", "tray.full", "/cases"),
             .route("Threat intelligence", "Search actors and vulnerabilities.", "magnifyingglass", "/ti"),
             .route("Watchlists", "Manage threat watch terms.", "list.bullet.rectangle", "/watchlists"),
@@ -78,6 +79,7 @@ extension DesktopAgentModel {
             .route("Automations", "Manage scheduled agent runs.", "alarm.waves.left.and.right", "/dashboard/automations"),
             .route("Notes", "Open shared notes.", "note.text", "/notes"),
             .route("Traffic", "Inspect live traffic and maps.", "point.3.connected.trianglepath.dotted", "/traffic"),
+            .route("Live Traffic Map", "Explore recent requests by country.", "map", "/traffic/map"),
             .route("AI Metrics", "View AI model and usage metrics.", "sparkles", "/system/ai"),
             .route("Rate Limits", "Manage traffic policies and keys.", "gauge.with.needle", "/system/rates"),
             .route("Cron Jobs", "Check scheduled host jobs.", "calendar.badge.clock", "/system/cron"),

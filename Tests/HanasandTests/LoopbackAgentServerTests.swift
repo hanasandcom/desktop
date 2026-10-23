@@ -5,6 +5,8 @@ import XCTest
 
 final class LoopbackAgentServerTests: XCTestCase {
     func testNormalizesAPIReferenceDashboardCommand() {
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "explore", body: Data()), "open_dashboard_tools")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "traffic-map", body: Data()), "open_dashboard_traffic_map")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "api-reference", body: Data()), "open_dashboard_api_reference")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "delivery-history", body: Data()), "open_dashboard_delivery_history")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "traffic-recent", body: Data()), "open_dashboard_recent_traffic")

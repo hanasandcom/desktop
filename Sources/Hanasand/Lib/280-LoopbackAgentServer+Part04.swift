@@ -85,6 +85,12 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "dashboard_refresh" || lowercasedRequest == "refresh_dashboard" {
             return "dashboard_refresh"
         }
+        if lowercasedRequest == "open_dashboard_tools" || lowercasedRequest == "tools" || lowercasedRequest == "explore" {
+            return "open_dashboard_tools"
+        }
+        if lowercasedRequest == "open_dashboard_traffic_map" || lowercasedRequest == "traffic-map" || lowercasedRequest == "open_traffic_map" {
+            return "open_dashboard_traffic_map"
+        }
         if lowercasedRequest == "open_dashboard_api_reference" || lowercasedRequest == "api_reference" || lowercasedRequest == "api-reference" {
             return "open_dashboard_api_reference"
         }

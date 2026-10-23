@@ -109,6 +109,12 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_api_reference" {
             openNativeDashboard(path: "/api", label: "API Reference")
             append(meta: "Dashboard", body: "Opened API Reference panel.", kind: .command)
+        } else if command == "open_dashboard_tools" {
+            openNativeDashboard(path: "/tools", label: "Explore")
+            append(meta: "Dashboard", body: "Opened the Explore tools catalog.", kind: .command)
+        } else if command == "open_dashboard_traffic_map" {
+            openNativeDashboard(path: "/traffic/map", label: "Live Traffic Map")
+            append(meta: "Dashboard", body: "Opened the Live Traffic Map panel.", kind: .command)
         } else if command == "open_dashboard_password_check" {
             openNativeDashboard(path: "/pwned", label: "Password Check")
             append(meta: "Dashboard", body: "Opened Password Check panel.", kind: .command)
