@@ -97,6 +97,10 @@ struct OrganizationDirectoryNativePanel: View {
                     }
                 }
             }
+
+            if !model.selectedOrganizationID.isEmpty {
+                OrganizationMembersNativePanel()
+            }
         }
         .task(id: model.selectedDashboardPath) {
             await model.loadOrganizationDirectory()

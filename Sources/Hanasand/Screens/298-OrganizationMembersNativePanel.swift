@@ -1,0 +1,214 @@
+import AppKit
+import ApplicationServices
+import Combine
+import CryptoKit
+import Darwin
+import Foundation
+import Network
+import PDFKit
+import SwiftUI
+import UniformTypeIdentifiers
+import WebKit
+
+private struct PendingOrganizationMemberChange: Identifiable {
+    let member: DashboardOrganizationMember
+    let action: String
+    let role: String?
+    var id: String { "\(action):\(member.userId)" }
+}
+
+private struct PendingOrganizationInviteRevoke: Identifiable {
+    let invite: DashboardOrganizationInvite
+    var id: String { invite.id }
+}
+
+struct OrganizationMembersNativePanel: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    @State private var searchText = ""
+    @State private var pendingMemberChange: PendingOrganizationMemberChange?
+    @State private var pendingInviteRevoke: PendingOrganizationInviteRevoke?
+
+    private var filteredMembers: [DashboardOrganizationMember] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.organizationMembersPage?.members ?? [] }
+        return (model.organizationMembersPage?.members ?? []).filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.userId.localizedCaseInsensitiveContains(query)
+                || $0.role.localizedCaseInsensitiveContains(query)
+                || $0.status.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredInvites: [DashboardOrganizationInvite] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.organizationInvites }
+        return model.organizationInvites.filter {
+            $0.email.localizedCaseInsensitiveContains(query)
+                || $0.role.localizedCaseInsensitiveContains(query)
+                || $0.status.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        NativeGroupPanel(title: "Team and invitations", subtitle: model.organizationMembersPage?.organization.name ?? "Selected organization") {
+            HStack(spacing: 8) {
+                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadOrganizationMembers() } }
+                    .disabled(model.isLoadingOrganizationMembers || model.isMutatingOrganizationMembers || model.selectedOrganizationID.isEmpty)
+                if model.isLoadingOrganizationMembers { ProgressView().controlSize(.small) }
+            }
+
+            if !model.organizationMembersStatus.isEmpty {
+                Text(model.organizationMembersStatus)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .textSelection(.enabled)
+            }
+
+            if model.selectedOrganizationID.isEmpty {
+                NativeEmptyState(title: "Select an organization", message: "Select an active membership in the organization directory to view its team.")
+            } else if model.isLoadingOrganizationMembers && model.organizationMembersPage == nil {
+                NativeEmptyState(title: "Loading team", message: "Verifying current organization membership.")
+            } else if let page = model.organizationMembersPage {
+                SearchFieldRow(placeholder: "Search members and invitations", text: $searchText)
+                if filteredMembers.isEmpty {
+                    NativeEmptyState(title: searchText.isEmpty ? "No active members" : "No matching members", message: searchText.isEmpty ? "This organization has no active members to display." : "Try another search.")
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                        ForEach(filteredMembers) { member in memberCard(member, actorRole: page.organization.role ?? "") }
+                    }
+                }
+
+                if model.organizationMembersCanManage {
+                    inviteComposer
+                    NativeGroupPanel(title: "Pending invitations", subtitle: "Pending invites expire automatically after 14 days") {
+                        if filteredInvites.isEmpty {
+                            NativeEmptyState(
+                                title: model.organizationInvites.isEmpty ? "No pending invitations" : "No matching invitations",
+                                message: model.organizationInvites.isEmpty ? "Invitations that have been accepted, revoked, or expired are not listed here." : "Try another search."
+                            )
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                                ForEach(filteredInvites) { invite in inviteCard(invite) }
+                            }
+                        }
+                    }
+                } else {
+                    NativeNotice(message: "Only an active organization owner or admin can manage invitations and member access.", tone: .info)
+                }
+            } else {
+                NativeEmptyState(title: "Team unavailable", message: model.organizationMembersStatus.isEmpty ? "Refresh to verify active organization membership." : model.organizationMembersStatus)
+            }
+        }
+        .task(id: model.selectedOrganizationID) { await model.loadOrganizationMembers() }
+        .confirmationDialog(memberChangeTitle, isPresented: Binding(get: { pendingMemberChange != nil }, set: { if !$0 { pendingMemberChange = nil } }), titleVisibility: .visible) {
+            if let change = pendingMemberChange {
+                Button(change.action == "remove" ? "Remove member" : "Change role", role: .destructive) {
+                    pendingMemberChange = nil
+                    if change.action == "remove" { Task { await model.removeOrganizationMember(change.member) } }
+                    else if let role = change.role { Task { await model.updateOrganizationMemberRole(change.member, role: role) } }
+                }
+                Button("Cancel", role: .cancel) { pendingMemberChange = nil }
+            }
+        } message: { Text(memberChangeMessage) }
+        .confirmationDialog("Revoke invitation?", isPresented: Binding(get: { pendingInviteRevoke != nil }, set: { if !$0 { pendingInviteRevoke = nil } }), titleVisibility: .visible) {
+            if let pendingInviteRevoke {
+                Button("Revoke invitation", role: .destructive) {
+                    let invite = pendingInviteRevoke.invite
+                    self.pendingInviteRevoke = nil
+                    Task { await model.actOnOrganizationInvite(invite, action: "revoke") }
+                }
+                Button("Cancel", role: .cancel) { self.pendingInviteRevoke = nil }
+            }
+        } message: { Text(pendingInviteRevoke?.invite.email ?? "") }
+    }
+
+    private var memberChangeTitle: String {
+        pendingMemberChange?.action == "remove" ? "Remove organization member?" : "Change member role?"
+    }
+
+    private var memberChangeMessage: String {
+        guard let pendingMemberChange else { return "" }
+        let label = pendingMemberChange.member.name.isEmpty ? pendingMemberChange.member.userId : pendingMemberChange.member.name
+        if pendingMemberChange.action == "remove" { return "Remove \(label) from this organization? Their active membership and organization access will end." }
+        return "Change \(label)'s role to \(pendingMemberChange.role ?? "")? This changes their organization permissions."
+    }
+
+    private var inviteComposer: some View {
+        NativeGroupPanel(title: "Invite members", subtitle: "Enter up to 25 email addresses; invitations are valid for 14 days") {
+            TextField("name@example.com, another@example.com", text: $model.organizationInviteEmailDraft, axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.roundedBorder)
+            Picker("Role", selection: $model.organizationInviteRoleDraft) {
+                ForEach(inviteRoles, id: \.self) { role in Text(role.capitalized).tag(role) }
+            }
+            .pickerStyle(.segmented)
+            HStack(spacing: 8) {
+                ActionButton(title: model.isMutatingOrganizationMembers ? "Sending…" : "Send invitations", icon: "paperplane") {
+                    Task { await model.inviteOrganizationMembers() }
+                }
+                .disabled(model.isMutatingOrganizationMembers || normalizedOrganizationInviteEmails(model.organizationInviteEmailDraft).isEmpty
+                          || !DashboardOrganizationMemberPolicy.canManageTarget(actorRole: currentActorRole, targetRole: "", requestedRole: model.organizationInviteRoleDraft, action: "invite"))
+            }
+        }
+    }
+
+    private var currentActorRole: String {
+        model.organizationMembersPage?.organization.role
+            ?? model.organizationMembersPage?.members.first(where: { $0.userId == model.userIDForRequests })?.role
+            ?? ""
+    }
+
+    private var inviteRoles: [String] {
+        ["admin", "editor", "reader"]
+    }
+
+    @ViewBuilder
+    private func memberCard(_ member: DashboardOrganizationMember, actorRole: String) -> some View {
+        NativeGroupPanel(title: member.name.isEmpty ? member.userId : member.name,
+                         subtitle: "\(member.role.capitalized) · \(member.status.capitalized)") {
+            Text(member.userId)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.textTertiary)
+                .textSelection(.enabled)
+            if let joinedAt = member.joinedAt, !joinedAt.isEmpty {
+                Text("Joined \(joinedAt)").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            }
+            if model.organizationMembersCanManage {
+                HStack(spacing: 7) {
+                    Menu("Change role") {
+                        ForEach(rolesAssignable(by: actorRole, to: member.role), id: \.self) { role in
+                            Button(role.capitalized) { pendingMemberChange = PendingOrganizationMemberChange(member: member, action: "role", role: role) }
+                                .disabled(role == member.role.lowercased() || model.isMutatingOrganizationMembers)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .disabled(rolesAssignable(by: actorRole, to: member.role).isEmpty || model.isMutatingOrganizationMembers)
+                    ActionButton(title: "Remove", icon: "person.crop.circle.badge.minus") {
+                        pendingMemberChange = PendingOrganizationMemberChange(member: member, action: "remove", role: nil)
+                    }
+                    .disabled(!DashboardOrganizationMemberPolicy.canManageTarget(actorRole: actorRole, targetRole: member.role, action: "remove") || model.isMutatingOrganizationMembers)
+                }
+            }
+        }
+    }
+
+    private func inviteCard(_ invite: DashboardOrganizationInvite) -> some View {
+        NativeGroupPanel(title: invite.email, subtitle: "\(invite.role.capitalized) · Pending") {
+            if let expiresAt = invite.expiresAt, !expiresAt.isEmpty {
+                Text("Expires \(expiresAt)").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            }
+            HStack(spacing: 7) {
+                ActionButton(title: "Resend", icon: "paperplane") { Task { await model.actOnOrganizationInvite(invite, action: "resend") } }
+                    .disabled(model.isMutatingOrganizationMembers)
+                ActionButton(title: "Revoke", icon: "xmark.circle", tone: .danger) { pendingInviteRevoke = PendingOrganizationInviteRevoke(invite: invite) }
+                    .disabled(model.isMutatingOrganizationMembers)
+            }
+        }
+    }
+
+    private func rolesAssignable(by actorRole: String, to targetRole: String) -> [String] {
+        if actorRole.lowercased() == "owner" { return ["admin", "editor", "reader"] }
+        return ["editor", "reader"].contains(targetRole.lowercased()) ? ["editor", "reader"] : []
+    }
+}

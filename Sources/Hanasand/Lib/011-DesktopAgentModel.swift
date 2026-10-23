@@ -78,6 +78,14 @@ final class DesktopAgentModel: ObservableObject {
     @Published var isLoadingOrganizationDirectory = false; @Published var organizationDirectoryError: String?; @Published var organizationDirectorySnapshotUserID = ""
     var organizationDirectoryLoadID = UUID()
 
+    @Published var organizationMembersPage: DashboardOrganizationMembersEnvelope?
+    @Published var organizationInvites: [DashboardOrganizationInvite] = []
+    @Published var isLoadingOrganizationMembers = false
+    @Published var isMutatingOrganizationMembers = false
+    @Published var organizationMembersStatus = ""
+    @Published var organizationInviteEmailDraft = ""
+    @Published var organizationInviteRoleDraft = "reader"
+
     @Published var selectedDashboardTitle = "Dashboard"; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
     var nativeDashboardLoadID = UUID()
 
