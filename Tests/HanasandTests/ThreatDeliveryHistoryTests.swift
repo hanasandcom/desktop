@@ -117,6 +117,44 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertNil(retry["alertId"])
         page.canSend = false
         XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: finding))
+
+        var refreshedPage = page
+        refreshedPage.canRetry = true
+        let currentDelivered = attempt(id: "delivery-1", status: .delivered, dryRun: false, organizationID: "org-1")
+        refreshedPage.deliveries = [currentDelivered]
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.retry, page: refreshedPage, attempt: failed),
+                             "A stale failed UI receipt must not override its now-delivered current record.")
+
+        var wrongAlert = attempt(id: "delivery-1", status: .failed, dryRun: false, organizationID: "org-1", alertID: "another-alert")
+        wrongAlert.retryEligible = true
+        refreshedPage.deliveries = [wrongAlert]
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.retry, page: refreshedPage, attempt: failed),
+                             "Retry must resolve the same delivery ID and alert ID in the fresh page.")
+    }
+
+    func testScopeChangeBlocksWriteAtFinalSendBoundary() async throws {
+        var expectedSettings = makeSettings()
+        expectedSettings.selectedOrganizationID = "org-123"
+        expectedSettings.selectedOrganizationUserID = expectedSettings.userID
+        var currentSettings = expectedSettings
+        currentSettings.selectedOrganizationID = "org-456"
+        var didSend = false
+        let client = try ThreatDeliveryHistoryClient(settings: expectedSettings) { _ in
+            didSend = true
+            return (Data(), self.response(status: 200))
+        }
+        let request = URLRequest(url: URL(string: "https://api.example.test/api/dwm/webhook-deliveries")!)
+
+        do {
+            _ = try await client.sendWrite(request, scopeIsCurrent: {
+                ThreatDeliveryHistoryClient.sameWriteScope(expectedSettings, currentSettings)
+            })
+            XCTFail("Expected changed organization scope to block the write.")
+        } catch {
+            XCTAssertEqual(error as? ThreatDeliveryHistoryError, .organizationScopeChanged)
+        }
+        XCTAssertFalse(didSend, "The POST transport must not run after the confirmed scope changes.")
+        XCTAssertFalse(ThreatDeliveryHistoryClient.sameWriteScope(expectedSettings, currentSettings))
     }
 
     func testWriteGateSerializesAndRequiresSuccessfulRefreshAfterAnyWrite() {
@@ -153,9 +191,10 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertEqual(receipts[0].status, .failed)
     }
 
-    private func attempt(id: String, status: ThreatDeliveryStatus, dryRun: Bool, organizationID: String) -> ThreatDeliveryHistory.Attempt {
+    private func attempt(id: String, status: ThreatDeliveryStatus, dryRun: Bool, organizationID: String,
+                         alertID: String = "alert-1") -> ThreatDeliveryHistory.Attempt {
         let data = Data("""
-        {"id":"\(id)","orgId":"\(organizationID)","alertId":"alert-1","status":"\(status.rawValue)","dryRun":\(dryRun)}
+        {"id":"\(id)","orgId":"\(organizationID)","alertId":"\(alertID)","status":"\(status.rawValue)","dryRun":\(dryRun)}
         """.utf8)
         return try! JSONDecoder().decode(ThreatDeliveryHistory.Attempt.self, from: data)
     }

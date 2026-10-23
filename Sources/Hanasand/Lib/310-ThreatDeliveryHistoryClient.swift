@@ -124,7 +124,8 @@ struct ThreatDeliveryHistoryClient {
     }
 
     func perform(_ action: ThreatDeliveryAction, finding: ThreatDeliveryHistory.Finding? = nil,
-                 attempt: ThreatDeliveryHistory.Attempt? = nil) async throws -> [ThreatDeliveryHistory.Attempt] {
+                 attempt: ThreatDeliveryHistory.Attempt? = nil,
+                 scopeIsCurrent: @MainActor () -> Bool = { true }) async throws -> [ThreatDeliveryHistory.Attempt] {
         let page = try await load()
         let payload = try Self.actionPayload(action, page: page, finding: finding, attempt: attempt)
         let body = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -135,10 +136,20 @@ struct ThreatDeliveryHistoryClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let data: Data
         let response: URLResponse
-        do { (data, response) = try await send(request) }
+        do { (data, response) = try await sendWrite(request, scopeIsCurrent: scopeIsCurrent) }
+        catch ThreatDeliveryHistoryError.organizationScopeChanged { throw ThreatDeliveryHistoryError.organizationScopeChanged }
         catch { throw ThreatDeliveryHistoryError.uncertainResult }
         return try Self.validatedReceipts(data: data, response: response, action: action,
             organizationID: organizationID, alertID: finding?.id ?? attempt?.alertId, maximumBytes: Self.responseLimit)
+    }
+
+    func sendWrite(_ request: URLRequest, scopeIsCurrent: @MainActor () -> Bool) async throws -> (Data, URLResponse) {
+        guard await scopeIsCurrent() else { throw ThreatDeliveryHistoryError.organizationScopeChanged }
+        return try await send(request)
+    }
+
+    static func sameWriteScope(_ expected: HanasandDesktopSettings, _ current: HanasandDesktopSettings) -> Bool {
+        expected == current
     }
 
     static func actionPayload(_ action: ThreatDeliveryAction, page: ThreatDeliveryHistory,
@@ -155,8 +166,13 @@ struct ThreatDeliveryHistoryClient {
             payload["dryRun"] = action == .test
             payload["live"] = action == .send
         case .retry:
-            guard let attempt, ThreatDeliveryHistory.actionAllowed(action, page: page, attempt: attempt) else { throw ThreatDeliveryHistoryError.actionUnavailable }
-            payload["deliveryId"] = attempt.id
+            guard let attempt else { throw ThreatDeliveryHistoryError.actionUnavailable }
+            let matchingAttempts = page.deliveries.filter { $0.id == attempt.id && $0.alertId == attempt.alertId }
+            guard matchingAttempts.count == 1, let currentAttempt = matchingAttempts.first,
+                  ThreatDeliveryHistory.actionAllowed(action, page: page, attempt: currentAttempt) else {
+                throw ThreatDeliveryHistoryError.actionUnavailable
+            }
+            payload["deliveryId"] = currentAttempt.id
         }
         return payload
     }

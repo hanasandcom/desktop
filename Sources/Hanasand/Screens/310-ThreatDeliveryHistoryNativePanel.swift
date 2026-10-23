@@ -214,10 +214,15 @@ struct ThreatDeliveryHistoryNativePanel: View {
         defer { reviewState.finishWrite() }
         do {
             let receipts: [ThreatDeliveryHistory.Attempt]
+            let confirmedSettings = model.settings
+            let client = try ThreatDeliveryHistoryClient(settings: confirmedSettings)
+            let scopeIsCurrent: @MainActor () -> Bool = {
+                ThreatDeliveryHistoryClient.sameWriteScope(confirmedSettings, model.settings)
+            }
             switch action {
-            case .test: guard let selectedFinding else { throw ThreatDeliveryHistoryError.actionUnavailable }; receipts = try await ThreatDeliveryHistoryClient(settings: model.settings).perform(.test, finding: selectedFinding)
-            case .send: guard let selectedFinding else { throw ThreatDeliveryHistoryError.actionUnavailable }; receipts = try await ThreatDeliveryHistoryClient(settings: model.settings).perform(.send, finding: selectedFinding)
-            case .retry(let attempt): receipts = try await ThreatDeliveryHistoryClient(settings: model.settings).perform(.retry, attempt: attempt)
+            case .test: guard let selectedFinding else { throw ThreatDeliveryHistoryError.actionUnavailable }; receipts = try await client.perform(.test, finding: selectedFinding, scopeIsCurrent: scopeIsCurrent)
+            case .send: guard let selectedFinding else { throw ThreatDeliveryHistoryError.actionUnavailable }; receipts = try await client.perform(.send, finding: selectedFinding, scopeIsCurrent: scopeIsCurrent)
+            case .retry(let attempt): receipts = try await client.perform(.retry, attempt: attempt, scopeIsCurrent: scopeIsCurrent)
             }
             guard model.settings.selectedOrganizationID == page.organizationID else { throw ThreatDeliveryHistoryError.uncertainResult }
             notice = receipts.map { "\($0.statusLabel) · \($0.id)" }.joined(separator: "\n")
