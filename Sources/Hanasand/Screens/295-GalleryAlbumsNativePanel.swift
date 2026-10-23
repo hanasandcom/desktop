@@ -60,13 +60,13 @@ struct GalleryAlbumsNativePanel: View {
             Text("The album and its sharing access will be deleted. Original files stay in their owners’ libraries.")
         }
         .confirmationDialog("Enable public album link?", isPresented: $confirmEnablePublicLink, titleVisibility: .visible) {
-            Button("Enable public link") { Task { await setPublicLink(true) } }
+            Button("Enable public link") { beginSharingChange(true) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Anyone who gets this unguessable link can view every item in the album, including private photos. You can disable the link later.")
         }
         .confirmationDialog("Disable public album link?", isPresented: $confirmDisablePublicLink, titleVisibility: .visible) {
-            Button("Disable public link", role: .destructive) { Task { await setPublicLink(false) } }
+            Button("Disable public link", role: .destructive) { beginSharingChange(false) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The current public link will stop working. Invited accounts will keep their access.")
@@ -224,7 +224,7 @@ struct GalleryAlbumsNativePanel: View {
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                 HStack(spacing: 8) {
                     if album.isPublic {
-                        ActionButton(title: "Get public link", icon: "link") { Task { await getPublicLink() } }.disabled(busy)
+                        ActionButton(title: "Get public link", icon: "link") { beginSharingChange(true) }.disabled(busy)
                         ActionButton(title: "Disable public link", icon: "link.badge.minus", tone: .danger) { confirmDisablePublicLink = true }.disabled(busy)
                     } else {
                         ActionButton(title: "Enable public link", icon: "link") { confirmEnablePublicLink = true }.disabled(busy)
@@ -272,47 +272,75 @@ struct GalleryAlbumsNativePanel: View {
         return "\(settings.userID)|\(settings.authToken.hashValue)|\(settings.cdnBaseURL)|\(settings.impersonatingUserID)|\(settings.impersonationToken.hashValue)"
     }
 
-    private func withClient<T>(_ action: (GalleryAlbumClient) async throws -> T, success: String) async -> T? {
+    private func withClient<T>(_ action: (GalleryAlbumClient) async throws -> T, success: String,
+                               using requestedSettings: HanasandDesktopSettings? = nil,
+                               scopeIsCurrent: (@MainActor () -> Bool)? = nil) async -> T? {
         guard !busy else { return nil }
+        let requestSettings = requestedSettings ?? model.settings
         let revision = sessionRevision
+        guard model.settings == requestSettings, scopeIsCurrent?() ?? true else {
+            error = GalleryAlbumClientError.scopeChanged.localizedDescription
+            status = "Needs attention"
+            return nil
+        }
         busy = true; error = ""; status = "Working…"
         defer { busy = false }
         do {
-            let value = try await action(try GalleryAlbumClient(settings: model.settings))
-            guard revision == sessionRevision else { return nil }
+            let value = try await action(try GalleryAlbumClient(settings: requestSettings))
+            guard revision == sessionRevision, model.settings == requestSettings, scopeIsCurrent?() ?? true else { return nil }
             status = success
             return value
         } catch {
-            guard revision == sessionRevision else { return nil }
+            guard revision == sessionRevision, model.settings == requestSettings, scopeIsCurrent?() ?? true else { return nil }
             self.error = error.localizedDescription
             status = "Needs attention"
             return nil
         }
     }
 
-    private func refreshAlbums() async {
-        guard let result = await withClient({ try await $0.listAlbums() }, success: "Albums loaded") else { return }
+    private func refreshAlbums(using requestedSettings: HanasandDesktopSettings? = nil,
+                               scopeIsCurrent: (@MainActor () -> Bool)? = nil) async {
+        guard let result = await withClient({ try await $0.listAlbums() }, success: "Albums loaded",
+            using: requestedSettings, scopeIsCurrent: scopeIsCurrent) else { return }
         albums = result
     }
 
-    private func open(_ id: String, offset: Int = 0) async {
-        guard let result = await withClient({ try await $0.album(id: id, offset: offset) }, success: "Album loaded") else { return }
+    private func open(_ id: String, offset: Int = 0, using requestedSettings: HanasandDesktopSettings? = nil,
+                      scopeIsCurrent: (@MainActor () -> Bool)? = nil) async {
+        guard let result = await withClient({ try await $0.album(id: id, offset: offset) }, success: "Album loaded",
+            using: requestedSettings, scopeIsCurrent: scopeIsCurrent) else { return }
         publicShareURL = nil
         album = result; self.offset = offset; nameDraft = result.name
     }
 
-    private func getPublicLink() async {
-        await setPublicLink(true)
+    private func beginSharingChange(_ enabled: Bool) {
+        // Take the full account/session snapshot synchronously when the confirmation is accepted.
+        guard let confirmedAlbum = album else { return }
+        let confirmedSettings = model.settings
+        let confirmedRevision = sessionRevision
+        publicShareURL = nil
+        Task { await setPublicLink(enabled, selectedAlbum: confirmedAlbum, confirmedSettings: confirmedSettings, confirmedRevision: confirmedRevision) }
     }
 
-    private func setPublicLink(_ enabled: Bool) async {
-        guard let album,
-              let result = await withClient({ try await $0.setPublicLink(enabled, for: album) }, success: enabled ? "Public link ready" : "Public link disabled") else { return }
+    private func setPublicLink(_ enabled: Bool, selectedAlbum: GalleryAlbumDetail,
+                               confirmedSettings: HanasandDesktopSettings, confirmedRevision: Int) async {
+        let scopeIsCurrent: @MainActor () -> Bool = {
+            model.settings == confirmedSettings && sessionRevision == confirmedRevision && self.album?.id == selectedAlbum.id
+        }
+        guard let result = await withClient({ try await $0.setPublicLink(enabled, for: selectedAlbum, scopeIsCurrent: scopeIsCurrent) },
+            success: enabled ? "Public link ready" : "Public link disabled", using: confirmedSettings,
+            scopeIsCurrent: scopeIsCurrent) else {
+            // A failed PATCH may have reached the service. Refresh the authoritative state once;
+            // never retry the mutation automatically.
+            if scopeIsCurrent() { await open(selectedAlbum.id, offset: offset, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent) }
+            return
+        }
+        guard scopeIsCurrent() else { return }
         publicShareURL = result.shareURL
-        self.album = GalleryAlbumDetail(id: album.id, name: album.name, owner: album.owner, isPublic: result.isPublic, role: album.role, items: album.items, total: album.total, limit: album.limit, offset: album.offset, members: album.members)
-        await open(album.id, offset: offset)
-        if result.isPublic { publicShareURL = result.shareURL }
-        await refreshAlbums()
+        self.album = GalleryAlbumDetail(id: selectedAlbum.id, name: selectedAlbum.name, owner: selectedAlbum.owner, isPublic: result.isPublic, role: selectedAlbum.role, items: selectedAlbum.items, total: selectedAlbum.total, limit: selectedAlbum.limit, offset: selectedAlbum.offset, members: selectedAlbum.members)
+        await open(selectedAlbum.id, offset: offset, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent)
+        if result.isPublic, scopeIsCurrent() { publicShareURL = result.shareURL }
+        await refreshAlbums(using: confirmedSettings, scopeIsCurrent: scopeIsCurrent)
     }
 
     private func createAlbum() async {

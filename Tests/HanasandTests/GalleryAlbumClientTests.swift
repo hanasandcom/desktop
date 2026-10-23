@@ -60,26 +60,35 @@ final class GalleryAlbumClientTests: XCTestCase {
     func testOwnerCanEnableAndDisablePublicLinkUsingOnlyConfirmedServiceToken() async throws {
         var requests: [URLRequest] = []
         let token = String(repeating: "a", count: 32)
+        var isPublic = false
         let client = try GalleryAlbumClient(settings: settings) { request in
             requests.append(request)
-            if request.httpMethod == "PATCH", request.httpBody == Data(#"{"isPublic":true}"#.utf8) {
+            if request.httpMethod == "GET" {
+                return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":\#(isPublic),"role":"owner","items":[],"total":0,"limit":60,"offset":0,"members":[]}"#)
+            }
+            let enabled = request.httpBody == Data(#"{"isPublic":true}"#.utf8)
+            isPublic = enabled
+            if enabled {
                 return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"\#(token)"}"#)
             }
             return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":false,"public_token":null}"#)
         }
         let album = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
 
-        let enabled = try await client.setPublicLink(true, for: album)
+        let enabled = try await client.setPublicLink(true, for: album, scopeIsCurrent: { true })
         XCTAssertEqual(enabled.shareURL?.absoluteString, "https://cdn.hanasand.test/shared/\(token)")
-        XCTAssertEqual(requests[0].url?.absoluteString, "https://cdn.hanasand.test/api/albums/album-1")
-        XCTAssertEqual(requests[0].httpMethod, "PATCH")
-        XCTAssertEqual(String(data: requests[0].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":true}"#)
-        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "PATCH"])
+        XCTAssertEqual(requests[0].url?.absoluteString, "https://cdn.hanasand.test/api/albums/album-1?limit=60&offset=0")
+        XCTAssertEqual(requests[1].url?.absoluteString, "https://cdn.hanasand.test/api/albums/album-1")
+        XCTAssertEqual(String(data: requests[1].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":true}"#)
+        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "Cache-Control"), "no-store")
 
-        let disabled = try await client.setPublicLink(false, for: album)
+        let freshPublicAlbum = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: true, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        let disabled = try await client.setPublicLink(false, for: freshPublicAlbum, scopeIsCurrent: { true })
         XCTAssertFalse(disabled.isPublic)
         XCTAssertNil(disabled.shareURL)
-        XCTAssertEqual(String(data: requests[1].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":false}"#)
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "PATCH", "GET", "PATCH"])
+        XCTAssertEqual(String(data: requests[3].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":false}"#)
     }
 
     func testPublicLinkRequiresOwnerAndRejectsUnexpectedOrUnsafeToken() async throws {
@@ -89,22 +98,71 @@ final class GalleryAlbumClientTests: XCTestCase {
             return self.http(#"{}"#)
         }
         do {
-            _ = try await forbiddenClient.setPublicLink(true, for: viewer)
+            _ = try await forbiddenClient.setPublicLink(true, for: viewer, scopeIsCurrent: { true })
             XCTFail("Expected owner-only guard")
         } catch GalleryAlbumClientError.ownerRequired {}
 
         let ownerAlbum = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
-        let unsafeClient = try GalleryAlbumClient(settings: settings) { _ in
-            self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"https://evil.example/leak"}"#)
+        let unsafeClient = try GalleryAlbumClient(settings: settings) { request in
+            if request.httpMethod == "GET" {
+                return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":false,"role":"owner","items":[],"total":0,"limit":60,"offset":0,"members":[]}"#)
+            }
+            return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"https://evil.example/leak"}"#)
         }
         do {
-            _ = try await unsafeClient.setPublicLink(true, for: ownerAlbum)
+            _ = try await unsafeClient.setPublicLink(true, for: ownerAlbum, scopeIsCurrent: { true })
             XCTFail("Expected unconfirmed mutation")
         } catch GalleryAlbumClientError.unconfirmedMutation {}
 
         XCTAssertThrowsError(try forbiddenClient.publicAlbumURL(token: "../" + String(repeating: "a", count: 29))) { error in
             guard case GalleryAlbumClientError.invalidPublicLink = error else { return XCTFail("Unexpected error: \(error)") }
         }
+    }
+
+    @MainActor
+    func testAccountScopeChangeDuringFreshReadPreventsPublicLinkPatch() async throws {
+        var currentSettings = settings
+        let expectedSettings = currentSettings
+        var requests: [URLRequest] = []
+        let client = try GalleryAlbumClient(settings: expectedSettings) { request in
+            requests.append(request)
+            currentSettings.authToken = "different-session-token"
+            return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":false,"role":"owner","items":[],"total":0,"limit":60,"offset":0,"members":[]}"#)
+        }
+        let staleOwner = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        do {
+            _ = try await client.setPublicLink(true, for: staleOwner, scopeIsCurrent: { currentSettings == expectedSettings })
+            XCTFail("Expected account/session change to stop the mutation")
+        } catch GalleryAlbumClientError.scopeChanged {}
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET"], "The stale account may perform the preflight read, but must not send PATCH.")
+    }
+
+    func testFreshAlbumPermissionAndVisibilityMustStillMatchBeforeEnable() async throws {
+        var requests: [URLRequest] = []
+        let client = try GalleryAlbumClient(settings: settings) { request in
+            requests.append(request)
+            return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":false,"role":"viewer","items":[],"total":0,"limit":60,"offset":0,"members":[]}"#)
+        }
+        let staleOwner = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        do {
+            _ = try await client.setPublicLink(true, for: staleOwner, scopeIsCurrent: { true })
+            XCTFail("Expected the fresh viewer role to block enablement")
+        } catch GalleryAlbumClientError.ownerRequired {}
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET"], "A stale owner view must never reach PATCH after access changed.")
+    }
+
+    func testFreshVisibilityMismatchPreventsStaleEnableOrDisable() async throws {
+        var requests: [URLRequest] = []
+        let client = try GalleryAlbumClient(settings: settings) { request in
+            requests.append(request)
+            return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"role":"owner","items":[],"total":0,"limit":60,"offset":0,"members":[]}"#)
+        }
+        let stalePrivateAlbum = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        do {
+            _ = try await client.setPublicLink(true, for: stalePrivateAlbum, scopeIsCurrent: { true })
+            XCTFail("Expected stale visibility to block the mutation")
+        } catch GalleryAlbumClientError.staleAlbum {}
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET"], "A stale album snapshot must not reach PATCH.")
     }
 
     func testRedirectIsRejectedAndRedirectBodyCannotRevealPublicToken() async throws {
@@ -126,7 +184,7 @@ final class GalleryAlbumClientTests: XCTestCase {
         }
         let album = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
         do {
-            _ = try await client.setPublicLink(true, for: album)
+            _ = try await client.setPublicLink(true, for: album, scopeIsCurrent: { true })
             XCTFail("A redirect response must not be decoded as an album share receipt")
         } catch GalleryAlbumClientError.requestFailed(let status, _) {
             XCTAssertEqual(status, 302)

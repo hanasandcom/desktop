@@ -74,10 +74,21 @@ struct GalleryAlbumClient {
         return album
     }
 
-    func setPublicLink(_ enabled: Bool, for album: GalleryAlbumDetail) async throws -> GalleryAlbumSharingResult {
-        guard GalleryAlbumAccess.canManage(album, currentUserId: userId) else { throw GalleryAlbumClientError.ownerRequired }
-        let updated = try await sendJSON(GalleryAlbum.self, path: "albums/\(segment(album.id))", method: "PATCH", body: GalleryAlbumPublicPayload(isPublic: enabled))
-        guard updated.id == album.id, updated.owner == userId, updated.isPublic == enabled else {
+    func setPublicLink(_ enabled: Bool, for selectedAlbum: GalleryAlbumDetail,
+                       scopeIsCurrent: @MainActor () -> Bool) async throws -> GalleryAlbumSharingResult {
+        guard await scopeIsCurrent() else { throw GalleryAlbumClientError.scopeChanged }
+        guard GalleryAlbumAccess.canManage(selectedAlbum, currentUserId: userId) else { throw GalleryAlbumClientError.ownerRequired }
+
+        let freshAlbum = try await album(id: selectedAlbum.id)
+        guard await scopeIsCurrent() else { throw GalleryAlbumClientError.scopeChanged }
+        guard freshAlbum.id == selectedAlbum.id,
+              GalleryAlbumAccess.canManage(freshAlbum, currentUserId: userId) else { throw GalleryAlbumClientError.ownerRequired }
+        guard freshAlbum.isPublic == selectedAlbum.isPublic else { throw GalleryAlbumClientError.staleAlbum }
+
+        // This final account/scope check follows the preflight read and immediately precedes PATCH.
+        guard await scopeIsCurrent() else { throw GalleryAlbumClientError.scopeChanged }
+        let updated = try await sendJSON(GalleryAlbum.self, path: "albums/\(segment(freshAlbum.id))", method: "PATCH", body: GalleryAlbumPublicPayload(isPublic: enabled))
+        guard updated.id == freshAlbum.id, updated.owner == userId, updated.isPublic == enabled else {
             throw GalleryAlbumClientError.unconfirmedMutation
         }
         if enabled {
@@ -264,7 +275,7 @@ struct GalleryAlbumClient {
 }
 
 enum GalleryAlbumClientError: LocalizedError {
-    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse, invalidPublicLink
+    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
     case ownerRequired, contributorRequired, removeOwnItemsOnly, unconfirmedMutation
     case requestFailed(Int, String)
@@ -279,6 +290,8 @@ enum GalleryAlbumClientError: LocalizedError {
         case .invalidSearch: return "Image search must be 200 characters or fewer."
         case .invalidResponse: return "The album service returned an unexpected response. Refresh before retrying."
         case .invalidPublicLink: return "The album service returned an unsafe public link. Refresh before sharing."
+        case .scopeChanged: return "Your account, session, or selected album changed. Refresh before continuing."
+        case .staleAlbum: return "Album sharing changed since it was loaded. Refresh before continuing."
         case .invalidName: return "Album names must be 1–120 characters on one line."
         case .invalidIdentifier: return "Choose a valid album, photo, or account."
         case .invalidSelection: return "Select between 1 and 500 photos."
