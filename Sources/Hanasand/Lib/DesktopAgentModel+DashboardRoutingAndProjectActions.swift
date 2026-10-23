@@ -68,7 +68,10 @@ extension DesktopAgentModel {
                 }.sortedForRuntime
             }
         case "/profile":
-            profile = try? decoder.decode(DashboardProfile.self, from: data)
+            if let value = try? decoder.decode(DashboardProfile.self, from: data) {
+                profile = value
+                profileIdentityLoaded = false
+            }
         case "/users", "/management":
             users = (try? decoder.decode([DashboardUser].self, from: data)) ?? []
             if selectedUserID.isEmpty || !users.contains(where: { $0.id == selectedUserID }) {

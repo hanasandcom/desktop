@@ -70,6 +70,7 @@ extension DesktopAgentModel {
             nativeDashboardPayload = text.isEmpty ? "No data returned." : String(text.prefix(24_000))
             updateTypedDashboardState(from: text, path: path)
             if path == "/profile" {
+                await loadProfileIdentity()
                 await loadProfileSecurityData()
             } else if path == "/system/rates" {
                 await loadRateLimitApiKeys()

@@ -13,6 +13,7 @@ import WebKit
 struct DashboardProfile: Decodable, Identifiable {
     let id: String
     let name: String?
+    let username: String?
     let avatar: String?
     let active: Bool?
     let roles: [DashboardRole]?
@@ -22,6 +23,7 @@ struct DashboardProfile: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case name
+        case username
         case avatar
         case active
         case roles

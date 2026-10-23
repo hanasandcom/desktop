@@ -33,6 +33,40 @@ struct ProfileNativePanel: View {
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(theme.textTertiary)
                         .textSelection(.enabled)
+                    SettingsField(label: "Display name", text: $model.profileEditName)
+                        .disabled(!model.canEditProfileIdentity || model.isSavingProfileIdentity)
+                    SettingsField(label: "Username", text: $model.profileEditUsername)
+                        .disabled(!model.canEditProfileIdentity || model.isSavingProfileIdentity)
+                        .autocorrectionDisabled()
+                    if model.isProfileIdentityImpersonating {
+                        NativeNotice(message: "Return to your own account to edit profile details.", tone: .info)
+                    }
+                    if model.isLoadingProfileIdentity {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading profile details…")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await model.updateProfileIdentity() }
+                        } label: {
+                            Label(model.isSavingProfileIdentity ? "Saving profile…" : "Save profile", systemImage: "checkmark")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canSaveProfileIdentity)
+                        if model.isSavingProfileIdentity {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    if let message = model.profileIdentityError {
+                        NativeNotice(message: message, title: model.profileIdentityLoaded ? "Profile was not updated" : "Profile details unavailable")
+                    }
+                    if let message = model.profileIdentityNotice {
+                        NativeNotice(message: message, title: "Profile updated", tone: .success)
+                    }
                     HStack(spacing: 10) {
                         ActionButton(title: "Log out", icon: "rectangle.portrait.and.arrow.right") {
                             confirmLogout = true
