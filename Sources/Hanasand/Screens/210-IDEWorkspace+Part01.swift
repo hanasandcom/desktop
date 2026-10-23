@@ -10,26 +10,80 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct IDEWorkspaceLayoutWidths: Equatable {
+    let navigator: CGFloat
+    let tools: CGFloat
+    let editor: CGFloat
+}
+
+enum IDEWorkspaceLayout {
+    static let navigatorWidth: CGFloat = 272
+    static let compactNavigatorWidth: CGFloat = 180
+    static let collapsedToolsWidth: CGFloat = 40
+    static let expandedToolsWidth: CGFloat = 288
+    static let compactExpandedToolsWidth: CGFloat = 190
+    static let editorMinimumWidth: CGFloat = 320
+    static let dividerWidth: CGFloat = 1
+
+    static var expandedLayoutBreakpoint: CGFloat {
+        navigatorWidth + expandedToolsWidth + editorMinimumWidth + dividerWidth * 2
+    }
+
+    static var minimumSupportedContentWidth: CGFloat {
+        compactNavigatorWidth + compactExpandedToolsWidth + editorMinimumWidth + dividerWidth * 2
+    }
+
+    static func widths(contentWidth: CGFloat, toolsExpanded: Bool) -> IDEWorkspaceLayoutWidths {
+        let navigator: CGFloat
+        let tools: CGFloat
+        if toolsExpanded {
+            let navigatorCompression = navigatorWidth - compactNavigatorWidth
+            let toolsCompression = expandedToolsWidth - compactExpandedToolsWidth
+            let totalCompression = navigatorCompression + toolsCompression
+            let neededCompression = min(
+                totalCompression,
+                max(0, expandedLayoutBreakpoint - contentWidth)
+            )
+            navigator = navigatorWidth - neededCompression * navigatorCompression / totalCompression
+            tools = expandedToolsWidth - neededCompression * toolsCompression / totalCompression
+        } else {
+            navigator = navigatorWidth
+            tools = collapsedToolsWidth
+        }
+        let editor = max(0, contentWidth - navigator - tools - dividerWidth * 2)
+        return IDEWorkspaceLayoutWidths(navigator: navigator, tools: tools, editor: editor)
+    }
+}
+
 extension IDEWorkspace {
 
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
-            HStack(spacing: 0) {
-                ideNavigator
-                    .frame(width: 272)
-                Divider()
-                    .background(theme.divider)
-                VStack(spacing: 0) {
-                    ideMinimalHeader
-                    editorTabStrip
-                    editorPane
+            GeometryReader { geometry in
+                let widths = IDEWorkspaceLayout.widths(
+                    contentWidth: geometry.size.width,
+                    toolsExpanded: toolsExpanded
+                )
+
+                HStack(spacing: 0) {
+                    ideNavigator
+                        .frame(width: widths.navigator)
+                    Divider()
+                        .background(theme.divider)
+                    VStack(spacing: 0) {
+                        ideMinimalHeader
+                        editorTabStrip
+                        editorPane
+                    }
+                    .frame(minWidth: IDEWorkspaceLayout.editorMinimumWidth)
+                    Divider()
+                        .background(theme.divider)
+                    ideToolRail
+                        .frame(width: widths.tools)
                 }
-                Divider()
-                    .background(theme.divider)
-                ideToolRail
-                    .frame(width: toolsExpanded ? 288 : 40)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(theme.background)
         .onAppear {
