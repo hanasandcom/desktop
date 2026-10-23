@@ -44,6 +44,7 @@ extension DesktopAgentModel {
     var dashboardActions: [DesktopAction] {
         [
             .route("Overview", "Main dashboard and service overview.", "gauge.with.dots.needle", "/dashboard"),
+            .route("Monitoring cases", "Review health-check incidents, evidence, and case history.", "tray.full", "/cases"),
             .route("Mail", "Open Mail.", "envelope", "/mail"),
             .route("Automations", "Schedule agent check-ins and inspect completed runs.", "alarm.waves.left.and.right", "/dashboard/automations"),
             .route("Notes", "Shared notes and operational memory.", "note.text", "/notes"),

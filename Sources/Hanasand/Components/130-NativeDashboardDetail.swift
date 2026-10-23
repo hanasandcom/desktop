@@ -63,6 +63,8 @@ struct NativeDashboardDetail: View {
         switch model.selectedDashboardPath {
         case "/dashboard":
             DashboardOverviewNativePanel()
+        case "/cases":
+            MonitoringCasesNativePanel()
         case "/g":
             LinksNativePanel()
         case "/dashboard/tests":

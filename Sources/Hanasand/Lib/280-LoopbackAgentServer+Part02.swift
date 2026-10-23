@@ -76,6 +76,7 @@ extension LoopbackAgentServer {
                 "open_section_updates",
                 "open_section_settings",
                 "dashboard_refresh",
+                "open_dashboard_cases",
                 "open_dashboard_mail",
                 "open_dashboard_articles",
                 "open_dashboard_thoughts",
@@ -131,6 +132,9 @@ extension LoopbackAgentServer {
             }
             if command == "dashboard_refresh" {
                 return http(body: #"{"ok":true,"message":"Dashboard refresh queued in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_cases" {
+                return http(body: #"{"ok":true,"message":"Native monitoring Cases panel opened in the Desktop app."}"#)
             }
             if command.hasPrefix("open_section_") {
                 return http(body: #"{"ok":true,"message":"Desktop section opened in the app."}"#)

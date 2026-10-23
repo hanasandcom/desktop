@@ -43,6 +43,10 @@ extension DesktopAgentModel {
             await loadHanasandTrafficMetrics(loadID: loadID)
             return
         }
+        if path == "/cases" {
+            await loadMonitoringCases()
+            return
+        }
         guard let endpoint = nativeEndpoint(for: path) else {
             guard nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
             nativeDashboardStatus = "Native controls"

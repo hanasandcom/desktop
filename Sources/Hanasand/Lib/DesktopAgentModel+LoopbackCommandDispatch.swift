@@ -103,6 +103,9 @@ extension DesktopAgentModel {
             Task { @MainActor in
                 await loadNativeDashboardData()
             }
+        } else if command == "open_dashboard_cases" {
+            openNativeDashboard(path: "/cases", label: "Monitoring Cases")
+            append(meta: "Dashboard", body: "Opened native Monitoring Cases panel.", kind: .command)
         } else if command == "open_dashboard_mail" {
             openNativeDashboard(path: "/mail", label: "Mail")
             append(meta: "Dashboard", body: "Opened native Mail panel.", kind: .command)

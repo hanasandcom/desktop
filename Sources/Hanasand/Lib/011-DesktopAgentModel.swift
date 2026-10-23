@@ -118,6 +118,8 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var databaseOverview: DashboardDatabaseOverview?; @Published var trafficMetrics: DashboardTrafficMetrics?; @Published var rateLimitOverview: DashboardRateLimitOverview?; @Published var apiKeys: [DashboardApiKeySummary] = []
 
+    @Published var monitoringCases: [MonitoringCase] = []; @Published var selectedMonitoringCase: MonitoringCase?; @Published var monitoringCaseSearch = ""; @Published var monitoringCaseStatusFilter = "active"; @Published var monitoringCaseSeverityFilter = "all"; @Published var monitoringCaseOwnerFilter = "all"; @Published var monitoringCaseReviewFilter = "all"; @Published var monitoringCaseResolutionFilter = "all"; @Published var monitoringCaseComment = ""
+
     @Published var rateLimitKeyOwnerID = ""; @Published var rateLimitKeyName = ""; @Published var rateLimitKeyTier = "starter"; @Published var rateLimitKeyRoute = ""
 
     @Published var rateLimitIssuedSecret: String?; @Published var rateLimitOverrideRoute = ""; @Published var rateLimitOverrideScope = "anonymous"; @Published var rateLimitOverrideWindowMs = "60000"

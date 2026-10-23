@@ -92,6 +92,8 @@ extension DesktopAgentModel {
         switch cleanPath {
         case "dashboard":
             return NativeEndpoint(label: "system status", baseURL: api, path: "status", authenticated: auth, userAgent: nil)
+        case "cases":
+            return NativeEndpoint(label: "monitoring cases", baseURL: api, path: "cases/monitoring", authenticated: true, userAgent: nil)
         case "mail":
             return NativeEndpoint(label: "mail overview", baseURL: api, path: "mail/overview", authenticated: true, userAgent: nil)
         case "notes":

@@ -82,6 +82,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "dashboard_refresh" || lowercasedRequest == "refresh_dashboard" {
             return "dashboard_refresh"
         }
+        if lowercasedRequest == "open_dashboard_cases" || lowercasedRequest == "monitoring_cases" || lowercasedRequest == "cases" {
+            return "open_dashboard_cases"
+        }
         if lowercasedRequest == "open_dashboard_mail" || lowercasedRequest == "dashboard_mail" || lowercasedRequest == "mail" {
             return "open_dashboard_mail"
         }
