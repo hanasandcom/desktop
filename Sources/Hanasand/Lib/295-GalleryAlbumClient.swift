@@ -94,18 +94,53 @@ struct GalleryAlbumClient {
     }
 
     func listLibrary(offset: Int = 0) async throws -> [GalleryLibraryItem] {
+        try await listLibraryPage(offset: offset).items
+    }
+
+    func listLibraryPage(offset: Int = 0, search: String = "", favorites: Bool = false) async throws -> GalleryLibraryPage {
         guard (0...1_000_000).contains(offset) else { throw GalleryAlbumClientError.invalidPage }
-        return try await decode([GalleryLibraryItem].self, path: "files/user/\(segment(userId))?limit=60&offset=\(offset)&search=&media=images")
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard term.count <= 200, !term.contains("\0") else { throw GalleryAlbumClientError.invalidSearch }
+        var components = URLComponents()
+        components.path = "/files/user/\(try segment(userId))"
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: "60"),
+            URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "search", value: term),
+            URLQueryItem(name: "media", value: "images")
+        ]
+        if favorites { components.queryItems?.append(URLQueryItem(name: "favorites", value: "true")) }
+        guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
+        let rows = try await decode([GalleryLibraryItem].self, path: String(path.dropFirst()))
+        guard rows.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 128 && $0.type.hasPrefix("image/") }) else {
+            throw GalleryAlbumClientError.invalidResponse
+        }
+        return GalleryLibraryPage(items: rows, nextOffset: offset + rows.count, hasMore: rows.count == 60)
+    }
+
+    func setFavorite(_ favorite: Bool, for id: String) async throws -> GalleryFavoriteReceipt {
+        let receipt = try await sendJSON(GalleryFavoriteReceipt.self, path: "files/\(segment(id))/favorite", method: "PATCH", body: GalleryFavoritePayload(favorite: favorite))
+        guard receipt.id == id, receipt.favorite == favorite else { throw GalleryAlbumClientError.unconfirmedMutation }
+        return receipt
     }
 
     func thumbnail(for id: String) async throws -> Data {
-        let (data, response) = try await perform(path: "files/\(segment(id))?variant=thumbnail", method: "GET", accept: "image/*")
+        try await imageData(for: id, thumbnail: true)
+    }
+
+    func originalImage(for id: String) async throws -> Data {
+        try await imageData(for: id, thumbnail: false)
+    }
+
+    private func imageData(for id: String, thumbnail: Bool) async throws -> Data {
+        let path = "files/\(try segment(id))" + (thumbnail ? "?variant=thumbnail" : "")
+        let (data, response) = try await perform(path: path, method: "GET", accept: "image/*")
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw GalleryAlbumClientError.requestFailed((response as? HTTPURLResponse)?.statusCode ?? 0, "Photo unavailable")
+            throw GalleryAlbumClientError.requestFailed((response as? HTTPURLResponse)?.statusCode ?? 0, "Image unavailable")
         }
         let mime = http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.lowercased() ?? ""
         guard ["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif"].contains(String(mime)),
-              !data.isEmpty, data.count <= 5 * 1024 * 1024 else { throw GalleryAlbumClientError.invalidImage }
+              !data.isEmpty, data.count <= (thumbnail ? 5 : 20) * 1024 * 1024 else { throw GalleryAlbumClientError.invalidImage }
         return data
     }
 
@@ -180,7 +215,7 @@ struct GalleryAlbumClient {
 }
 
 enum GalleryAlbumClientError: LocalizedError {
-    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidResponse
+    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
     case ownerRequired, contributorRequired, removeOwnItemsOnly, unconfirmedMutation
     case requestFailed(Int, String)
@@ -192,6 +227,7 @@ enum GalleryAlbumClientError: LocalizedError {
         case .invalidCredentials: return "The configured account or session token cannot be sent safely as a CDN cookie. Sign in again."
         case .impersonationUnsupported: return "Switch back to your own account to manage albums."
         case .invalidPage: return "Invalid album page."
+        case .invalidSearch: return "Image search must be 200 characters or fewer."
         case .invalidResponse: return "The album service returned an unexpected response. Refresh before retrying."
         case .invalidName: return "Album names must be 1–120 characters on one line."
         case .invalidIdentifier: return "Choose a valid album, photo, or account."

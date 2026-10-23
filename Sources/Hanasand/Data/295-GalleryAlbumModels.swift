@@ -40,6 +40,22 @@ struct GalleryLibraryItem: Decodable, Identifiable, Hashable {
     let id: String
     let name: String?
     let type: String
+    let isFavorite: Bool?
+}
+
+struct GalleryLibraryPage: Equatable {
+    let items: [GalleryLibraryItem]
+    let nextOffset: Int
+    let hasMore: Bool
+}
+
+struct GalleryFavoriteReceipt: Decodable {
+    let id: String
+    let favorite: Bool
+}
+
+struct GalleryFavoritePayload: Encodable {
+    let favorite: Bool
 }
 
 struct GalleryAlbumMutationReceipt: Decodable {
