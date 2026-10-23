@@ -56,6 +56,7 @@ extension DesktopAgentModel {
             .route("Monitoring cases", "Review health-check incidents, evidence, and case history.", "tray.full", "/cases"),
             .route("Threat intelligence", "Search threat actors, vulnerabilities, and source-backed activity.", "magnifyingglass", "/ti"),
             .route("Watchlists", "Manage organization threat-monitoring terms.", "list.bullet.rectangle", "/watchlists"),
+            .route("Organization API keys", "Create and revoke organization API keys.", "key.horizontal", "/organization-api-keys"),
             .route("API Reference", "Find endpoint docs, schemas, examples, and authentication requirements.", "doc.text.magnifyingglass", "/api"),
             .route("Hosts", "Check host health and review SSH access.", "server.rack", "/system/hosts"),
             .route("Host Updates", "Review automatic update status and history.", "arrow.down.circle", "/system/updates"),

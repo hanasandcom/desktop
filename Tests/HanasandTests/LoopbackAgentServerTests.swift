@@ -7,6 +7,8 @@ final class LoopbackAgentServerTests: XCTestCase {
     func testNormalizesAPIReferenceDashboardCommand() {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "api-reference", body: Data()), "open_dashboard_api_reference")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "POST /command HTTP/1.1", body: Data(#"{"command":"open_dashboard_api_reference"}"#.utf8)), "open_dashboard_api_reference")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization-api-keys", body: Data()), "open_dashboard_organization_api_keys")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "host-updates", body: Data()), "open_dashboard_host_updates")
     }
 
     func testRequestReadStateExtractsExactBodyBytes() {

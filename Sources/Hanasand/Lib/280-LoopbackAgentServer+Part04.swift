@@ -88,6 +88,21 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_api_reference" || lowercasedRequest == "api_reference" || lowercasedRequest == "api-reference" {
             return "open_dashboard_api_reference"
         }
+        if lowercasedRequest == "open_dashboard_organization_api_keys" || lowercasedRequest == "organization_api_keys" || lowercasedRequest == "organization-api-keys" {
+            return "open_dashboard_organization_api_keys"
+        }
+        if lowercasedRequest == "open_dashboard_organizations" || lowercasedRequest == "organizations" {
+            return "open_dashboard_organizations"
+        }
+        if lowercasedRequest == "open_dashboard_watchlists" || lowercasedRequest == "watchlists" {
+            return "open_dashboard_watchlists"
+        }
+        if lowercasedRequest == "open_dashboard_hosts" || lowercasedRequest == "hosts" {
+            return "open_dashboard_hosts"
+        }
+        if lowercasedRequest == "open_dashboard_host_updates" || lowercasedRequest == "host_updates" || lowercasedRequest == "host-updates" {
+            return "open_dashboard_host_updates"
+        }
         if lowercasedRequest == "open_dashboard_cases" || lowercasedRequest == "monitoring_cases" || lowercasedRequest == "cases" {
             return "open_dashboard_cases"
         }

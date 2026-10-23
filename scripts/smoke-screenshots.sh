@@ -412,6 +412,11 @@ run_dashboard_smoke() {
   run_step "27-traffic" "open_dashboard_traffic"
   run_step "28-automations" "open_dashboard_automations"
   run_step "29-cron" "open_dashboard_cron"
+  run_step "30-organizations" "open_dashboard_organizations"
+  run_step "31-organization-api-keys" "open_dashboard_organization_api_keys"
+  run_step "32-watchlists" "open_dashboard_watchlists"
+  run_step "33-hosts" "open_dashboard_hosts"
+  run_step "34-host-updates" "open_dashboard_host_updates"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

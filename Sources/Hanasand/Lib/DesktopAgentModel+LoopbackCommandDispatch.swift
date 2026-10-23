@@ -109,6 +109,21 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_api_reference" {
             openNativeDashboard(path: "/api", label: "API Reference")
             append(meta: "Dashboard", body: "Opened API Reference panel.", kind: .command)
+        } else if command == "open_dashboard_organization_api_keys" {
+            openNativeDashboard(path: "/organization-api-keys", label: "Organization API keys")
+            append(meta: "Dashboard", body: "Opened Organization API keys panel.", kind: .command)
+        } else if command == "open_dashboard_organizations" {
+            openNativeDashboard(path: "/organizations", label: "Organizations")
+            append(meta: "Dashboard", body: "Opened Organizations panel.", kind: .command)
+        } else if command == "open_dashboard_watchlists" {
+            openNativeDashboard(path: "/watchlists", label: "Watchlists")
+            append(meta: "Dashboard", body: "Opened Watchlists panel.", kind: .command)
+        } else if command == "open_dashboard_hosts" {
+            openNativeDashboard(path: "/system/hosts", label: "Hosts")
+            append(meta: "Dashboard", body: "Opened Hosts panel.", kind: .command)
+        } else if command == "open_dashboard_host_updates" {
+            openNativeDashboard(path: "/system/updates", label: "Host Updates")
+            append(meta: "Dashboard", body: "Opened Host Updates panel.", kind: .command)
         } else if command == "open_dashboard_cases" {
             openNativeDashboard(path: "/cases", label: "Monitoring Cases")
             append(meta: "Dashboard", body: "Opened native Monitoring Cases panel.", kind: .command)
