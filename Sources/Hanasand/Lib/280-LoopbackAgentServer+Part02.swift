@@ -119,6 +119,7 @@ extension LoopbackAgentServer {
                 "open_dashboard_health_checks",
                 "open_dashboard_personal_cron",
                 "open_dashboard_organization_settings",
+                "open_dashboard_organization_team",
                 "open_dashboard_organization_events",
                 "open_dashboard_organization_activity",
                 "open_dashboard_system",
@@ -225,6 +226,9 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_organization_settings" {
                 return http(body: #"{"ok":true,"message":"Native Organization Settings panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_organization_team" {
+                return http(body: #"{"ok":true,"message":"Native Organization Team panel opened in the Desktop app."}"#)
             }
             if command == "open_dashboard_organization_events" {
                 return http(body: #"{"ok":true,"message":"Native Organization Events panel opened in the Desktop app."}"#)

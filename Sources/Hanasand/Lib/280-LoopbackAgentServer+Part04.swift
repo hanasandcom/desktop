@@ -199,6 +199,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_organization_settings" || lowercasedRequest == "organization_settings" {
             return "open_dashboard_organization_settings"
         }
+        if lowercasedRequest == "open_dashboard_organization_team" || lowercasedRequest == "organization_team" || lowercasedRequest == "organization-team" {
+            return "open_dashboard_organization_team"
+        }
         if lowercasedRequest == "open_dashboard_organization_events" || lowercasedRequest == "organization_events" {
             return "open_dashboard_organization_events"
         }

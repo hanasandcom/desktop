@@ -45,6 +45,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         let administration = [
             DesktopAction.route("Realtime Logs", "Review recent events.", "waveform", "/logs/realtime"),
             DesktopAction.route("Organization Workspace", "Manage organization settings.", "building", "/organization-workspace"),
+            DesktopAction.route("Organization Team", "Manage organization members.", "person.2", "/organizations/team"),
             DesktopAction.route("Organization Settings", "Review organization settings.", "slider", "/organizations/settings"),
             DesktopAction.route("Organization Events", "Review organization events.", "list", "/organizations/events"),
             DesktopAction.route("Organization Activity", "Review organization activity.", "clock", "/organizations/activity"),
@@ -56,7 +57,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron"]))
         XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime"]))
         XCTAssertEqual(routesBySection["Organization"], Set([
-            "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity",
+            "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity",
         ]))
     }
 }

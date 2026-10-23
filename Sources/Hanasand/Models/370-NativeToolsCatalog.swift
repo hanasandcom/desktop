@@ -22,7 +22,7 @@ enum NativeToolsCatalog {
                 ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/repositories", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts"].contains(action.routePath)
             }),
             ("Organization", { action in
-                ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)
+                ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)
             }),
             ("Account & API", { action in
                 ["/api", "/profile"].contains(action.routePath)

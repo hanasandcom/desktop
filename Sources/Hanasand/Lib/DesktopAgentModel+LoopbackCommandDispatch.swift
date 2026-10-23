@@ -238,6 +238,9 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_organization_settings" {
             openNativeDashboard(path: "/organizations/settings", label: "Organization Settings")
             append(meta: "Dashboard", body: "Opened native Organization Settings panel.", kind: .command)
+        } else if command == "open_dashboard_organization_team" {
+            openNativeDashboard(path: "/organizations/team", label: "Organization Team")
+            append(meta: "Dashboard", body: "Opened native Organization Team panel.", kind: .command)
         } else if command == "open_dashboard_organization_events" {
             openNativeDashboard(path: "/organizations/events", label: "Organization Events")
             append(meta: "Dashboard", body: "Opened native Organization Events panel.", kind: .command)

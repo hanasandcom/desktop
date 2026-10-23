@@ -117,6 +117,7 @@ extension DesktopAgentModel {
             .route("Roles", "Manage user roles.", "person.badge.key", "/role"),
             .route("Organizations", "Browse and switch organizations.", "building.2", "/organizations"),
             .route("Organization Workspace", "Review organization settings, events, and activity.", "building.2.crop.circle", "/organization-workspace"),
+            .route("Organization Team", "Manage active members and pending invitations.", "person.2", "/organizations/team"),
             .route("Organization Settings", "Review settings for the selected organization.", "slider.horizontal.3", "/organizations/settings"),
             .route("Organization Events", "Review scoped events and cases.", "list.bullet.rectangle", "/organizations/events"),
             .route("Organization Activity", "Review recent derived organization activity.", "clock.arrow.circlepath", "/organizations/activity"),
