@@ -102,7 +102,7 @@ struct AutomationsNativePanel: View {
                         model.openNativeDashboard(path: "/system/cron", label: "Cron Jobs")
                     }
                 }
-                compactControl(title: "Refresh", icon: "arrow.clockwise", label: "Refresh \(scope.heading.lowercased())", isDisabled: isLoading) {
+                compactControl(title: "Refresh", icon: "arrow.clockwise", label: "Refresh \(scope.heading.lowercased())", isDisabled: !DesktopAutomationEditorRules.canRefresh(isLoading: isLoading, isSaving: busyAction == "save")) {
                     Task { await load() }
                 }
                 compactControl(title: "New", icon: "plus", label: "Create automation", prominent: true) {
@@ -123,7 +123,7 @@ struct AutomationsNativePanel: View {
                         .font(.system(size: 12))
                         .foregroundStyle(theme.textSecondary)
                     ActionButton(title: "Refresh list", icon: "arrow.clockwise") { Task { await load() } }
-                        .disabled(isLoading || busyAction == "save")
+                        .disabled(!DesktopAutomationEditorRules.canRefresh(isLoading: isLoading, isSaving: busyAction == "save"))
                 }
             }
 
@@ -570,6 +570,7 @@ struct AutomationsNativePanel: View {
             message = "Refresh the list before creating another automation."
             return
         }
+        let wasCreate = selected == nil
         let interval = Int(draftInterval) ?? selected?.intervalMinutes ?? 15
         guard draftScheduleKind != "interval" || interval > 0 else { message = "Enter a repeat interval in minutes."; return }
         let timeoutSeconds = Int(draftTimeout) ?? selected?.timeoutSeconds ?? 5
@@ -627,7 +628,7 @@ struct AutomationsNativePanel: View {
             await load()
             selectedID = saved.id
         } catch {
-            if selected == nil && DesktopAutomationEditorRules.createMayHaveCommitted(error) {
+            if DesktopAutomationEditorRules.shouldRequireCreateReconciliation(wasCreate: wasCreate, error: error) {
                 createOutcomeUncertain = true
                 message = "The create request’s outcome is unclear. Refresh the list before creating again; it may already have saved."
             } else {

@@ -149,8 +149,13 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(503)))
         XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(408)))
         XCTAssertTrue(DesktopAutomationEditorRules.createMayHaveCommitted(URLError(.timedOut)))
+        XCTAssertTrue(DesktopAutomationEditorRules.shouldRequireCreateReconciliation(wasCreate: true, error: AutomationClientError.requestFailed(503)))
+        XCTAssertFalse(DesktopAutomationEditorRules.shouldRequireCreateReconciliation(wasCreate: false, error: AutomationClientError.requestFailed(503)))
         XCTAssertFalse(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.requestFailed(400)))
         XCTAssertFalse(DesktopAutomationEditorRules.createMayHaveCommitted(AutomationClientError.invalidInput))
+        XCTAssertFalse(DesktopAutomationEditorRules.canRefresh(isLoading: false, isSaving: true))
+        XCTAssertFalse(DesktopAutomationEditorRules.canRefresh(isLoading: true, isSaving: false))
+        XCTAssertTrue(DesktopAutomationEditorRules.canRefresh(isLoading: false, isSaving: false))
 
         XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: false, isLoading: false, outcomeUncertain: false, canMutate: true))
         XCTAssertFalse(DesktopAutomationEditorRules.canCreate(hasLoadedList: true, isLoading: true, outcomeUncertain: false, canMutate: true))

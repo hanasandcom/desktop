@@ -177,6 +177,14 @@ enum DesktopAutomationEditorRules {
         hasLoadedList && !isLoading && !outcomeUncertain && canMutate
     }
 
+    static func canRefresh(isLoading: Bool, isSaving: Bool) -> Bool {
+        !isLoading && !isSaving
+    }
+
+    static func shouldRequireCreateReconciliation(wasCreate: Bool, error: Error) -> Bool {
+        wasCreate && createMayHaveCommitted(error)
+    }
+
     static func value(from raw: String) -> DesktopAutomationRuleValue? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
