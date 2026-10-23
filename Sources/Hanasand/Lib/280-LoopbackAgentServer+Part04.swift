@@ -163,6 +163,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_cases" || lowercasedRequest == "monitoring_cases" || lowercasedRequest == "cases" {
             return "open_dashboard_cases"
         }
+        if lowercasedRequest == "open_dashboard_status" || lowercasedRequest == "service_status" {
+            return "open_dashboard_status"
+        }
         if lowercasedRequest == "open_dashboard_mail" || lowercasedRequest == "dashboard_mail" || lowercasedRequest == "mail" {
             return "open_dashboard_mail"
         }

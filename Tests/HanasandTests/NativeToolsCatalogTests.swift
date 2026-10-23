@@ -42,6 +42,9 @@ final class NativeToolsCatalogTests: XCTestCase {
             DesktopAction.route("Health Checks", "Monitor services.", "heart", "/automation/health"),
             DesktopAction.route("Sandbox History", "Review saved runs.", "square.stack.3d.up", "/sandbox"),
             DesktopAction.route("Personal Cron Jobs", "Schedule jobs.", "calendar", "/automation/cron"),
+            DesktopAction.route("Service Status", "View public checks and incidents.", "heart.text.square", "/status"),
+            DesktopAction.route("Security Scanner", "Run organization scans.", "stethoscope", "/scanner"),
+            DesktopAction.route("CDN Image Library", "Browse private images.", "photo", "/images/library"),
         ]
         let administration = [
             DesktopAction.route("OpenAPI JSON", "View raw API contract.", "curlybraces", "/api/openapi"),
@@ -57,8 +60,9 @@ final class NativeToolsCatalogTests: XCTestCase {
         let sections = NativeToolsCatalog.sections(dashboard: dashboard, administration: administration)
         let routesBySection = Dictionary(uniqueKeysWithValues: sections.map { ($0.title, Set($0.actions.compactMap(\.routePath))) })
 
-        XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron"]))
-        XCTAssertEqual(routesBySection["Security & intelligence"], Set(["/sandbox"]))
+        XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron", "/images/library"]))
+        XCTAssertEqual(routesBySection["Infrastructure"], Set(["/status"]))
+        XCTAssertEqual(routesBySection["Security & intelligence"], Set(["/sandbox", "/scanner"]))
         XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime", "/logs/search"]))
         XCTAssertEqual(routesBySection["Account & API"], Set(["/api/openapi"]))
         XCTAssertEqual(routesBySection["Organization"], Set([

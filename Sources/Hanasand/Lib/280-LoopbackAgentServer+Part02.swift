@@ -103,6 +103,7 @@ extension LoopbackAgentServer {
                 "open_dashboard_hosts",
                 "open_dashboard_host_updates",
                 "open_dashboard_cases",
+                "open_dashboard_status",
                 "open_dashboard_mail",
                 "open_dashboard_articles",
                 "open_dashboard_thoughts",
