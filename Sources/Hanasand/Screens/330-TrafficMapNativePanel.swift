@@ -11,6 +11,17 @@ struct TrafficMapNativePanel: View {
     @State private var status = "Traffic map has not been loaded."
     @State private var isLoading = false
     @State private var requestGeneration = UUID()
+    @State private var refreshGeneration = UUID()
+    @State private var liveStatus = "Connecting"
+    @State private var liveNotice = ""
+    @State private var streamCursor = "0"
+    @State private var livePings: [TrafficMapLivePing] = []
+    @State private var lastBatchCount: Int?
+    @State private var nextPingID = 0
+    @State private var mapSize = CGSize.zero
+    @State private var mapZoom: CGFloat = 1
+    @State private var mapOffset = CGSize.zero
+    @State private var dragOrigin = CGSize.zero
 
     private var countries: [TrafficMapCountry] { TrafficMapCountry.summarize(records) }
     private var locatedRequestCount: Int { countries.reduce(0) { $0 + $1.requestCount } }
@@ -45,7 +56,7 @@ struct TrafficMapNativePanel: View {
                 .pickerStyle(.menu)
                 .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
                 Button {
-                    Task { await load() }
+                    refreshGeneration = UUID()
                 } label: {
                     Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
                 }
@@ -59,6 +70,27 @@ struct TrafficMapNativePanel: View {
                 .foregroundStyle(status.hasPrefix("Could not") ? theme.danger : theme.textSecondary)
                 .textSelection(.enabled)
 
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(liveStatus == "Live" ? theme.accent : theme.textTertiary)
+                    .frame(width: 7, height: 7)
+                Text(liveStatus)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(liveStatus == "Access refresh required" ? theme.danger : theme.textSecondary)
+                if let lastBatchCount {
+                    Text("· latest live batch: \(lastBatchCount) requests")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                if !liveNotice.isEmpty {
+                    Text("· \(liveNotice)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+
             if countries.isEmpty {
                 NativeEmptyState(
                     title: records.isEmpty ? "No traffic snapshot" : "No located requests",
@@ -66,41 +98,111 @@ struct TrafficMapNativePanel: View {
                         ? "Refresh to load the latest retained traffic records."
                         : "The current snapshot has no requests with a supported country code."
                 )
-            } else {
-                mapView
+            }
+            mapView
+            if !countries.isEmpty {
                 countryPicker
                 selectedCountryDetails
             }
 
             trafficActivity
         }
-        .task(id: selectedDomain) { await load() }
+        .task(id: "\(selectedDomain):\(refreshGeneration.uuidString)") { await monitorTraffic() }
         .onDisappear { requestGeneration = UUID() }
     }
 
     private var mapView: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(theme.card)
-            VStack(spacing: 9) {
-                Image(systemName: "map")
-                    .font(.system(size: 25, weight: .medium))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Country markers show approximate country centers; borders are not shown.")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
-                Text("Country codes are available; coordinates are not")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.text)
-                Text("The traffic API returns country codes without latitude or longitude, so request markers cannot be placed on a map.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 520)
+                Spacer(minLength: 4)
+                Button("Zoom in") { mapZoom = min(4, mapZoom * 1.25) }
+                    .disabled(mapZoom >= 4)
+                Button("Zoom out") { mapZoom = max(1, mapZoom / 1.25); if mapZoom == 1 { mapOffset = .zero; dragOrigin = .zero } }
+                    .disabled(mapZoom <= 1)
+                Button("Reset map") { resetMap() }
+                    .disabled(mapZoom == 1 && mapOffset == .zero)
             }
-            .padding(24)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            GeometryReader { geometry in
+                let size = geometry.size
+                ZStack {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(theme.card)
+                    Canvas { context, canvasSize in
+                        var grid = Path()
+                        for longitude in stride(from: -150.0, through: 150.0, by: 30.0) {
+                            let x = (longitude + 180) / 360 * canvasSize.width
+                            grid.move(to: CGPoint(x: x, y: 0))
+                            grid.addLine(to: CGPoint(x: x, y: canvasSize.height))
+                        }
+                        for latitude in stride(from: -60.0, through: 60.0, by: 30.0) {
+                            let y = (90 - latitude) / 180 * canvasSize.height
+                            grid.move(to: CGPoint(x: 0, y: y))
+                            grid.addLine(to: CGPoint(x: canvasSize.width, y: y))
+                        }
+                        context.stroke(grid, with: .color(theme.divider.opacity(0.55)), lineWidth: 1)
+                    }
+
+                    ForEach(countries) { country in
+                        if let point = displayedPoint(iso: country.iso, size: size) {
+                            Button {
+                                select(country, focusOnMap: true)
+                            } label: {
+                                Circle()
+                                    .fill(theme.accent.opacity(selectedCountry == country.iso ? 0.95 : 0.65))
+                                    .frame(width: markerDiameter(for: country), height: markerDiameter(for: country))
+                                    .overlay(Circle().stroke(theme.text, lineWidth: selectedCountry == country.iso ? 2 : 0.75))
+                                    .frame(width: 34, height: 34)
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("\(country.name): \(country.requestCount) located requests")
+                            .accessibilityLabel("\(country.name), \(country.requestCount) located requests")
+                            .position(point)
+                        }
+                    }
+
+                    TimelineView(.animation(minimumInterval: 0.2, paused: livePings.isEmpty)) { timeline in
+                        ForEach(livePings) { ping in
+                            let age = max(0, timeline.date.timeIntervalSince(ping.receivedAt))
+                            if age < 2.2, let point = displayedPoint(iso: ping.iso, size: size) {
+                                let progress = age / 2.2
+                                Circle()
+                                    .stroke(theme.accent.opacity(1 - progress), lineWidth: 1.5)
+                                    .frame(width: 16 + CGFloat(progress) * 38, height: 16 + CGFloat(progress) * 38)
+                                    .position(point)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(theme.divider, lineWidth: 1))
+                .contentShape(Rectangle())
+                .simultaneousGesture(DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        guard mapZoom > 1 else { return }
+                        mapOffset = clampedOffset(CGSize(width: dragOrigin.width + value.translation.width,
+                                                         height: dragOrigin.height + value.translation.height), size: size)
+                    }
+                    .onEnded { _ in dragOrigin = mapOffset })
+                .onAppear { mapSize = size }
+                .onChange(of: size) { _, value in mapSize = value }
+            }
+            .aspectRatio(2, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+
+            Text("Drag to pan when zoomed. Select a country marker or country below to focus it.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
         }
-        .frame(height: 250)
-        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(theme.divider, lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Map unavailable because traffic responses include country codes but no coordinates")
     }
 
     private var countryPicker: some View {
@@ -108,7 +210,7 @@ struct TrafficMapNativePanel: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
                 ForEach(countries) { country in
                     Button {
-                        select(country)
+                        select(country, focusOnMap: true)
                     } label: {
                         HStack(spacing: 8) {
                             Text(country.iso)
@@ -232,8 +334,135 @@ struct TrafficMapNativePanel: View {
         countries.first(where: { $0.iso == selectedCountry })?.name ?? "Country focus"
     }
 
-    private func select(_ country: TrafficMapCountry) {
+    private func markerDiameter(for country: TrafficMapCountry) -> CGFloat {
+        let strongest = max(1, countries.map(\.requestCount).max() ?? 1)
+        return 10 + 14 * CGFloat(country.requestCount) / CGFloat(strongest)
+    }
+
+    private func displayedPoint(iso: String, size: CGSize) -> CGPoint? {
+        guard let point = TrafficMapGeography.point(iso: iso, size: size) else { return nil }
+        return CGPoint(
+            x: (point.x - size.width / 2) * mapZoom + size.width / 2 + mapOffset.width,
+            y: (point.y - size.height / 2) * mapZoom + size.height / 2 + mapOffset.height
+        )
+    }
+
+    private func clampedOffset(_ value: CGSize, size: CGSize) -> CGSize {
+        let horizontalLimit = size.width * max(0, mapZoom - 1) / 2
+        let verticalLimit = size.height * max(0, mapZoom - 1) / 2
+        return CGSize(
+            width: min(horizontalLimit, max(-horizontalLimit, value.width)),
+            height: min(verticalLimit, max(-verticalLimit, value.height))
+        )
+    }
+
+    private func resetMap() {
+        mapZoom = 1
+        mapOffset = .zero
+        dragOrigin = .zero
+    }
+
+    private func select(_ country: TrafficMapCountry, focusOnMap: Bool = false) {
         selectedCountry = country.iso
+        guard focusOnMap, mapSize.width > 0, mapSize.height > 0,
+              let point = TrafficMapGeography.point(iso: country.iso, size: mapSize) else { return }
+        mapZoom = 2.4
+        let desired = CGSize(
+            width: mapSize.width / 2 - point.x * mapZoom,
+            height: mapSize.height / 2 - point.y * mapZoom
+        )
+        mapOffset = clampedOffset(desired, size: mapSize)
+        dragOrigin = mapOffset
+    }
+
+    @MainActor
+    private func monitorTraffic() async {
+        liveStatus = "Connecting"
+        liveNotice = ""
+        streamCursor = "0"
+        livePings = []
+        lastBatchCount = nil
+        await load()
+        guard !Task.isCancelled else { return }
+        streamCursor = records.compactMap { UInt64($0.id) }.max().map(String.init) ?? "0"
+
+        let snapshots = Task { @MainActor in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) }
+                catch { break }
+                guard !Task.isCancelled else { break }
+                await load()
+            }
+        }
+        defer { snapshots.cancel() }
+
+        var failures = 0
+        while !Task.isCancelled {
+            do {
+                let request = try TrafficMapLiveClient.request(
+                    apiBaseURL: apiBaseURL,
+                    userID: model.userIDForRequests,
+                    authToken: model.authTokenForRequests,
+                    impersonationToken: model.settings.impersonationToken,
+                    domain: selectedDomain,
+                    after: streamCursor == "0" ? nil : streamCursor
+                )
+                liveStatus = failures == 0 ? "Connecting" : "Reconnecting"
+                try await TrafficMapLiveClient.listen(
+                    request: request,
+                    expectedHost: apiBaseURL.host ?? "",
+                    afterCursor: streamCursor,
+                    onReady: {
+                        liveStatus = "Live"
+                        liveNotice = ""
+                    },
+                    onBatch: { batches in
+                        let receivedAt = Date()
+                        lastBatchCount = batches.reduce(0) { $0 + $1.count }
+                        let known = batches.filter { TrafficMapGeography.centroids[$0.iso] != nil }
+                        for batch in known {
+                            nextPingID += 1
+                            livePings.append(TrafficMapLivePing(id: nextPingID, iso: batch.iso, count: batch.count, receivedAt: receivedAt))
+                        }
+                        if livePings.count > 40 { livePings.removeFirst(livePings.count - 40) }
+                        if let cursor = batches.compactMap({ UInt64($0.maxID) }).max() {
+                            streamCursor = String(max(UInt64(streamCursor) ?? 0, cursor))
+                        }
+                    }
+                )
+                if Task.isCancelled { break }
+                failures += 1
+                liveNotice = "Live feed disconnected; recent snapshots remain available."
+            } catch is CancellationError {
+                break
+            } catch let error as TrafficMapLiveError {
+                if error.isAuthorizationFailure {
+                    liveStatus = "Access refresh required"
+                    liveNotice = "Refresh after checking account access."
+                    snapshots.cancel()
+                    return
+                }
+                failures += 1
+                liveNotice = "Live feed disconnected; recent snapshots remain available."
+            } catch {
+                failures += 1
+                liveNotice = "Live feed disconnected; recent snapshots remain available."
+            }
+
+            if failures >= 5 {
+                liveStatus = "Polling snapshots"
+                liveNotice = "Live reconnect paused after repeated failures."
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(1)) }
+                    catch { break }
+                }
+                break
+            }
+            liveStatus = "Reconnecting"
+            let delay = min(15, 1 << min(failures, 4))
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { break }
+        }
     }
 
     @MainActor
@@ -252,6 +481,9 @@ struct TrafficMapNativePanel: View {
             domains = newDomains
             records = page.result
             metrics = newMetrics
+            if let cursor = page.result.compactMap({ UInt64($0.id) }).max() {
+                streamCursor = String(max(UInt64(streamCursor) ?? 0, cursor))
+            }
             if !countries.contains(where: { $0.iso == selectedCountry }) {
                 if let first = countries.first { select(first) }
                 else { selectedCountry = "" }
@@ -270,7 +502,7 @@ struct TrafficMapNativePanel: View {
     }
 
     private func fetchRecords() async throws -> TrafficRecentPage {
-        let url = try TrafficRecentClient.recordsURL(apiBaseURL: apiBaseURL, domain: selectedDomain, page: 1)
+        let url = try TrafficRecentClient.recordsURL(apiBaseURL: apiBaseURL, domain: selectedDomain, page: 1, limit: 200)
         let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
         return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request))
     }

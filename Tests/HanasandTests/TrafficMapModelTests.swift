@@ -28,6 +28,64 @@ final class TrafficMapModelTests: XCTestCase {
         XCTAssertEqual(TrafficMapCountry.summarize(records).map(\.iso), ["NO", "US"])
     }
 
+    func testCountryCentroidsProjectAndCoverTheExpoDataset() {
+        XCTAssertEqual(TrafficMapGeography.centroids.count, 250)
+        XCTAssertEqual(TrafficMapGeography.centroids["NO"], TrafficMapCoordinate(latitude: 62, longitude: 10))
+        let point = TrafficMapGeography.point(iso: "NO", size: CGSize(width: 1000, height: 500))
+        XCTAssertEqual(point?.x ?? .nan, 527.7777777777778, accuracy: 1e-9)
+        XCTAssertEqual(point?.y ?? .nan, 77.77777777777777, accuracy: 1e-9)
+        XCTAssertNil(TrafficMapGeography.point(iso: "X1", size: CGSize(width: 1000, height: 500)))
+    }
+
+    func testBuildsSecureAuthenticatedLiveTrafficRequest() throws {
+        let request = try TrafficMapLiveClient.request(
+            apiBaseURL: URL(string: "https://example.test/api")!,
+            userID: " user-1 ",
+            authToken: " token-1 ",
+            impersonationToken: "impersonation-1",
+            domain: "example.test",
+            after: "123"
+        )
+
+        XCTAssertEqual(request.url?.path, "/api/traffic/live")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems?.count, 2)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "text/event-stream")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "user-1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-impersonation-token"), "impersonation-1")
+        XCTAssertFalse(request.httpShouldHandleCookies)
+    }
+
+    func testLiveTrafficRequestRejectsInsecureOrMalformedInput() {
+        XCTAssertThrowsError(try TrafficMapLiveClient.requestURL(apiBaseURL: URL(string: "http://example.test/api")!, domain: "", after: nil))
+        XCTAssertThrowsError(try TrafficMapLiveClient.requestURL(apiBaseURL: URL(string: "https://example.test/api")!, domain: "example.test/path", after: nil))
+        XCTAssertThrowsError(try TrafficMapLiveClient.requestURL(apiBaseURL: URL(string: "https://example.test/api")!, domain: "", after: "9007199254740992"))
+        XCTAssertThrowsError(try TrafficMapLiveClient.request(apiBaseURL: URL(string: "https://example.test/api")!, userID: "", authToken: "", domain: "", after: nil))
+    }
+
+    func testDecodesLiveCountryBatchAndSkipsOldCursor() throws {
+        let data = Data("""
+        [
+          {"iso":"NO","count":3,"max_id":"105","timestamp":"2026-10-23 10:03:00+00"},
+          {"iso":"US","count":1,"max_id":"100","timestamp":"2026-10-23T10:02:00Z"}
+        ]
+        """.utf8)
+
+        let batches = try TrafficMapLiveClient.decodeBatch(data, after: "102")
+
+        XCTAssertEqual(batches.map(\.iso), ["NO"])
+        XCTAssertEqual(batches.first?.count, 3)
+        XCTAssertEqual(batches.first?.maxID, "105")
+    }
+
+    func testRejectsMalformedLiveCountryBatch() {
+        let data = Data("""
+        [{"iso":"not-a-country","count":3,"max_id":"105","timestamp":"2026-10-23T10:03:00Z"}]
+        """.utf8)
+
+        XCTAssertThrowsError(try TrafficMapLiveClient.decodeBatch(data))
+    }
+
     func testDecodesRetainedTrafficMetricsAndTopActivity() throws {
         let data = Data("""
         {
