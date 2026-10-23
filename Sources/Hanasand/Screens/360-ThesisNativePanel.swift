@@ -41,17 +41,10 @@ struct ThesisNativePanel: View {
             }
 
             if document != nil {
-                NativeGroupPanel(title: "Workspace", subtitle: "Edit the shared Markdown document") {
-                    TextField("Title", text: $title).textFieldStyle(.roundedBorder).disabled(!canEdit || busy || remoteConflict != nil)
-                    TextEditor(text: $bodyText)
-                        .font(.system(size: 12, design: .monospaced))
-                        .frame(minHeight: 360)
-                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.divider, lineWidth: 1))
-                        .disabled(!canEdit || busy || remoteConflict != nil)
-                    Text("Markdown source · \(bodyText.utf16.count) of \(ThesisDocument.bodyLimit) characters")
-                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
-                    if !canEdit { Text("This account can view the shared workspace but cannot edit it. Hanasand organization owners and editors can make changes.").font(.system(size: 11)).foregroundStyle(theme.textSecondary) }
-                }
+                ThesisWorkspaceEditor(documentTitle: $title, bodyText: $bodyText, enabled: canEdit, busy: busy, conflicted: remoteConflict != nil)
+                if !canEdit { Text("This account can view the shared workspace but cannot edit it. Hanasand organization owners and editors can make changes.").font(.system(size: 11)).foregroundStyle(theme.textSecondary) }
+                Text("Markdown source · \(bodyText.utf16.count) of \(ThesisDocument.bodyLimit) characters")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
 
                 if let remoteConflict {
                     NativeGroupPanel(title: "Newer shared version", subtitle: "Revision \(remoteConflict.revision) was saved by another editor.") {

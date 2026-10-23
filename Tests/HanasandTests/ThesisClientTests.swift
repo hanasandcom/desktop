@@ -92,4 +92,88 @@ final class ThesisClientTests: XCTestCase {
         invalid = settings(); invalid.apiBaseURL = "http://api.hanasand.test/api"
         XCTAssertThrowsError(try ThesisClient(settings: invalid)) { XCTAssertEqual($0 as? ThesisClientError, .invalidBaseURL) }
     }
+
+    func testWorkspaceCodecRoundTripsUTF16SheetLengthsAndUnknownMetadata() throws {
+        let original = "<!-- thesis-workspace:2 %5B%5D -->\n" // Deliberately malformed; preserved as ordinary Markdown.
+        let decoded = ThesisWorkspaceCodec.sheets(title: "Research", body: original)
+        XCTAssertEqual(decoded.count, 4)
+        XCTAssertEqual(decoded[0].body, original)
+
+        let sheets = [
+            ThesisSheet(body: "Intro 🧭", metadata: ["id": "Overview", "name": "Overview", "title": "# Overview", "custom": ["keep": true]]),
+            ThesisSheet(body: "| Task | Status |\n| --- | --- |\n| Read | Planned |\n", metadata: ["id": "Plan", "name": "Plan", "title": "# Plan"]),
+        ]
+        let body = ThesisWorkspaceCodec.write(sheets)
+        let restored = ThesisWorkspaceCodec.sheets(title: "Ignored", body: body)
+        XCTAssertEqual(restored.count, 2)
+        XCTAssertEqual(restored[0].body, "Intro 🧭")
+        XCTAssertEqual((restored[0].metadata["custom"] as? [String: Bool])?["keep"], true)
+        XCTAssertEqual(restored[1].body, sheets[1].body)
+    }
+
+    func testTableCodecFindsPlanAndTimetableTablesOutsideFencedCodeAndPreservesCells() throws {
+        let body = """
+        Intro 🧭
+
+        ```md
+        | fake | table |
+        | --- | --- |
+        ```
+
+        | Task | Status |
+        | --- | --- |
+        | Read &#124; compare | Planned |
+        <!-- thesis-table:{"widths":[210,120],"heights":[48,56]} -->
+
+        | Week | Research | Total |
+        | --- | --- | --- |
+        | 2026-W01 | 4 | 4 |
+        """
+        let parsed = ThesisWorkspaceCodec.tables(in: body)
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed[0].kind, .plan)
+        XCTAssertEqual(parsed[0].cells[1][0], "Read | compare")
+        XCTAssertEqual(parsed[0].widths, [210, 120])
+        XCTAssertEqual(parsed[1].kind, .timetable)
+
+        let edited = ThesisWorkspaceCodec.replacing(parsed[0], in: body, with: [["Task", "Status"], ["A | B", "Completed"]])
+        XCTAssertEqual(ThesisWorkspaceCodec.tables(in: edited)[0].cells[1], ["A | B", "Completed"])
+        XCTAssertTrue(edited.contains("Intro 🧭"))
+        XCTAssertTrue(edited.contains("```md\n| fake | table |"))
+        XCTAssertEqual(ThesisWorkspaceCodec.tables(in: edited).count, 2)
+    }
+
+    func testTableInsertBuildsRequestedRowsAndRecognizablePlanTemplate() throws {
+        let body = ThesisWorkspaceCodec.appendingTable(to: "Notes", headers: ["Task", "Hours", "Status"], rowCount: 3)
+        let tables = ThesisWorkspaceCodec.tables(in: body)
+        XCTAssertEqual(tables.count, 1)
+        XCTAssertEqual(tables[0].kind, .plan)
+        XCTAssertEqual(tables[0].cells.count, 3)
+        XCTAssertEqual(tables[0].cells[0], ["Task", "Hours", "Status"])
+        XCTAssertTrue(body.hasPrefix("Notes\n\n"))
+    }
+
+    func testWorkspaceCodecReadsLegacySheetMarkersAndLeavesCodeExamplesAlone() throws {
+        let body = """
+        Overview text
+
+        ```md
+        <!-- thesis-sheet:Plan title:%23%20Fake -->
+        ```
+
+        <!-- thesis-sheet:Plan title:%23%20Project%20Plan -->
+        | Task | Status |
+        | --- | --- |
+        """
+        let sheets = ThesisWorkspaceCodec.sheets(title: "Research", body: body)
+        XCTAssertEqual(sheets.count, 4)
+        XCTAssertEqual(sheets[0].body, "Overview text\n\n```md\n<!-- thesis-sheet:Plan title:%23%20Fake -->\n```")
+        XCTAssertEqual(sheets[2].title, "# Project Plan")
+        XCTAssertTrue(sheets[2].body.contains("| Task | Status |"))
+
+        let tableBody = "| Value |\n| --- |\n| &amp;#124; |\n"
+        XCTAssertEqual(ThesisWorkspaceCodec.tables(in: tableBody).first?.cells[1][0], "&#124;")
+        let compactTable = "Task | Status\n--- | ---\nRead | Planned"
+        XCTAssertEqual(ThesisWorkspaceCodec.tables(in: compactTable).first?.cells[1], ["Read", "Planned"])
+    }
 }
