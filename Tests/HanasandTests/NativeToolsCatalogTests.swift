@@ -40,10 +40,13 @@ final class NativeToolsCatalogTests: XCTestCase {
     func testParityRoutesAreDiscoverableInTheirNativeSections() {
         let dashboard = [
             DesktopAction.route("Health Checks", "Monitor services.", "heart", "/automation/health"),
+            DesktopAction.route("Sandbox History", "Review saved runs.", "square.stack.3d.up", "/sandbox"),
             DesktopAction.route("Personal Cron Jobs", "Schedule jobs.", "calendar", "/automation/cron"),
         ]
         let administration = [
+            DesktopAction.route("OpenAPI JSON", "View raw API contract.", "curlybraces", "/api/openapi"),
             DesktopAction.route("Realtime Logs", "Review recent events.", "waveform", "/logs/realtime"),
+            DesktopAction.route("Search Logs", "Search log events.", "doc.text.magnifyingglass", "/logs/search"),
             DesktopAction.route("Organization Workspace", "Manage organization settings.", "building", "/organization-workspace"),
             DesktopAction.route("Organization Team", "Manage organization members.", "person.2", "/organizations/team"),
             DesktopAction.route("Organization Settings", "Review organization settings.", "slider", "/organizations/settings"),
@@ -55,7 +58,9 @@ final class NativeToolsCatalogTests: XCTestCase {
         let routesBySection = Dictionary(uniqueKeysWithValues: sections.map { ($0.title, Set($0.actions.compactMap(\.routePath))) })
 
         XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron"]))
-        XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime"]))
+        XCTAssertEqual(routesBySection["Security & intelligence"], Set(["/sandbox"]))
+        XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime", "/logs/search"]))
+        XCTAssertEqual(routesBySection["Account & API"], Set(["/api/openapi"]))
         XCTAssertEqual(routesBySection["Organization"], Set([
             "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity",
         ]))

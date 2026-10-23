@@ -81,6 +81,8 @@ extension LoopbackAgentServer {
                 "open_dashboard_traffic_map",
                 "open_dashboard_image_library",
                 "open_dashboard_api_reference",
+                "open_dashboard_openapi_json",
+                "open_dashboard_sandbox_history",
                 "open_dashboard_password_check",
                 "open_support_desk",
                 "open_dashboard_thesis",
@@ -113,6 +115,7 @@ extension LoopbackAgentServer {
                 "open_dashboard_roles",
                 "open_dashboard_logs",
                 "open_dashboard_realtime_logs",
+                "open_dashboard_log_search",
                 "open_dashboard_ti_profiles",
                 "open_dashboard_ti_sources",
                 "open_dashboard_ti_timeliness",
@@ -209,6 +212,9 @@ extension LoopbackAgentServer {
             if command == "open_dashboard_realtime_logs" {
                 return http(body: #"{"ok":true,"message":"Native Realtime Logs panel opened in the Desktop app."}"#)
             }
+            if command == "open_dashboard_log_search" {
+                return http(body: #"{"ok":true,"message":"Native Search Logs panel opened in the Desktop app."}"#)
+            }
             if command == "open_dashboard_ti_profiles" {
                 return http(body: #"{"ok":true,"message":"Native Actor Profiles panel opened in the Desktop app."}"#)
             }
@@ -223,6 +229,12 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_personal_cron" {
                 return http(body: #"{"ok":true,"message":"Native Personal Cron Jobs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_openapi_json" {
+                return http(body: #"{"ok":true,"message":"Native OpenAPI JSON panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_sandbox_history" {
+                return http(body: #"{"ok":true,"message":"Native Sandbox History panel opened in the Desktop app."}"#)
             }
             if command == "open_dashboard_organization_settings" {
                 return http(body: #"{"ok":true,"message":"Native Organization Settings panel opened in the Desktop app."}"#)

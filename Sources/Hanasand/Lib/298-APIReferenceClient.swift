@@ -86,7 +86,10 @@ final class APIReferenceModel: ObservableObject {
     private let client: APIReferenceClient
     private var requestGeneration = 0
 
-    init(client: APIReferenceClient = APIReferenceClient()) { self.client = client }
+    init(client: APIReferenceClient = APIReferenceClient(), section: Section = .publicAPI) {
+        self.client = client
+        self.section = section
+    }
 
     var operationRows: [APIReferenceOperationRow] {
         let rows: [APIReferenceOperationRow]

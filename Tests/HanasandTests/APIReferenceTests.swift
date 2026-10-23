@@ -98,4 +98,10 @@ final class APIReferenceTests: XCTestCase {
         model.query = "Actor"
         XCTAssertEqual(model.filteredSchemas.map { $0.0 }, ["Actor"])
     }
+
+    @MainActor
+    func testOpenAPIJSONRouteCanInitializeRawJSONSection() {
+        let model = APIReferenceModel(section: .json)
+        XCTAssertEqual(model.section, .json)
+    }
 }

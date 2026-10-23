@@ -4,7 +4,11 @@ import SwiftUI
 struct APIReferenceNativePanel: View {
     @EnvironmentObject private var appModel: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @StateObject private var reference = APIReferenceModel()
+    @StateObject private var reference: APIReferenceModel
+
+    init(initialSection: APIReferenceModel.Section = .publicAPI) {
+        _reference = StateObject(wrappedValue: APIReferenceModel(section: initialSection))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

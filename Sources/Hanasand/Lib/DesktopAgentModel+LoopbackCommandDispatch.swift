@@ -109,6 +109,12 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_api_reference" {
             openNativeDashboard(path: "/api", label: "API Reference")
             append(meta: "Dashboard", body: "Opened API Reference panel.", kind: .command)
+        } else if command == "open_dashboard_openapi_json" {
+            openNativeDashboard(path: "/api/openapi", label: "OpenAPI JSON")
+            append(meta: "Dashboard", body: "Opened OpenAPI JSON panel.", kind: .command)
+        } else if command == "open_dashboard_sandbox_history" {
+            openNativeDashboard(path: "/sandbox", label: "Sandbox History")
+            append(meta: "Dashboard", body: "Opened saved Sandbox run history.", kind: .command)
         } else if command == "open_dashboard_tools" {
             openNativeDashboard(path: "/tools", label: "Explore")
             append(meta: "Dashboard", body: "Opened the Explore tools catalog.", kind: .command)
@@ -220,6 +226,9 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_realtime_logs" {
             openNativeDashboard(path: "/logs/realtime", label: "Realtime Logs")
             append(meta: "Dashboard", body: "Opened native Realtime Logs panel.", kind: .command)
+        } else if command == "open_dashboard_log_search" {
+            openNativeDashboard(path: "/logs/search", label: "Search Logs")
+            append(meta: "Dashboard", body: "Opened native Search Logs panel.", kind: .command)
         } else if command == "open_dashboard_ti_profiles" {
             openNativeDashboard(path: "/ti/profiles", label: "Actor Profiles")
             append(meta: "Dashboard", body: "Opened native Actor Profiles panel.", kind: .command)

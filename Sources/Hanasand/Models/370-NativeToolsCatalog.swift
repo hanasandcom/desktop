@@ -13,7 +13,7 @@ enum NativeToolsCatalog {
         let actions = dashboard + administration
         let categories: [(String, (DesktopAction) -> Bool)] = [
             ("Security & intelligence", { action in
-                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/pwned"].contains(action.routePath)
+                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/sandbox", "/pwned"].contains(action.routePath)
             }),
             ("Infrastructure", { action in
                 ["/system/hosts", "/system/updates", "/traffic", "/traffic/blocklist", "/system/ai", "/system/rates", "/system/cron", "/system", "/system/containers", "/vms"].contains(action.routePath)
@@ -25,10 +25,10 @@ enum NativeToolsCatalog {
                 ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)
             }),
             ("Account & API", { action in
-                ["/api", "/profile"].contains(action.routePath)
+                ["/api", "/api/openapi", "/profile"].contains(action.routePath)
             }),
             ("Administration", { action in
-                ["/logs", "/logs/realtime", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
+                ["/logs", "/logs/realtime", "/logs/search", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
             }),
         ]
 

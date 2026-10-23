@@ -107,6 +107,7 @@ extension DesktopAgentModel {
     var adminActions: [DesktopAction] {
         [
             .route("Logs", "Search logs and diagnostics.", "exclamationmark.triangle", "/logs"),
+            .route("Search Logs", "Filter and page authenticated log events.", "doc.text.magnifyingglass", "/logs/search"),
             .route("Realtime Logs", "Review recent high and critical log events.", "waveform.path", "/logs/realtime"),
             .route("Database", "Inspect database and operations.", "externaldrive.connected.to.line.below", "/db"),
             .route("Backups", "View database backup status.", "externaldrive.badge.timemachine", "/db/backups"),
@@ -121,6 +122,8 @@ extension DesktopAgentModel {
             .route("Organization Settings", "Review settings for the selected organization.", "slider.horizontal.3", "/organizations/settings"),
             .route("Organization Events", "Review scoped events and cases.", "list.bullet.rectangle", "/organizations/events"),
             .route("Organization Activity", "Review recent derived organization activity.", "clock.arrow.circlepath", "/organizations/activity"),
+            .route("Sandbox History", "Review saved Sandbox run metadata.", "square.stack.3d.up", "/sandbox"),
+            .route("OpenAPI JSON", "Inspect and copy the raw OpenAPI document.", "curlybraces", "/api/openapi"),
         ]
     }
 }

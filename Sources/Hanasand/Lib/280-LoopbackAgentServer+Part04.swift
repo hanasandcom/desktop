@@ -97,6 +97,12 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_api_reference" || lowercasedRequest == "api_reference" || lowercasedRequest == "api-reference" {
             return "open_dashboard_api_reference"
         }
+        if lowercasedRequest == "open_dashboard_openapi_json" || lowercasedRequest == "openapi_json" || lowercasedRequest == "openapi-json" || lowercasedRequest == "api_openapi" {
+            return "open_dashboard_openapi_json"
+        }
+        if lowercasedRequest == "open_dashboard_sandbox_history" || lowercasedRequest == "sandbox_history" || lowercasedRequest == "sandbox-history" {
+            return "open_dashboard_sandbox_history"
+        }
         if lowercasedRequest == "open_dashboard_password_check" || lowercasedRequest == "pwned" || lowercasedRequest == "password-check" {
             return "open_dashboard_password_check"
         }
@@ -189,6 +195,9 @@ extension LoopbackAgentServer {
         }
         if lowercasedRequest == "open_dashboard_realtime_logs" || lowercasedRequest == "realtime_logs" || lowercasedRequest == "logs_realtime" {
             return "open_dashboard_realtime_logs"
+        }
+        if lowercasedRequest == "open_dashboard_log_search" || lowercasedRequest == "logs_search" || lowercasedRequest == "logs-search" {
+            return "open_dashboard_log_search"
         }
         if lowercasedRequest == "open_dashboard_health_checks" || lowercasedRequest == "health_checks" || lowercasedRequest == "automation_health" {
             return "open_dashboard_health_checks"
