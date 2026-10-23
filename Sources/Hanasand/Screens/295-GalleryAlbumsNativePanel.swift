@@ -18,6 +18,9 @@ struct GalleryAlbumsNativePanel: View {
     @State private var status = "Ready"
     @State private var error = ""
     @State private var confirmDelete = false
+    @State private var confirmEnablePublicLink = false
+    @State private var confirmDisablePublicLink = false
+    @State private var publicShareURL: URL?
     @State private var itemToRemove: GalleryAlbumItem?
     @State private var memberToRemove: GalleryAlbumMember?
     @State private var sessionRevision = 0
@@ -46,6 +49,7 @@ struct GalleryAlbumsNativePanel: View {
         .onChange(of: sessionFingerprint) { _, _ in
             sessionRevision += 1
             albums = []; album = nil; library = []; selectedFiles.removeAll()
+            publicShareURL = nil
             showPicker = false; error = ""; status = "Refreshing account…"
             Task { await refreshAlbums() }
         }
@@ -54,6 +58,18 @@ struct GalleryAlbumsNativePanel: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The album and its sharing access will be deleted. Original files stay in their owners’ libraries.")
+        }
+        .confirmationDialog("Enable public album link?", isPresented: $confirmEnablePublicLink, titleVisibility: .visible) {
+            Button("Enable public link") { Task { await setPublicLink(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Anyone who gets this unguessable link can view every item in the album, including private photos. You can disable the link later.")
+        }
+        .confirmationDialog("Disable public album link?", isPresented: $confirmDisablePublicLink, titleVisibility: .visible) {
+            Button("Disable public link", role: .destructive) { Task { await setPublicLink(false) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The current public link will stop working. Invited accounts will keep their access.")
         }
         .confirmationDialog("Remove this album item?", isPresented: Binding(
             get: { itemToRemove != nil }, set: { if !$0 { itemToRemove = nil } }
@@ -207,6 +223,29 @@ struct GalleryAlbumsNativePanel: View {
                 Text(album.isPublic ? "Anyone with the public link can view this album." : "Only you and invited accounts can view this album.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                 HStack(spacing: 8) {
+                    if album.isPublic {
+                        ActionButton(title: "Get public link", icon: "link") { Task { await getPublicLink() } }.disabled(busy)
+                        ActionButton(title: "Disable public link", icon: "link.badge.minus", tone: .danger) { confirmDisablePublicLink = true }.disabled(busy)
+                    } else {
+                        ActionButton(title: "Enable public link", icon: "link") { confirmEnablePublicLink = true }.disabled(busy)
+                    }
+                }
+                if let publicShareURL, album.isPublic {
+                    HStack(spacing: 8) {
+                        Text(publicShareURL.absoluteString).font(.system(size: 12, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                        ActionButton(title: "Copy link", icon: "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(publicShareURL.absoluteString, forType: .string)
+                            status = "Public album link copied"
+                        }
+                        ShareLink(item: publicShareURL) {
+                            Label("Share link", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Share this public album link")
+                    }
+                }
+                HStack(spacing: 8) {
                     TextField("Hanasand account ID", text: $memberDraft).textFieldStyle(.roundedBorder).disabled(busy)
                     Picker("Access", selection: $memberRole) {
                         Text("View only").tag("viewer")
@@ -258,7 +297,22 @@ struct GalleryAlbumsNativePanel: View {
 
     private func open(_ id: String, offset: Int = 0) async {
         guard let result = await withClient({ try await $0.album(id: id, offset: offset) }, success: "Album loaded") else { return }
+        publicShareURL = nil
         album = result; self.offset = offset; nameDraft = result.name
+    }
+
+    private func getPublicLink() async {
+        await setPublicLink(true)
+    }
+
+    private func setPublicLink(_ enabled: Bool) async {
+        guard let album,
+              let result = await withClient({ try await $0.setPublicLink(enabled, for: album) }, success: enabled ? "Public link ready" : "Public link disabled") else { return }
+        publicShareURL = result.shareURL
+        self.album = GalleryAlbumDetail(id: album.id, name: album.name, owner: album.owner, isPublic: result.isPublic, role: album.role, items: album.items, total: album.total, limit: album.limit, offset: album.offset, members: album.members)
+        await open(album.id, offset: offset)
+        if result.isPublic { publicShareURL = result.shareURL }
+        await refreshAlbums()
     }
 
     private func createAlbum() async {

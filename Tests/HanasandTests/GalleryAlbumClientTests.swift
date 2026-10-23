@@ -57,6 +57,82 @@ final class GalleryAlbumClientTests: XCTestCase {
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Cache-Control"), "no-store")
     }
 
+    func testOwnerCanEnableAndDisablePublicLinkUsingOnlyConfirmedServiceToken() async throws {
+        var requests: [URLRequest] = []
+        let token = String(repeating: "a", count: 32)
+        let client = try GalleryAlbumClient(settings: settings) { request in
+            requests.append(request)
+            if request.httpMethod == "PATCH", request.httpBody == Data(#"{"isPublic":true}"#.utf8) {
+                return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"\#(token)"}"#)
+            }
+            return self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":false,"public_token":null}"#)
+        }
+        let album = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+
+        let enabled = try await client.setPublicLink(true, for: album)
+        XCTAssertEqual(enabled.shareURL?.absoluteString, "https://cdn.hanasand.test/shared/\(token)")
+        XCTAssertEqual(requests[0].url?.absoluteString, "https://cdn.hanasand.test/api/albums/album-1")
+        XCTAssertEqual(requests[0].httpMethod, "PATCH")
+        XCTAssertEqual(String(data: requests[0].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":true}"#)
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Cache-Control"), "no-store")
+
+        let disabled = try await client.setPublicLink(false, for: album)
+        XCTAssertFalse(disabled.isPublic)
+        XCTAssertNil(disabled.shareURL)
+        XCTAssertEqual(String(data: requests[1].httpBody ?? Data(), encoding: .utf8), #"{"isPublic":false}"#)
+    }
+
+    func testPublicLinkRequiresOwnerAndRejectsUnexpectedOrUnsafeToken() async throws {
+        let viewer = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "someone", isPublic: false, role: "viewer", items: [], total: 0, limit: 60, offset: 0, members: nil)
+        let forbiddenClient = try GalleryAlbumClient(settings: settings) { _ in
+            XCTFail("A viewer must not send a public-link mutation")
+            return self.http(#"{}"#)
+        }
+        do {
+            _ = try await forbiddenClient.setPublicLink(true, for: viewer)
+            XCTFail("Expected owner-only guard")
+        } catch GalleryAlbumClientError.ownerRequired {}
+
+        let ownerAlbum = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        let unsafeClient = try GalleryAlbumClient(settings: settings) { _ in
+            self.http(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"https://evil.example/leak"}"#)
+        }
+        do {
+            _ = try await unsafeClient.setPublicLink(true, for: ownerAlbum)
+            XCTFail("Expected unconfirmed mutation")
+        } catch GalleryAlbumClientError.unconfirmedMutation {}
+
+        XCTAssertThrowsError(try forbiddenClient.publicAlbumURL(token: "../" + String(repeating: "a", count: 29))) { error in
+            guard case GalleryAlbumClientError.invalidPublicLink = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+    }
+
+    func testRedirectIsRejectedAndRedirectBodyCannotRevealPublicToken() async throws {
+        let session = URLSession(configuration: .ephemeral)
+        let sourceURL = URL(string: "https://cdn.hanasand.test/api/albums/album-1")!
+        let destination = URL(string: "https://attacker.example/collect")!
+        var redirectedRequest: URLRequest? = URLRequest(url: destination)
+        let redirectResponse = HTTPURLResponse(url: sourceURL, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": destination.absoluteString])!
+        let blocker = GalleryAlbumRedirectBlocker()
+        blocker.urlSession(session, task: session.dataTask(with: sourceURL), willPerformHTTPRedirection: redirectResponse, newRequest: URLRequest(url: destination)) {
+            redirectedRequest = $0
+        }
+        XCTAssertNil(redirectedRequest, "URLSession must not follow an album API redirect to another origin")
+
+        let client = try GalleryAlbumClient(settings: settings) { request in
+            XCTAssertEqual(request.url?.host, "cdn.hanasand.test")
+            let response = HTTPURLResponse(url: sourceURL, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: ["Location": destination.absoluteString])!
+            return (Data(#"{"id":"album-1","name":"Trip","owner":"owner","is_public":true,"public_token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#.utf8), response)
+        }
+        let album = GalleryAlbumDetail(id: "album-1", name: "Trip", owner: "owner", isPublic: false, role: "owner", items: [], total: 0, limit: 60, offset: 0, members: [])
+        do {
+            _ = try await client.setPublicLink(true, for: album)
+            XCTFail("A redirect response must not be decoded as an album share receipt")
+        } catch GalleryAlbumClientError.requestFailed(let status, _) {
+            XCTAssertEqual(status, 302)
+        }
+    }
+
     func testClientRejectsImpersonationAndContributorCannotDeleteAlbumOrOtherItems() throws {
         var impersonating = settings
         impersonating.impersonatingUserID = "someone-else"

@@ -1,11 +1,30 @@
 import Foundation
 
+final class GalleryAlbumRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum GalleryAlbumURLSession {
+    static let redirectBlocker = GalleryAlbumRedirectBlocker()
+    static let configuration: URLSessionConfiguration = {
+        let value = URLSessionConfiguration.ephemeral
+        value.httpCookieStorage = nil
+        value.httpShouldSetCookies = false
+        value.urlCredentialStorage = nil
+        return value
+    }()
+    static let shared = URLSession(configuration: configuration, delegate: redirectBlocker, delegateQueue: nil)
+}
+
 struct GalleryAlbumClient {
     let baseURL: URL
     let userId: String
     let authToken: String
     var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
-        try await URLSession.shared.data(for: request)
+        try await GalleryAlbumURLSession.shared.data(for: request)
     }
 
     init(settings: HanasandDesktopSettings, send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
@@ -53,6 +72,36 @@ struct GalleryAlbumClient {
         let album = try await sendJSON(GalleryAlbum.self, path: "albums/\(segment(id))", method: "PATCH", body: GalleryAlbumNamePayload(name: cleaned))
         guard album.id == id, album.owner == userId else { throw GalleryAlbumClientError.unconfirmedMutation }
         return album
+    }
+
+    func setPublicLink(_ enabled: Bool, for album: GalleryAlbumDetail) async throws -> GalleryAlbumSharingResult {
+        guard GalleryAlbumAccess.canManage(album, currentUserId: userId) else { throw GalleryAlbumClientError.ownerRequired }
+        let updated = try await sendJSON(GalleryAlbum.self, path: "albums/\(segment(album.id))", method: "PATCH", body: GalleryAlbumPublicPayload(isPublic: enabled))
+        guard updated.id == album.id, updated.owner == userId, updated.isPublic == enabled else {
+            throw GalleryAlbumClientError.unconfirmedMutation
+        }
+        if enabled {
+            guard let token = updated.publicToken, let url = try? publicAlbumURL(token: token) else {
+                throw GalleryAlbumClientError.unconfirmedMutation
+            }
+            return GalleryAlbumSharingResult(isPublic: true, shareURL: url)
+        }
+        guard updated.publicToken == nil else { throw GalleryAlbumClientError.unconfirmedMutation }
+        return GalleryAlbumSharingResult(isPublic: false, shareURL: nil)
+    }
+
+    func publicAlbumURL(token: String) throws -> URL {
+        guard token.range(of: "^[A-Za-z0-9_-]{32}$", options: .regularExpression) != nil,
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            throw GalleryAlbumClientError.invalidPublicLink
+        }
+        components.path = "/shared/\(token)"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == baseURL.host?.lowercased(), url.user == nil, url.password == nil,
+              url.path == "/shared/\(token)" else { throw GalleryAlbumClientError.invalidPublicLink }
+        return url
     }
 
     func deleteAlbum(_ album: GalleryAlbumDetail) async throws {
@@ -215,7 +264,7 @@ struct GalleryAlbumClient {
 }
 
 enum GalleryAlbumClientError: LocalizedError {
-    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse
+    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse, invalidPublicLink
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
     case ownerRequired, contributorRequired, removeOwnItemsOnly, unconfirmedMutation
     case requestFailed(Int, String)
@@ -229,6 +278,7 @@ enum GalleryAlbumClientError: LocalizedError {
         case .invalidPage: return "Invalid album page."
         case .invalidSearch: return "Image search must be 200 characters or fewer."
         case .invalidResponse: return "The album service returned an unexpected response. Refresh before retrying."
+        case .invalidPublicLink: return "The album service returned an unsafe public link. Refresh before sharing."
         case .invalidName: return "Album names must be 1–120 characters on one line."
         case .invalidIdentifier: return "Choose a valid album, photo, or account."
         case .invalidSelection: return "Select between 1 and 500 photos."

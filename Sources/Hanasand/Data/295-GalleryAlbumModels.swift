@@ -5,6 +5,7 @@ struct GalleryAlbum: Decodable, Identifiable, Hashable {
     var name: String
     let owner: String
     let isPublic: Bool
+    let publicToken: String?
     let photoCount: Int?
     let memberRole: String?
 }
@@ -34,6 +35,11 @@ struct GalleryAlbumDetail: Decodable, Identifiable, Hashable {
     let limit: Int
     let offset: Int
     let members: [GalleryAlbumMember]?
+}
+
+struct GalleryAlbumSharingResult: Equatable {
+    let isPublic: Bool
+    let shareURL: URL?
 }
 
 struct GalleryLibraryItem: Decodable, Identifiable, Hashable {
@@ -69,6 +75,10 @@ struct GalleryAlbumMutationReceipt: Decodable {
 
 struct GalleryAlbumNamePayload: Encodable {
     let name: String
+}
+
+struct GalleryAlbumPublicPayload: Encodable {
+    let isPublic: Bool
 }
 
 struct GalleryAlbumItemsPayload: Encodable {
