@@ -7,9 +7,9 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         var settings = makeSettings()
         settings.selectedOrganizationID = "org-123"
         settings.selectedOrganizationUserID = settings.userID
-        var captured: URLRequest?
+        var captured: [URLRequest] = []
         let client = try ThreatDeliveryHistoryClient(settings: settings) { request in
-            captured = request
+            captured.append(request)
             return (self.payload(organizationID: "org-123"), self.response(status: 200))
         }
 
@@ -17,13 +17,14 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
 
         XCTAssertEqual(result.organizationID, "org-123")
         XCTAssertEqual(result.deliveries.count, 1)
-        XCTAssertEqual(captured?.httpMethod, "GET")
-        XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems,
+        let historyRequest = try XCTUnwrap(captured.first { $0.url?.path.hasSuffix("/dwm/webhook-deliveries") == true })
+        XCTAssertEqual(historyRequest.httpMethod, "GET")
+        XCTAssertEqual(URLComponents(url: historyRequest.url!, resolvingAgainstBaseURL: false)?.queryItems,
                        [URLQueryItem(name: "orgId", value: "org-123")])
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "user-1")
-        XCTAssertEqual(captured?.httpShouldHandleCookies, false)
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertGreaterThanOrEqual(captured.count, 2)
+        XCTAssertTrue(captured.allSatisfy { $0.httpMethod == "GET" && $0.value(forHTTPHeaderField: "Authorization") == "Bearer test-token" })
+        XCTAssertTrue(captured.allSatisfy { $0.value(forHTTPHeaderField: "id") == "user-1" && $0.httpShouldHandleCookies == false })
+        XCTAssertTrue(captured.allSatisfy { $0.value(forHTTPHeaderField: "Cache-Control") == "no-store" })
     }
 
     func testRejectsPersonalOrStaleOrganizationScopeAndImpersonation() {
@@ -67,6 +68,96 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertEqual(attempt.status, .unknown)
         XCTAssertNil(attempt.attemptCount)
         XCTAssertEqual(attempt.statusLabel, "Status not reported")
+    }
+
+    func testActionGatesRequireScopedFindingAndEligibleFailedLiveReceipt() {
+        let finding = ThreatDeliveryHistory.Finding(id: "alert-1", title: "Acme", actor: "actor", matchedTerm: "acme",
+            reviewState: "needs_review", deliveryState: "pending", caseID: "HA-1", organizationID: "org-1", full: ["id": "alert-1"])
+        var failed = attempt(id: "delivery-1", status: .failed, dryRun: false, organizationID: "org-1")
+        failed.retryEligible = true
+        var page = ThreatDeliveryHistory(deliveries: [failed], organizationID: "org-1")
+        page.findings = [finding]
+        page.canTest = true; page.canSend = true; page.canRetry = true
+
+        XCTAssertTrue(ThreatDeliveryHistory.actionAllowed(.test, page: page, finding: finding))
+        XCTAssertTrue(ThreatDeliveryHistory.actionAllowed(.send, page: page, finding: finding))
+        XCTAssertTrue(ThreatDeliveryHistory.actionAllowed(.retry, page: page, attempt: failed))
+
+        let foreign = ThreatDeliveryHistory.Finding(id: finding.id, title: finding.title, actor: finding.actor, matchedTerm: finding.matchedTerm,
+            reviewState: finding.reviewState, deliveryState: finding.deliveryState, caseID: finding.caseID,
+            organizationID: "org-other", full: finding.full)
+        XCTAssertFalse(ThreatDeliveryHistory.actionAllowed(.send, page: page, finding: foreign))
+        var dryRun = attempt(id: "delivery-dry", status: .failed, dryRun: true, organizationID: "org-1")
+        dryRun.retryEligible = true
+        page.deliveries = [dryRun]
+        XCTAssertFalse(ThreatDeliveryHistory.actionAllowed(.retry, page: page, attempt: dryRun))
+        page.canSend = false
+        XCTAssertFalse(ThreatDeliveryHistory.actionAllowed(.send, page: page, finding: finding))
+    }
+
+    func testActionPayloadsPreserveFindingAndKeepRetryToReceiptReference() throws {
+        let finding = ThreatDeliveryHistory.Finding(id: "alert-1", title: "Acme", actor: "actor", matchedTerm: "acme",
+            reviewState: "needs_review", deliveryState: "pending", caseID: "HA-1", organizationID: "org-1",
+            full: ["id": "alert-1", "sourceFamily": "threat", "serverField": "preserved"])
+        var failed = attempt(id: "delivery-1", status: .failed, dryRun: false, organizationID: "org-1")
+        failed.retryEligible = true
+        var page = ThreatDeliveryHistory(deliveries: [failed], organizationID: "org-1")
+        page.findings = [finding]; page.canTest = true; page.canSend = true; page.canRetry = true
+
+        let test = try ThreatDeliveryHistoryClient.actionPayload(.test, page: page, finding: finding)
+        XCTAssertEqual(test["dryRun"] as? Bool, true)
+        XCTAssertEqual(test["live"] as? Bool, false)
+        XCTAssertEqual((test["alert"] as? [String: Any])?["serverField"] as? String, "preserved")
+        let send = try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: finding)
+        XCTAssertEqual(send["dryRun"] as? Bool, false)
+        XCTAssertEqual(send["live"] as? Bool, true)
+        let retry = try ThreatDeliveryHistoryClient.actionPayload(.retry, page: page, attempt: failed)
+        XCTAssertEqual(retry["deliveryId"] as? String, "delivery-1")
+        XCTAssertNil(retry["alert"])
+        XCTAssertNil(retry["alertId"])
+        page.canSend = false
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: finding))
+    }
+
+    func testWriteGateSerializesAndRequiresSuccessfulRefreshAfterAnyWrite() {
+        var state = ThreatDeliveryReviewState()
+        XCTAssertTrue(state.beginWrite())
+        XCTAssertFalse(state.beginWrite())
+        state.finishWrite()
+        XCTAssertTrue(state.requiresRefresh)
+        XCTAssertFalse(state.beginWrite())
+        state.refreshSucceeded()
+        XCTAssertFalse(state.requiresRefresh)
+        XCTAssertTrue(state.beginWrite())
+    }
+
+    func testMalformedOrCrossScopeWriteReceiptIsUncertain() throws {
+        let response = self.response(status: 502)
+        let mismatched = Data(#"{"deliveries":[{"id":"delivery-1","orgId":"org-other","alertId":"alert-1","status":"failed","dryRun":false}]}"#.utf8)
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.validatedReceipts(data: mismatched, response: response,
+            action: .send, organizationID: "org-1", alertID: "alert-1")) { error in
+            XCTAssertEqual(error as? ThreatDeliveryHistoryError, .uncertainResult)
+        }
+        let missingReceipt = Data(#"{"error":"temporary failure"}"#.utf8)
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.validatedReceipts(data: missingReceipt, response: response,
+            action: .send, organizationID: "org-1", alertID: "alert-1")) { error in
+            XCTAssertEqual(error as? ThreatDeliveryHistoryError, .uncertainResult)
+        }
+    }
+
+    func test502WithMatchedPersistedReceiptRemainsReviewable() throws {
+        let data = Data(#"{"deliveries":[{"id":"delivery-1","orgId":"org-1","alertId":"alert-1","status":"failed","dryRun":false,"attemptCount":1}]}"#.utf8)
+        let receipts = try ThreatDeliveryHistoryClient.validatedReceipts(data: data, response: response(status: 502),
+            action: .send, organizationID: "org-1", alertID: "alert-1")
+        XCTAssertEqual(receipts.count, 1)
+        XCTAssertEqual(receipts[0].status, .failed)
+    }
+
+    private func attempt(id: String, status: ThreatDeliveryStatus, dryRun: Bool, organizationID: String) -> ThreatDeliveryHistory.Attempt {
+        let data = Data("""
+        {"id":"\(id)","orgId":"\(organizationID)","alertId":"alert-1","status":"\(status.rawValue)","dryRun":\(dryRun)}
+        """.utf8)
+        return try! JSONDecoder().decode(ThreatDeliveryHistory.Attempt.self, from: data)
     }
 
     private func makeSettings() -> HanasandDesktopSettings {

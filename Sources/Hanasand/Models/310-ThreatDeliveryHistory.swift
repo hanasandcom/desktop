@@ -23,7 +23,18 @@ enum ThreatDeliveryStatus: String, Decodable, Hashable {
     }
 }
 
-struct ThreatDeliveryHistory: Decodable {
+struct ThreatDeliveryHistory {
+    struct Finding: Identifiable {
+        let id: String
+        let title: String
+        let actor: String
+        let matchedTerm: String
+        let reviewState: String
+        let deliveryState: String
+        let caseID: String
+        let organizationID: String
+        let full: [String: Any]
+    }
     struct Attempt: Decodable, Identifiable {
         let id: String
         let orgId: String
@@ -36,6 +47,7 @@ struct ThreatDeliveryHistory: Decodable {
         let completedAt: String?
         let deliveredAt: String?
         let createdAt: String?
+        var retryEligible = false
 
         enum CodingKeys: String, CodingKey {
             case id, orgId, alertId, eventType, status, dryRun, attemptCount
@@ -62,15 +74,53 @@ struct ThreatDeliveryHistory: Decodable {
         var statusLabel: String { status.statusLabel }
     }
 
-    let deliveries: [Attempt]
+    var deliveries: [Attempt]
     let organizationID: String
+    var findings: [Finding] = []
+    var canTest = false
+    var canSend = false
+    var canRetry = false
+    var liveDeliveryEnabled = false
+    var notice = ""
 
     init(deliveries: [Attempt], organizationID: String) {
         self.deliveries = deliveries
         self.organizationID = organizationID
     }
 
+    func selectedFinding(_ id: String) -> Finding? { findings.first { $0.id == id } }
+    func attempts(for findingID: String) -> [Attempt] {
+        findingID.isEmpty ? deliveries : deliveries.filter { $0.alertId == findingID || $0.alertId == "webhook_test" }
+    }
+
+    func canRetry(_ attempt: Attempt) -> Bool {
+        canRetry && attempt.retryEligible && attempt.status == .failed && !attempt.dryRun
+    }
+
+    static func actionAllowed(_ action: ThreatDeliveryAction, page: ThreatDeliveryHistory,
+                             finding: Finding? = nil, attempt: Attempt? = nil) -> Bool {
+        switch action {
+        case .test: return page.canTest && finding.map { selected in selected.organizationID == page.organizationID && page.findings.contains(where: { $0.id == selected.id }) } == true
+        case .send: return page.canSend && finding.map { selected in selected.organizationID == page.organizationID && page.findings.contains(where: { $0.id == selected.id }) } == true
+        case .retry: return attempt.map { page.canRetry($0) && $0.orgId == page.organizationID } == true
+        }
+    }
+
     static func validID(_ value: String) -> Bool {
         value.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil && value != "." && value != ".."
     }
+}
+
+struct ThreatDeliveryReviewState {
+    private(set) var isWriting = false
+    private(set) var requiresRefresh = false
+
+    mutating func beginWrite() -> Bool {
+        guard !isWriting, !requiresRefresh else { return false }
+        isWriting = true
+        return true
+    }
+
+    mutating func finishWrite() { isWriting = false; requiresRefresh = true }
+    mutating func refreshSucceeded() { requiresRefresh = false }
 }
