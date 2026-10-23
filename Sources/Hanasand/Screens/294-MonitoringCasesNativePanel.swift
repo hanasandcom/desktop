@@ -56,15 +56,21 @@ struct MonitoringCasesNativePanel: View {
                 SearchFieldRow(placeholder: "Search cases", text: $model.monitoringCaseSearch)
                 ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadMonitoringCases() } }
             }
-            HStack(spacing: 8) {
-                ForEach(["active", "all", "open", "in_progress", "resolved", "closed"], id: \.self) { value in
-                    FilterChip(title: value.replacingOccurrences(of: "_", with: " ").capitalized, active: model.monitoringCaseStatusFilter == value) { model.monitoringCaseStatusFilter = value }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["active", "all", "open", "in_progress", "resolved", "closed"], id: \.self) { value in
+                        FilterChip(title: value.replacingOccurrences(of: "_", with: " ").capitalized, active: model.monitoringCaseStatusFilter == value) { model.monitoringCaseStatusFilter = value }
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
-            HStack(spacing: 8) {
-                ForEach(["all", "low", "medium", "high", "critical"], id: \.self) { value in
-                    FilterChip(title: value.capitalized, active: model.monitoringCaseSeverityFilter == value) { model.monitoringCaseSeverityFilter = value }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["all", "low", "medium", "high", "critical"], id: \.self) { value in
+                        FilterChip(title: value.capitalized, active: model.monitoringCaseSeverityFilter == value) { model.monitoringCaseSeverityFilter = value }
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -73,15 +79,21 @@ struct MonitoringCasesNativePanel: View {
                     }
                 }
             }
-            HStack(spacing: 8) {
-                ForEach(["all", "human", "ai", "automation", "unknown"], id: \.self) { value in
-                    FilterChip(title: value == "all" ? "All resolutions" : value.capitalized, active: model.monitoringCaseResolutionFilter == value) { model.monitoringCaseResolutionFilter = value }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["all", "human", "ai", "automation", "unknown"], id: \.self) { value in
+                        FilterChip(title: value == "all" ? "All resolutions" : value.capitalized, active: model.monitoringCaseResolutionFilter == value) { model.monitoringCaseResolutionFilter = value }
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
-            HStack(spacing: 8) {
-                ForEach(["all", "pending", "confirmed"], id: \.self) { value in
-                    FilterChip(title: value == "all" ? "All reviews" : value.capitalized, active: model.monitoringCaseReviewFilter == value) { model.monitoringCaseReviewFilter = value }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(["all", "pending", "confirmed"], id: \.self) { value in
+                        FilterChip(title: value == "all" ? "All reviews" : value.capitalized, active: model.monitoringCaseReviewFilter == value) { model.monitoringCaseReviewFilter = value }
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
 
             if !model.nativeDashboardStatus.isEmpty && (model.nativeDashboardStatus.hasPrefix("Could not") || model.nativeDashboardStatus.hasPrefix("Sign in")) {

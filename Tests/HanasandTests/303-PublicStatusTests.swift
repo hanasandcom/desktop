@@ -44,6 +44,7 @@ final class PublicStatusTests: XCTestCase {
         XCTAssertEqual(payload.overall, "degraded")
         XCTAssertEqual(payload.checks.first?.checkName, "Browser Web")
         XCTAssertEqual(payload.checks.first?.status, "down")
+        XCTAssertEqual(payload.checks.first?.uptime30Days, "99.4")
         XCTAssertEqual(payload.incidents.first?.id, "incident-42")
         XCTAssertEqual(payload.history.first?.failedSamples, 3)
         let requests = await transport.requests()

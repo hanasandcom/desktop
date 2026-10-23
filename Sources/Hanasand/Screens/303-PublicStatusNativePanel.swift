@@ -100,7 +100,7 @@ struct PublicStatusNativePanel: View {
                             .foregroundStyle(theme.textSecondary)
                             .textSelection(.enabled)
                         HStack {
-                            Text("90 day uptime: \(check.uptime30Days ?? "unverified")")
+                            Text("30 day uptime: \(check.uptime30Days ?? "unverified")")
                             Spacer()
                             Text(check.checkedAt ?? "Not verified")
                         }
