@@ -6,12 +6,24 @@ struct TrafficMapNativePanel: View {
     @State private var domains: [String] = []
     @State private var selectedDomain = ""
     @State private var records: [TrafficRecentRecord] = []
+    @State private var metrics: TrafficMapMetrics?
     @State private var selectedCountry = ""
     @State private var status = "Traffic map has not been loaded."
     @State private var isLoading = false
     @State private var requestGeneration = UUID()
 
     private var countries: [TrafficMapCountry] { TrafficMapCountry.summarize(records) }
+    private var locatedRequestCount: Int { countries.reduce(0) { $0 + $1.requestCount } }
+    private var sampledMetricsDescription: String? {
+        guard let value = metrics?.sampledAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: value) ?? {
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: value)
+        }()
+        return date?.formatted(date: .abbreviated, time: .shortened) ?? value
+    }
     private var selectedRecords: [TrafficRecentRecord] {
         records.filter { $0.countryISO?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == selectedCountry }
             .sorted { $0.timestamp > $1.timestamp }
@@ -22,7 +34,7 @@ struct TrafficMapNativePanel: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], alignment: .leading, spacing: 12) {
                 FeatureCard(title: "Located requests", value: countries.reduce(0) { $0 + $1.requestCount }.formatted(), icon: "mappin.and.ellipse")
                 FeatureCard(title: "Countries", value: countries.count.formatted(), icon: "globe")
-                FeatureCard(title: "Snapshot", value: records.count.formatted(), icon: "arrow.left.arrow.right")
+                FeatureCard(title: "Retained requests", value: metrics?.totalRequests.formatted() ?? "—", icon: "arrow.left.arrow.right")
             }
 
             HStack(spacing: 10) {
@@ -59,6 +71,8 @@ struct TrafficMapNativePanel: View {
                 countryPicker
                 selectedCountryDetails
             }
+
+            trafficActivity
         }
         .task(id: selectedDomain) { await load() }
         .onDisappear { requestGeneration = UUID() }
@@ -119,7 +133,7 @@ struct TrafficMapNativePanel: View {
     }
 
     private var selectedCountryDetails: some View {
-        NativeGroupPanel(title: selectedCountryName, subtitle: "Recent requests in the loaded snapshot") {
+        NativeGroupPanel(title: selectedCountryName, subtitle: countryFocusSummary) {
             if selectedRecords.isEmpty {
                 Text("No located requests for this country in the current snapshot.")
                     .font(.system(size: 12, weight: .medium))
@@ -157,6 +171,63 @@ struct TrafficMapNativePanel: View {
         }
     }
 
+    private var countryFocusSummary: String {
+        guard let country = countries.first(where: { $0.iso == selectedCountry }) else {
+            return "Recent requests in the loaded snapshot"
+        }
+        let share = locatedRequestCount == 0 ? 0 : Double(country.requestCount) / Double(locatedRequestCount) * 100
+        return "\(country.requestCount.formatted()) requests · \(String(format: "%.1f%%", share)) of located · last seen \(country.lastSeen.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var trafficActivity: some View {
+        NativeGroupPanel(title: "Retained traffic activity", subtitle: sampledMetricsDescription.map { "Statistics sampled \($0)" } ?? "Aggregate statistics for the selected domain") {
+            if let metrics {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], alignment: .leading, spacing: 12) {
+                    metricValue("Average response", value: "\(metrics.averageRequestTime.formatted(.number.precision(.fractionLength(0...1)))) ms")
+                    metricValue("Error rate", value: String(format: "%.1f%%", metrics.errorRate * 100))
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], alignment: .leading, spacing: 12) {
+                    metricList("Top paths", values: metrics.topPaths)
+                    metricList("Methods", values: metrics.topMethods)
+                    metricList("Statuses", values: metrics.topStatusCodes)
+                }
+            } else {
+                Text("Traffic activity statistics are unavailable.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+    }
+
+    private func metricValue(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+            Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func metricList(_ title: String, values: [TrafficMapMetric]) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+            if values.isEmpty {
+                Text("No data").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+            } else {
+                ForEach(values.prefix(5)) { metric in
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(metric.key).lineLimit(2).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        Spacer(minLength: 2)
+                        Text(metric.count.formatted()).foregroundStyle(theme.textSecondary)
+                    }
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(theme.card, in: RoundedRectangle(cornerRadius: 9))
+    }
+
     private var selectedCountryName: String {
         countries.first(where: { $0.iso == selectedCountry })?.name ?? "Country focus"
     }
@@ -175,10 +246,12 @@ struct TrafficMapNativePanel: View {
         do {
             async let loadedDomains = fetchDomains()
             async let loadedPage = fetchRecords()
-            let (newDomains, page) = try await (loadedDomains, loadedPage)
+            async let loadedMetrics: TrafficMapMetrics? = try? await fetchMetrics()
+            let (newDomains, page, newMetrics) = try await (loadedDomains, loadedPage, loadedMetrics)
             guard requestGeneration == generation else { return }
             domains = newDomains
             records = page.result
+            metrics = newMetrics
             if !countries.contains(where: { $0.iso == selectedCountry }) {
                 if let first = countries.first { select(first) }
                 else { selectedCountry = "" }
@@ -200,6 +273,16 @@ struct TrafficMapNativePanel: View {
         let url = try TrafficRecentClient.recordsURL(apiBaseURL: apiBaseURL, domain: selectedDomain, page: 1)
         let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
         return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request))
+    }
+
+    private func fetchMetrics() async throws -> TrafficMapMetrics {
+        var components = URLComponents(url: apiBaseURL.appendingAPIPath("traffic/metrics"), resolvingAgainstBaseURL: false)
+        if !selectedDomain.isEmpty {
+            components?.queryItems = [URLQueryItem(name: "domain", value: selectedDomain)]
+        }
+        guard let url = components?.url else { throw TrafficRecentError.invalidResponse }
+        let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
+        return try TrafficMapMetrics.decode(await TrafficRecentClient.fetch(request))
     }
 
     private var apiBaseURL: URL { model.settings.apiBaseURL.normalizedBaseURL }
