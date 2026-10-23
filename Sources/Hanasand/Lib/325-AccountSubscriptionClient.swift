@@ -1,10 +1,29 @@
 import Foundation
 
+private final class AccountSubscriptionRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum AccountSubscriptionSession {
+    static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration, delegate: AccountSubscriptionRedirectDelegate(), delegateQueue: nil)
+    }()
+}
+
 enum AccountSubscriptionClientError: LocalizedError {
     case signInRequired
     case invalidBaseURL
     case invalidResponse
     case requestFailed(Int)
+    case impersonationUnsupported
+    case invalidPortalURL
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +31,8 @@ enum AccountSubscriptionClientError: LocalizedError {
         case .invalidBaseURL: "Subscription information requires a valid HTTPS API address."
         case .invalidResponse: "The subscription service returned an invalid response."
         case let .requestFailed(status): "Subscription request failed (HTTP \(status))."
+        case .impersonationUnsupported: "Return to your own account to manage billing."
+        case .invalidPortalURL: "The billing service returned an invalid management link."
         }
     }
 }
@@ -22,7 +43,7 @@ struct AccountSubscriptionClient {
     let token: String
     let impersonationToken: String
     var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
-        try await URLSession.shared.data(for: request)
+        try await AccountSubscriptionSession.shared.data(for: request)
     }
 
     init(baseURL: URL, userID: String, token: String, impersonationToken: String = "", send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
@@ -70,4 +91,29 @@ struct AccountSubscriptionClient {
         do { return try JSONDecoder().decode(AccountSubscriptionEnvelope.self, from: data) }
         catch { throw AccountSubscriptionClientError.invalidResponse }
     }
+
+    func createBillingPortalURL() async throws -> URL {
+        guard impersonationToken.isEmpty else { throw AccountSubscriptionClientError.impersonationUnsupported }
+        var request = URLRequest(url: endpoint.deletingLastPathComponent().appendingPathComponent("portal"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse else { throw AccountSubscriptionClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw AccountSubscriptionClientError.requestFailed(http.statusCode) }
+        guard let payload = try? JSONDecoder().decode(BillingPortalEnvelope.self, from: data),
+              let url = URL(string: payload.url),
+              url.scheme?.lowercased() == "https", url.host?.lowercased() == "billing.stripe.com",
+              url.user == nil, url.password == nil, url.port == nil else {
+            throw AccountSubscriptionClientError.invalidPortalURL
+        }
+        return url
+    }
+
+    private struct BillingPortalEnvelope: Decodable { let url: String }
 }

@@ -417,6 +417,15 @@ run_dashboard_smoke() {
   run_step "32-watchlists" "open_dashboard_watchlists"
   run_step "33-hosts" "open_dashboard_hosts"
   run_step "34-host-updates" "open_dashboard_host_updates"
+  run_step "35-delivery-history" "open_dashboard_delivery_history"
+  run_step "36-recent-traffic" "open_dashboard_recent_traffic"
+  run_step "37-organization-privacy" "open_dashboard_organization_privacy"
+  run_step "38-subscription" "open_dashboard_subscription"
+  run_step "39-findings" "open_dashboard_findings"
+  run_step "40-match-rules" "open_dashboard_match_rules"
+  run_step "41-analysis-rules" "open_dashboard_analysis_rules"
+  run_step "42-detection-rules" "open_dashboard_detection_rules"
+  run_step "43-rule-tuning" "open_dashboard_rule_tuning"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

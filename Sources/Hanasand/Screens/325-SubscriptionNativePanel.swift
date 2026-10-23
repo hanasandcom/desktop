@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SubscriptionNativePanel: View {
@@ -5,8 +6,10 @@ struct SubscriptionNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @State private var data: AccountSubscriptionEnvelope?
     @State private var loading = false
+    @State private var openingBilling = false
     @State private var error = ""
     @State private var revision = 0
+    @State private var requestID = UUID()
 
     private var scope: String {
         "\(model.settings.apiBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests)|\(model.settings.impersonationToken)|\(revision)"
@@ -20,6 +23,7 @@ struct SubscriptionNativePanel: View {
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
                 ActionButton(title: "Refresh", icon: "arrow.clockwise") { revision += 1 }
+                    .disabled(loading || openingBilling)
             }
 
             if loading {
@@ -38,6 +42,7 @@ struct SubscriptionNativePanel: View {
             }
         }
         .task(id: scope) { await refresh() }
+        .onDisappear { requestID = UUID() }
     }
 
     private func planCard(_ data: AccountSubscriptionEnvelope) -> some View {
@@ -57,6 +62,18 @@ struct SubscriptionNativePanel: View {
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textSecondary)
             }
+            ActionButton(title: openingBilling ? "Opening…" : "Manage billing", icon: "arrow.up.right") {
+                Task { await openBilling() }
+            }
+            .disabled(loading || openingBilling || !model.settings.impersonationToken.isEmpty || !model.hasHanasandAuth)
+            if !model.settings.impersonationToken.isEmpty {
+                Text("Return to your own account to manage billing.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            Text("Payments and subscription changes are managed securely by Stripe.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
         }
     }
 
@@ -112,6 +129,9 @@ struct SubscriptionNativePanel: View {
     }
 
     private func refresh() async {
+        let currentRequestID = UUID()
+        requestID = currentRequestID
+        let requestedScope = scope
         data = nil
         error = ""
         guard model.hasHanasandAuth else {
@@ -119,14 +139,42 @@ struct SubscriptionNativePanel: View {
             return
         }
         loading = true
-        defer { loading = false }
+        defer { if requestID == currentRequestID { loading = false } }
         do {
             guard let baseURL = URL(string: model.settings.apiBaseURL) else {
                 throw AccountSubscriptionClientError.invalidBaseURL
             }
             let client = try AccountSubscriptionClient(baseURL: baseURL, userID: model.userIDForRequests, token: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
-            data = try await client.load()
-        } catch let cause { error = cause.localizedDescription }
+            let result = try await client.load()
+            guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
+            data = result
+        } catch let cause {
+            guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
+            error = cause.localizedDescription
+        }
+    }
+
+    private func openBilling() async {
+        guard !openingBilling, model.settings.impersonationToken.isEmpty, model.hasHanasandAuth else { return }
+        let currentRequestID = UUID()
+        requestID = currentRequestID
+        let requestedScope = scope
+        openingBilling = true
+        error = ""
+        defer { if requestID == currentRequestID { openingBilling = false } }
+        do {
+            guard let baseURL = URL(string: model.settings.apiBaseURL) else {
+                throw AccountSubscriptionClientError.invalidBaseURL
+            }
+            let client = try AccountSubscriptionClient(baseURL: baseURL, userID: model.userIDForRequests, token: model.authTokenForRequests)
+            let url = try await client.createBillingPortalURL()
+            guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
+            guard NSWorkspace.shared.open(url) else { throw AccountSubscriptionClientError.invalidPortalURL }
+        } catch {
+            if !Task.isCancelled, requestID == currentRequestID, scope == requestedScope {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func label(_ value: String) -> String {

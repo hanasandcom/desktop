@@ -34,6 +34,7 @@ struct FeatureWorkspace<Content: View>: View {
                         }
                     }
                     content
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: 1040, alignment: .leading)
                 .padding(.horizontal, 28)

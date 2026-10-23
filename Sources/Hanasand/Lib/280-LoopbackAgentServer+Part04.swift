@@ -97,6 +97,33 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_watchlists" || lowercasedRequest == "watchlists" {
             return "open_dashboard_watchlists"
         }
+        if lowercasedRequest == "open_dashboard_delivery_history" || lowercasedRequest == "delivery_history" || lowercasedRequest == "delivery-history" {
+            return "open_dashboard_delivery_history"
+        }
+        if lowercasedRequest == "open_dashboard_recent_traffic" || lowercasedRequest == "recent_traffic" || lowercasedRequest == "traffic-recent" {
+            return "open_dashboard_recent_traffic"
+        }
+        if lowercasedRequest == "open_dashboard_organization_privacy" || lowercasedRequest == "organization_privacy" || lowercasedRequest == "organization-privacy" {
+            return "open_dashboard_organization_privacy"
+        }
+        if lowercasedRequest == "open_dashboard_subscription" || lowercasedRequest == "subscription" || lowercasedRequest == "billing" {
+            return "open_dashboard_subscription"
+        }
+        if lowercasedRequest == "open_dashboard_findings" || lowercasedRequest == "findings" {
+            return "open_dashboard_findings"
+        }
+        if lowercasedRequest == "open_dashboard_match_rules" || lowercasedRequest == "match_rules" || lowercasedRequest == "rules/match" {
+            return "open_dashboard_match_rules"
+        }
+        if lowercasedRequest == "open_dashboard_analysis_rules" || lowercasedRequest == "analysis_rules" || lowercasedRequest == "rules/analysis" {
+            return "open_dashboard_analysis_rules"
+        }
+        if lowercasedRequest == "open_dashboard_detection_rules" || lowercasedRequest == "detection_rules" || lowercasedRequest == "rules/detection" {
+            return "open_dashboard_detection_rules"
+        }
+        if lowercasedRequest == "open_dashboard_rule_tuning" || lowercasedRequest == "rule_tuning" || lowercasedRequest == "rules/tuning" {
+            return "open_dashboard_rule_tuning"
+        }
         if lowercasedRequest == "open_dashboard_hosts" || lowercasedRequest == "hosts" {
             return "open_dashboard_hosts"
         }

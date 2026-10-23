@@ -50,6 +50,44 @@ final class AccountSubscriptionClientTests: XCTestCase {
         XCTAssertEqual(captured?.value(forHTTPHeaderField: "x-impersonation-token"), "scope-token")
     }
 
+    func testBillingPortalUsesOwnAccountPostAndValidatesStripeDestination() async throws {
+        var captured: URLRequest?
+        let client = try AccountSubscriptionClient(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "owner", token: "token") { request in
+            captured = request
+            return self.http(#"{"url":"https://billing.stripe.com/p/session/example"}"#, request: request)
+        }
+
+        let url = try await client.createBillingPortalURL()
+
+        XCTAssertEqual(url.absoluteString, "https://billing.stripe.com/p/session/example")
+        XCTAssertEqual(captured?.url?.absoluteString, "https://api.hanasand.test/api/billing/portal")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertNil(captured?.httpBody)
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "owner")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+    }
+
+    func testBillingPortalRejectsImpersonationAndUnsafeDestinations() async throws {
+        var wasSent = false
+        let impersonating = try AccountSubscriptionClient(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "admin", token: "token", impersonationToken: "view-token") { request in
+            wasSent = true
+            return self.http(#"{"url":"https://billing.stripe.com/p/session/example"}"#, request: request)
+        }
+        do { _ = try await impersonating.createBillingPortalURL(); XCTFail("Expected own-account restriction") }
+        catch AccountSubscriptionClientError.impersonationUnsupported {}
+        XCTAssertFalse(wasSent)
+
+        for value in ["http://billing.stripe.com/p/session/example", "https://billing.stripe.com.attacker.test/p/session/example", "https://user@billing.stripe.com/p/session/example", "https://billing.stripe.com:8443/p/session/example"] {
+            let unsafe = try AccountSubscriptionClient(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "owner", token: "token") { request in
+                self.http(#"{"url":""# + value + #""}"#, request: request)
+            }
+            do { _ = try await unsafe.createBillingPortalURL(); XCTFail("Expected unsafe billing URL to be rejected") }
+            catch AccountSubscriptionClientError.invalidPortalURL {}
+        }
+    }
+
     func testClientRejectsInsecureURLAndMissingCredentials() throws {
         XCTAssertThrowsError(try AccountSubscriptionClient(baseURL: URL(string: "http://api.hanasand.test/api")!, userID: "owner", token: "token"))
         XCTAssertThrowsError(try AccountSubscriptionClient(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "", token: "token"))

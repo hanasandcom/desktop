@@ -6,6 +6,15 @@ import XCTest
 final class LoopbackAgentServerTests: XCTestCase {
     func testNormalizesAPIReferenceDashboardCommand() {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "api-reference", body: Data()), "open_dashboard_api_reference")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "delivery-history", body: Data()), "open_dashboard_delivery_history")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "traffic-recent", body: Data()), "open_dashboard_recent_traffic")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization-privacy", body: Data()), "open_dashboard_organization_privacy")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "billing", body: Data()), "open_dashboard_subscription")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "findings", body: Data()), "open_dashboard_findings")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "rules/match", body: Data()), "open_dashboard_match_rules")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "rules/analysis", body: Data()), "open_dashboard_analysis_rules")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "rules/detection", body: Data()), "open_dashboard_detection_rules")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "rules/tuning", body: Data()), "open_dashboard_rule_tuning")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "POST /command HTTP/1.1", body: Data(#"{"command":"open_dashboard_api_reference"}"#.utf8)), "open_dashboard_api_reference")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization-api-keys", body: Data()), "open_dashboard_organization_api_keys")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "host-updates", body: Data()), "open_dashboard_host_updates")

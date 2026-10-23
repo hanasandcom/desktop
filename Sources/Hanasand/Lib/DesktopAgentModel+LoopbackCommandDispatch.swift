@@ -118,6 +118,33 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_watchlists" {
             openNativeDashboard(path: "/watchlists", label: "Watchlists")
             append(meta: "Dashboard", body: "Opened Watchlists panel.", kind: .command)
+        } else if command == "open_dashboard_delivery_history" {
+            openNativeDashboard(path: "/dashboard/delivery-history", label: "Delivery History")
+            append(meta: "Dashboard", body: "Opened Delivery History panel.", kind: .command)
+        } else if command == "open_dashboard_recent_traffic" {
+            openNativeDashboard(path: "/traffic/recent", label: "Recent Traffic")
+            append(meta: "Dashboard", body: "Opened Recent Traffic panel.", kind: .command)
+        } else if command == "open_dashboard_organization_privacy" {
+            openNativeDashboard(path: "/organization-privacy", label: "Organization Privacy")
+            append(meta: "Dashboard", body: "Opened Organization Privacy panel.", kind: .command)
+        } else if command == "open_dashboard_subscription" {
+            openNativeDashboard(path: "/subscription", label: "Subscription")
+            append(meta: "Dashboard", body: "Opened Subscription panel.", kind: .command)
+        } else if command == "open_dashboard_findings" {
+            openNativeDashboard(path: "/findings", label: "Findings")
+            append(meta: "Dashboard", body: "Opened Findings panel.", kind: .command)
+        } else if command == "open_dashboard_match_rules" {
+            openNativeDashboard(path: "/rules/match", label: "Match Rules")
+            append(meta: "Dashboard", body: "Opened Match Rules panel.", kind: .command)
+        } else if command == "open_dashboard_analysis_rules" {
+            openNativeDashboard(path: "/rules/analysis", label: "Analysis Rules")
+            append(meta: "Dashboard", body: "Opened Analysis Rules panel.", kind: .command)
+        } else if command == "open_dashboard_detection_rules" {
+            openNativeDashboard(path: "/rules/detection", label: "Detection Rules")
+            append(meta: "Dashboard", body: "Opened Detection Rules panel.", kind: .command)
+        } else if command == "open_dashboard_rule_tuning" {
+            openNativeDashboard(path: "/rules/tuning", label: "Rule Tuning")
+            append(meta: "Dashboard", body: "Opened Rule Tuning panel.", kind: .command)
         } else if command == "open_dashboard_hosts" {
             openNativeDashboard(path: "/system/hosts", label: "Hosts")
             append(meta: "Dashboard", body: "Opened Hosts panel.", kind: .command)

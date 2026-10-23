@@ -42,12 +42,14 @@ struct APIReferenceNativePanel: View {
                             .font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
                         operationList(document: document, rows: reference.operationRows, isApplication: false)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .applicationAPI:
                     NativeGroupPanel(title: "Application API", subtitle: "Website snapshot · \(APIReferenceSnapshot.current.documentationSource) · Fictional examples") {
                         Text("Application authentication applies. The source snapshot does not specify every endpoint access rule.")
                             .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
                         operationList(document: document, rows: reference.operationRows, isApplication: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .schemas:
                     NativeGroupPanel(title: "Schemas", subtitle: "\(reference.filteredSchemas.count) matching schemas") {
                         if reference.filteredSchemas.isEmpty {
@@ -65,15 +67,18 @@ struct APIReferenceNativePanel: View {
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .json:
                     NativeGroupPanel(title: "OpenAPI JSON", subtitle: "Select text to copy") {
                         jsonView(reference.rawJSON)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else if !reference.isLoading && reference.errorMessage.isEmpty {
                 NativeEmptyState(title: "Load API documentation", message: "Refresh to retrieve endpoint details and schemas from the public OpenAPI contract.")
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task { await reference.refresh(websiteBaseURL: appModel.settings.websiteBaseURL) }
         .onDisappear { reference.invalidate() }
     }
@@ -85,19 +90,23 @@ struct APIReferenceNativePanel: View {
         if rows.isEmpty {
             NativeEmptyState(title: "No matching endpoints", message: "Try another method, path, or description.")
         } else {
-            ForEach(rows) { row in
-                let example = isApplication ? APIReferenceSnapshot.current.responseExamples[row.id] : nil
-                NativeGroupPanel(title: "\(row.method)  \(row.path)", subtitle: row.operation.summary ?? row.operation.operationId ?? "Endpoint") {
-                    Button(reference.expandedRows.contains(row.id) ? "Hide details" : "Show details") {
-                        reference.toggleOperation(row.id)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(rows) { row in
+                    let example = isApplication ? APIReferenceSnapshot.current.responseExamples[row.id] : nil
+                    NativeGroupPanel(title: "\(row.method)  \(row.path)", subtitle: row.operation.summary ?? row.operation.operationId ?? "Endpoint") {
+                        Button(reference.expandedRows.contains(row.id) ? "Hide details" : "Show details") {
+                            reference.toggleOperation(row.id)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("\(reference.expandedRows.contains(row.id) ? "Hide" : "Show") details for \(row.method) \(row.path)")
+                        if reference.expandedRows.contains(row.id) {
+                            operationDetails(document: document, operation: row.operation, isApplication: isApplication, example: example)
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel("\(reference.expandedRows.contains(row.id) ? "Hide" : "Show") details for \(row.method) \(row.path)")
-                    if reference.expandedRows.contains(row.id) {
-                        operationDetails(document: document, operation: row.operation, isApplication: isApplication, example: example)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
