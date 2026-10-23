@@ -11,70 +11,36 @@ import UniformTypeIdentifiers
 import WebKit
 
 extension DesktopAgentModel {
-    func fetchDesktopAutomations() async throws -> [DesktopAutomation] {
-        let envelope: DesktopAutomationEnvelope = try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("automations"),
-            authenticated: true
-        )
-        return envelope.automations
+    private func desktopAutomationClient() throws -> AutomationClient {
+        var authenticatedSettings = settings
+        authenticatedSettings.userID = userIDForRequests
+        authenticatedSettings.authToken = authTokenForRequests
+        return try AutomationClient(settings: authenticatedSettings)
     }
 
-    func fetchDesktopAutomationDetail(_ id: String) async throws -> DesktopAutomationDetailEnvelope {
-        let safeID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("automations/\(safeID)"),
-            authenticated: true
-        )
+    func fetchDesktopAutomations(scope: String? = nil) async throws -> [DesktopAutomation] {
+        try await desktopAutomationClient().list(scope: scope).automations
+    }
+
+    func fetchDesktopAutomationDetail(_ id: String, page: Int = 1) async throws -> DesktopAutomationDetailEnvelope {
+        try await desktopAutomationClient().detail(id: id, page: page)
     }
 
     func saveDesktopAutomation(_ payload: DesktopAutomationPayload, id: String? = nil) async throws -> DesktopAutomation {
-        let body = try JSONEncoder().encode(payload)
-        let path: String
-        let method: String
-        if let id {
-            let safeID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-            path = "automations/\(safeID)"
-            method = "PUT"
-        } else {
-            path = "automations"
-            method = "POST"
-        }
-        let envelope: DesktopAutomationMutationEnvelope = try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath(path),
-            method: method,
-            body: body,
-            authenticated: true
-        )
+        let envelope = try await desktopAutomationClient().save(payload, id: id)
         return envelope.automation
     }
 
     func setDesktopAutomationStatus(_ id: String, status: String) async throws {
-        let safeID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        let body = try JSONEncoder().encode(DesktopAutomationStatusPayload(status: status))
-        let _: DesktopAutomationMutationEnvelope = try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("automations/\(safeID)"),
-            method: "PUT",
-            body: body,
-            authenticated: true
-        )
+        _ = try await desktopAutomationClient().setStatus(id, status: status)
     }
 
     func deleteDesktopAutomation(_ id: String) async throws {
-        let safeID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        let _: DesktopAutomationMutationEnvelope = try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("automations/\(safeID)"),
-            method: "DELETE",
-            authenticated: true
-        )
+        _ = try await desktopAutomationClient().delete(id)
     }
 
     func runDesktopAutomation(_ id: String) async throws -> String {
-        let safeID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        let envelope: DesktopAutomationRunNowEnvelope = try await requestJSON(
-            settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("automations/\(safeID)/run"),
-            method: "POST",
-            authenticated: true
-        )
+        let envelope = try await desktopAutomationClient().run(id)
         return envelope.message ?? "Run started."
     }
 
