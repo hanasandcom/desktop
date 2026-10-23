@@ -13,7 +13,14 @@ import WebKit
 struct ProfileNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
-    @State var pendingSessionRevoke: DashboardAuthSession?
+    @State var pendingSessionRevoke: ProfileAccountSession?
+    @State private var accountSessions: [ProfileAccountSession] = []
+    @State private var sessionSearch = ""
+    @State private var expandedSessionID: Int?
+    @State private var isLoadingAccountSessions = false
+    @State private var accountSessionsError: String?
+    @State private var accountSessionsStatus: String?
+    @State private var isMutatingAccountSessions = false
     @State var pendingCertificateDelete: DashboardCertificate?
     @State var pendingSshKeyDelete: ProfileSshKey?
     @State var isAddingSshKey = false
@@ -98,40 +105,83 @@ struct ProfileNativePanel: View {
                 NativeGroupPanel(title: "Security", subtitle: "Active sessions and SSH certificates") {
                     HStack(spacing: 12) {
                         FeatureCard(title: "Token expiry", value: profile.expiresAt.map { formatDateText($0, fallback: $0) } ?? "No expiry", icon: "key")
-                        FeatureCard(title: "Active sessions", value: "\(model.profileSessions.filter { $0.revokedAt == nil }.count)", icon: "laptopcomputer")
+                        FeatureCard(
+                            title: "Active sessions",
+                            value: isLoadingAccountSessions ? "Loading" : (accountSessionsError == nil ? "\(accountSessions.filter(\.isActive).count)" : "Unavailable"),
+                            icon: "laptopcomputer"
+                        )
                         FeatureCard(title: "Managed certs", value: "\(model.profileCertificates.filter { $0.isManaged }.count)", icon: "checkmark.shield")
                     }
                     HStack(spacing: 10) {
                         ActionButton(title: "Refresh security", icon: "arrow.clockwise") {
-                            Task { await model.loadNativeDashboardData() }
+                            Task {
+                                await model.loadNativeDashboardData()
+                                await loadAccountSessions()
+                            }
                         }
                         ActionButton(title: "Logout others", icon: "rectangle.portrait.and.arrow.right", tone: .danger) {
                             confirmRevokeOtherSessions = true
                         }
-                        .disabled(model.profileSessions.filter { $0.revokedAt == nil }.count <= 1)
+                        .disabled(isMutatingAccountSessions || accountSessions.filter(\.isActive).filter { !$0.current }.isEmpty || model.isProfileIdentityImpersonating)
                     }
 
-                    if model.profileSessions.isEmpty {
-                        CompactInfoCard(title: "Sessions", lines: ["No session records returned."])
+                    if model.isProfileIdentityImpersonating {
+                        NativeNotice(message: "Return to your own account to review or change sessions.", tone: .info)
                     } else {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
-                            ForEach(model.profileSessions) { session in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    CompactInfoCard(
-                                        title: "\(session.deviceLabel) \(session.revokedAt == nil ? "active" : "revoked")",
-                                        lines: [
-                                            "IP: \(session.ip ?? "unknown")",
-                                            "Last seen: \(formatDateText(session.lastSeenAt, fallback: "unknown"))",
-                                            session.userAgent ?? "Unknown client",
-                                        ]
-                                    )
-                                    if session.revokedAt == nil {
-                                        HStack {
-                                            Spacer()
-                                            ActionButton(title: "Revoke", icon: "xmark.shield", tone: .danger) {
-                                                pendingSessionRevoke = session
+                        TextField("Find a session by device, IP, network, or status", text: $sessionSearch)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(isMutatingAccountSessions)
+                        if isLoadingAccountSessions {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("Loading signed-in devices…").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                            }
+                        } else if let accountSessionsError {
+                            NativeNotice(message: accountSessionsError, title: "Sessions unavailable")
+                            ActionButton(title: "Retry sessions", icon: "arrow.clockwise") { Task { await loadAccountSessions() } }
+                        } else if accountSessions.isEmpty {
+                            CompactInfoCard(title: "No sessions found", lines: ["No session records were returned for this account."])
+                        } else if visibleAccountSessions.isEmpty {
+                            CompactInfoCard(title: "No matching sessions", lines: ["Try another device, address, network, or status."])
+                        } else {
+                            if let accountSessionsStatus {
+                                NativeNotice(message: accountSessionsStatus, tone: .success)
+                            }
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
+                                ForEach(visibleAccountSessions) { session in
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        CompactInfoCard(
+                                            title: "\(session.deviceLabel) · \(session.current ? "this device" : session.isActive ? "active" : "revoked")",
+                                            lines: [
+                                                session.addressLabel,
+                                                "Last active: \(formatDateText(session.lastSeenAt, fallback: "unknown"))",
+                                                session.locationLabel,
+                                            ]
+                                        )
+                                        HStack(spacing: 8) {
+                                            ActionButton(title: expandedSessionID == session.id ? "Hide details" : "Device details", icon: "info.circle") {
+                                                expandedSessionID = expandedSessionID == session.id ? nil : session.id
                                             }
-                                            .disabled(model.isLoadingNativeDashboard)
+                                            if session.isActive {
+                                                ActionButton(title: session.current ? "Log out this device" : "Revoke session", icon: "xmark.shield", tone: .danger) {
+                                                    if session.current { confirmLogout = true }
+                                                    else { pendingSessionRevoke = session }
+                                                }
+                                                .disabled(isMutatingAccountSessions)
+                                            }
+                                        }
+                                        if expandedSessionID == session.id {
+                                            VStack(alignment: .leading, spacing: 5) {
+                                                Text("Network: \(session.networkLabel)")
+                                                Text("Approximate location: \(session.locationLabel)")
+                                                Text("Signed in: \(formatDateText(session.createdAt, fallback: "unknown"))")
+                                                Text("User agent: \(session.userAgent.isEmpty ? "Not recorded" : session.userAgent)")
+                                                    .textSelection(.enabled)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(theme.textTertiary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         }
                                     }
                                 }
@@ -171,13 +221,13 @@ struct ProfileNativePanel: View {
             .alert("Revoke session?", isPresented: sessionRevokePresented) {
                 Button("Revoke", role: .destructive) {
                     guard let pendingSessionRevoke else { return }
-                    Task { await model.revokeProfileSession(pendingSessionRevoke) }
+                    Task { await revokeAccountSession(pendingSessionRevoke) }
                 }
                 Button("Cancel", role: .cancel) {
                     pendingSessionRevoke = nil
                 }
             } message: {
-                Text("This will immediately revoke the selected \(pendingSessionRevoke?.deviceLabel ?? "device") session.")
+                Text("This will immediately revoke the selected \(pendingSessionRevoke?.deviceLabel ?? "device") session. That device will need to sign in again.")
             }
             .alert("Delete certificate?", isPresented: certificateDeletePresented) {
                 Button("Delete", role: .destructive) {
@@ -201,7 +251,7 @@ struct ProfileNativePanel: View {
             }
             .alert("Logout other devices?", isPresented: $confirmRevokeOtherSessions) {
                 Button("Logout others", role: .destructive) {
-                    Task { await model.revokeOtherProfileSessions() }
+                    Task { await revokeOtherAccountSessions() }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -223,8 +273,83 @@ struct ProfileNativePanel: View {
             } message: {
                 Text("This logs out every device and schedules permanent deletion after 30 days.")
             }
+            .task(id: sessionCredentialKey) { await loadAccountSessions() }
         } else {
             NativeEmptyState(title: "Profile not loaded", message: "Hanasand session is not ready yet. Log in again if this profile does not load.")
+        }
+    }
+
+    private var visibleAccountSessions: [ProfileAccountSession] {
+        let terms = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        return accountSessions.filter { $0.matches(search: terms) }
+    }
+
+    private var sessionCredentialKey: String {
+        "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
+    }
+
+    @MainActor
+    private func loadAccountSessions() async {
+        guard model.hasHanasandAuth, !model.isProfileIdentityImpersonating else {
+            accountSessions = []
+            accountSessionsError = model.isProfileIdentityImpersonating ? nil : "Sign in to review account sessions."
+            return
+        }
+        isLoadingAccountSessions = true
+        accountSessionsError = nil
+        accountSessionsStatus = nil
+        accountSessions = []
+        defer { isLoadingAccountSessions = false }
+        let requestCredentialKey = sessionCredentialKey
+        do {
+            let sessions = try await makeSessionsClient().load()
+            guard sessionCredentialKey == requestCredentialKey else { return }
+            accountSessions = sessions.sorted { $0.current && !$1.current }
+        } catch {
+            guard sessionCredentialKey == requestCredentialKey else { return }
+            accountSessionsError = error.localizedDescription
+        }
+    }
+
+    private func makeSessionsClient() throws -> ProfileAccountSessionsClient {
+        try ProfileAccountSessionsClient(
+            baseURL: model.settings.apiBaseURL.normalizedBaseURL,
+            userID: model.settings.userID,
+            token: model.settings.authToken,
+            impersonationToken: model.settings.impersonationToken,
+            impersonatingUserID: model.settings.impersonatingUserID
+        )
+    }
+
+    @MainActor
+    private func revokeAccountSession(_ session: ProfileAccountSession) async {
+        guard !session.current, !isMutatingAccountSessions else { return }
+        isMutatingAccountSessions = true
+        accountSessionsError = nil
+        accountSessionsStatus = nil
+        defer { isMutatingAccountSessions = false }
+        do {
+            try await makeSessionsClient().revoke(session)
+            await loadAccountSessions()
+            accountSessionsStatus = "Session revoked."
+        } catch {
+            accountSessionsError = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func revokeOtherAccountSessions() async {
+        guard !isMutatingAccountSessions, !model.isProfileIdentityImpersonating else { return }
+        isMutatingAccountSessions = true
+        accountSessionsError = nil
+        accountSessionsStatus = nil
+        defer { isMutatingAccountSessions = false }
+        do {
+            try await makeSessionsClient().revokeOthers()
+            await loadAccountSessions()
+            accountSessionsStatus = "Other sessions revoked."
+        } catch {
+            accountSessionsError = error.localizedDescription
         }
     }
 
