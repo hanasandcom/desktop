@@ -110,6 +110,7 @@ extension DesktopAgentModel {
             .route("Logs", "Search logs and diagnostics.", "exclamationmark.triangle", "/logs"),
             .route("Search Logs", "Filter and page authenticated log events.", "doc.text.magnifyingglass", "/logs/search"),
             .route("Realtime Logs", "Review recent high and critical log events.", "waveform.path", "/logs/realtime"),
+            .route("Error History", "Triage recent API, sign-in, and website errors.", "ladybug", "/logs/errors"),
             .route("Database", "Inspect database and operations.", "externaldrive.connected.to.line.below", "/db"),
             .route("Backups", "View database backup status.", "externaldrive.badge.timemachine", "/db/backups"),
             .route("Restore", "Browse and restore backups.", "arrow.counterclockwise.circle", "/db/restore"),

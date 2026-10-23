@@ -202,6 +202,9 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_log_search" || lowercasedRequest == "logs_search" || lowercasedRequest == "logs-search" {
             return "open_dashboard_log_search"
         }
+        if lowercasedRequest == "open_dashboard_log_errors" || lowercasedRequest == "logs_errors" || lowercasedRequest == "logs-errors" || lowercasedRequest == "error_history" {
+            return "open_dashboard_log_errors"
+        }
         if lowercasedRequest == "open_dashboard_health_checks" || lowercasedRequest == "health_checks" || lowercasedRequest == "automation_health" {
             return "open_dashboard_health_checks"
         }

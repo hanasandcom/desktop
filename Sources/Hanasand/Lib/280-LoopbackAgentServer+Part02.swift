@@ -117,6 +117,7 @@ extension LoopbackAgentServer {
                 "open_dashboard_logs",
                 "open_dashboard_realtime_logs",
                 "open_dashboard_log_search",
+                "open_dashboard_log_errors",
                 "open_dashboard_ti_profiles",
                 "open_dashboard_ti_sources",
                 "open_dashboard_ti_timeliness",
@@ -215,6 +216,9 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_log_search" {
                 return http(body: #"{"ok":true,"message":"Native Search Logs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_log_errors" {
+                return http(body: #"{"ok":true,"message":"Native Error History panel opened in the Desktop app."}"#)
             }
             if command == "open_dashboard_ti_profiles" {
                 return http(body: #"{"ok":true,"message":"Native Actor Profiles panel opened in the Desktop app."}"#)

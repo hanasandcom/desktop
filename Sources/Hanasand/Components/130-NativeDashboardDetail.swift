@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/logs", "/logs/realtime", "/logs/search", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/s", "/repositories", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/vulnerabilities", "/db/backups"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/s", "/repositories", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/vulnerabilities", "/db/backups"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -165,6 +165,8 @@ struct NativeDashboardDetail: View {
             LogsRealtimeNativePanel()
         case "/logs/search":
             LogsSearchNativePanel()
+        case "/logs/errors":
+            LogErrorsNativePanel()
         case "/system/ai":
             AIModelsNativePanel()
         case "/system/rates":

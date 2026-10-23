@@ -50,6 +50,7 @@ final class NativeToolsCatalogTests: XCTestCase {
             DesktopAction.route("OpenAPI JSON", "View raw API contract.", "curlybraces", "/api/openapi"),
             DesktopAction.route("Realtime Logs", "Review recent events.", "waveform", "/logs/realtime"),
             DesktopAction.route("Search Logs", "Search log events.", "doc.text.magnifyingglass", "/logs/search"),
+            DesktopAction.route("Error History", "Triage application errors.", "ladybug", "/logs/errors"),
             DesktopAction.route("Organization Workspace", "Manage organization settings.", "building", "/organization-workspace"),
             DesktopAction.route("Organization Team", "Manage organization members.", "person.2", "/organizations/team"),
             DesktopAction.route("Organization Settings", "Review organization settings.", "slider", "/organizations/settings"),
@@ -63,7 +64,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron", "/images/library"]))
         XCTAssertEqual(routesBySection["Infrastructure"], Set(["/status"]))
         XCTAssertEqual(routesBySection["Security & intelligence"], Set(["/sandbox", "/scanner"]))
-        XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime", "/logs/search"]))
+        XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime", "/logs/search", "/logs/errors"]))
         XCTAssertEqual(routesBySection["Account & API"], Set(["/api/openapi"]))
         XCTAssertEqual(routesBySection["Organization"], Set([
             "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity",

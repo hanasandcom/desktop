@@ -402,6 +402,7 @@ run_dashboard_smoke() {
   run_step "17-users" "open_dashboard_users"
   run_step "18-roles" "open_dashboard_roles"
   run_step "19-logs" "open_dashboard_logs"
+  run_step "19a-error-history" "open_dashboard_log_errors"
   run_step "20-system" "open_dashboard_system"
   run_step "21-vms" "open_dashboard_vms"
   run_step "22-notes" "open_dashboard_notes"

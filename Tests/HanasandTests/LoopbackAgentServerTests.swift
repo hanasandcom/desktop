@@ -17,6 +17,7 @@ final class LoopbackAgentServerTests: XCTestCase {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "billing", body: Data()), "open_dashboard_subscription")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "realtime_logs", body: Data()), "open_dashboard_realtime_logs")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "logs-search", body: Data()), "open_dashboard_log_search")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "logs-errors", body: Data()), "open_dashboard_log_errors")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "health_checks", body: Data()), "open_dashboard_health_checks")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "personal_cron", body: Data()), "open_dashboard_personal_cron")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization_settings", body: Data()), "open_dashboard_organization_settings")

@@ -232,6 +232,9 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_log_search" {
             openNativeDashboard(path: "/logs/search", label: "Search Logs")
             append(meta: "Dashboard", body: "Opened native Search Logs panel.", kind: .command)
+        } else if command == "open_dashboard_log_errors" {
+            openNativeDashboard(path: "/logs/errors", label: "Error History")
+            append(meta: "Dashboard", body: "Opened native Error History panel.", kind: .command)
         } else if command == "open_dashboard_ti_profiles" {
             openNativeDashboard(path: "/ti/profiles", label: "Actor Profiles")
             append(meta: "Dashboard", body: "Opened native Actor Profiles panel.", kind: .command)
