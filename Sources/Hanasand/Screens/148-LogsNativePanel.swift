@@ -53,8 +53,8 @@ struct LogsNativePanel: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(["all", "fatal", "error", "warn", "info", "debug"], id: \.self) { level in
-                        FilterChip(title: level.capitalized, active: selectedLevel == level) {
+                    ForEach(DashboardLogLevelFilter.options, id: \.self) { level in
+                        FilterChip(title: level == "high" ? "High severity" : level.capitalized, active: selectedLevel == level) {
                             selectedLevel = level
                         }
                     }
@@ -87,7 +87,7 @@ struct LogsNativePanel: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return model.logs.filter { log in
             let serviceMatch = selectedService == "all" || log.service == selectedService
-            let levelMatch = selectedLevel == "all" || log.level == selectedLevel
+            let levelMatch = DashboardLogLevelFilter.matches(level: log.level, filter: selectedLevel)
             let searchable = [
                 log.service,
                 log.host ?? "",
