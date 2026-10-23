@@ -32,7 +32,7 @@ struct ActionCard: View {
                     Text(action.subtitle)
                         .font(.system(size: 11, weight: .regular))
                         .foregroundStyle(theme.textSecondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: action.trailingIcon)

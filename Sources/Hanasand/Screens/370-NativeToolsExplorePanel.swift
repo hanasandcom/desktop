@@ -84,7 +84,7 @@ struct NativeToolsExplorePanel: View {
                                     Text(action.subtitle)
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(theme.textSecondary)
-                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer(minLength: 4)
                                 Image(systemName: action.trailingIcon)
