@@ -13,26 +13,27 @@ import WebKit
 extension RateLimitsNativePanel {
 
     func defaultLimitRow(scope: String, rule: DashboardRateLimitRule, active: Bool) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: scope == "anonymous" ? "person.crop.circle.badge.questionmark" : "person.badge.key")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(active ? theme.accent : theme.textTertiary)
-                .frame(width: 30, height: 30)
-                .background(active ? theme.accentSoft : theme.cardRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: scope == "anonymous" ? "person.crop.circle.badge.questionmark" : "person.badge.key")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(active ? theme.accent : theme.textTertiary)
+                    .frame(width: 30, height: 30)
+                    .background(active ? theme.accentSoft : theme.cardRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(scope.capitalized)
-                    .font(.system(size: 12, weight: .black))
-                    .foregroundStyle(theme.text)
-                    .lineLimit(1)
-                Text(rule.summary)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(scope.capitalized)
+                        .font(.system(size: 12, weight: .black))
+                        .foregroundStyle(theme.text)
+                        .lineLimit(1)
+                    Text(rule.summary)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
             }
-
-            Spacer()
 
             HStack(spacing: 6) {
                 ActionButton(title: "Half", icon: "minus.circle") {
@@ -41,6 +42,7 @@ extension RateLimitsNativePanel {
                 ActionButton(title: "Double", icon: "plus.circle") {
                     Task { await model.setRateLimitDefault(scope: scope, maxRequests: min(rule.maxRequests * 2, 1_000_000)) }
                 }
+                Spacer(minLength: 0)
             }
         }
         .padding(10)
@@ -81,26 +83,27 @@ extension RateLimitsNativePanel {
     }
 
     func overrideRow(_ override: DashboardRateLimitOverride) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: override.enabled ? "checkmark.shield" : "pause.circle")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(override.enabled ? theme.accent : theme.textTertiary)
-                .frame(width: 30, height: 30)
-                .background(override.enabled ? theme.accentSoft : theme.cardRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: override.enabled ? "checkmark.shield" : "pause.circle")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(override.enabled ? theme.accent : theme.textTertiary)
+                    .frame(width: 30, height: 30)
+                    .background(override.enabled ? theme.accentSoft : theme.cardRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(override.method) \(override.route)")
-                    .font(.system(size: 12, weight: .black, design: .monospaced))
-                    .foregroundStyle(theme.text)
-                    .lineLimit(1)
-                Text("\(override.scope) · \(override.maxRequests) / \(formatMilliseconds(Double(override.windowMs)))")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(override.method) \(override.route)")
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
+                        .foregroundStyle(theme.text)
+                        .lineLimit(1)
+                    Text("\(override.scope) · \(override.maxRequests) / \(formatMilliseconds(Double(override.windowMs)))")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
             }
-
-            Spacer()
 
             HStack(spacing: 6) {
                 ActionButton(title: override.enabled ? "Disable" : "Enable", icon: override.enabled ? "pause.circle" : "play.circle") {
@@ -109,6 +112,7 @@ extension RateLimitsNativePanel {
                 ActionButton(title: "Remove", icon: "trash", tone: .danger) {
                     Task { await model.setRateLimitOverride(override, remove: true) }
                 }
+                Spacer(minLength: 0)
             }
         }
         .padding(10)
