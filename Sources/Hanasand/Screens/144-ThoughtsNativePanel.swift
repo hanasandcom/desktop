@@ -24,41 +24,49 @@ struct ThoughtsNativePanel: View {
             HStack(spacing: 12) {
                 FeatureCard(title: "Thoughts", value: "\(model.thoughts.count)", icon: "brain.head.profile")
                 FeatureCard(title: "Mode", value: "Native", icon: "macwindow")
+                ActionButton(title: "Refresh", icon: "arrow.clockwise") {
+                    Task { await model.loadNativeDashboardData() }
+                }
             }
 
             NativeGroupPanel(title: "Create thought", subtitle: "Small idea, saved directly") {
-                HStack(spacing: 10) {
-                    TextField("Thought title", text: $model.thoughtDraftTitle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15, weight: .bold))
+                VStack(alignment: .leading, spacing: 10) {
+                    TextEditor(text: $model.thoughtDraftTitle)
+                        .font(.system(size: 14))
                         .foregroundStyle(theme.text)
-                        .padding(12)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(minHeight: 130, maxHeight: 200)
                         .background(theme.field)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    MarkdownPreviewView(markdown: model.thoughtDraftTitle, theme: theme)
                     ActionButton(title: "Create", icon: "plus") {
                         Task { await model.createNativeThought() }
                     }
-                    .disabled(model.isLoadingNativeDashboard)
-                    ActionButton(title: "Refresh", icon: "arrow.clockwise") {
-                        Task { await model.loadNativeDashboardData() }
-                    }
+                    .disabled(model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh)
                 }
             }
 
             NativeGroupPanel(title: "Edit thought", subtitle: model.selectedThoughtID.isEmpty ? "Choose a thought below." : model.selectedThoughtID) {
-                HStack(spacing: 10) {
-                    TextField("Thought title", text: $model.thoughtEditTitle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 15, weight: .bold))
+                VStack(alignment: .leading, spacing: 10) {
+                    TextEditor(text: $model.thoughtEditTitle)
+                        .font(.system(size: 14))
                         .foregroundStyle(theme.text)
-                        .padding(12)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(minHeight: 170, maxHeight: 260)
                         .background(theme.field)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    MarkdownPreviewView(markdown: model.thoughtEditTitle, theme: theme)
                     ActionButton(title: "Save", icon: "checkmark") {
                         Task { await model.updateSelectedThought() }
                     }
-                    .disabled(model.selectedThoughtID.isEmpty || model.isLoadingNativeDashboard)
+                    .disabled(model.selectedThoughtID.isEmpty || model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh)
                 }
+            }
+
+            if model.thoughtMutationNeedsRefresh {
+                NativeEmptyState(title: "Save needs review", message: "The server may have saved this Markdown, but Desktop did not receive a confirmation. Refresh Thoughts and review the list before trying again.")
             }
 
             if model.thoughts.isEmpty {
@@ -67,10 +75,13 @@ struct ThoughtsNativePanel: View {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                     ForEach(model.thoughts) { thought in
                         VStack(alignment: .leading, spacing: 9) {
-                            Text(thought.title)
+                            Text(thought.displayTitle)
                                 .font(.system(size: 14, weight: .black))
                                 .foregroundStyle(theme.text)
                                 .lineLimit(3)
+                            if !thought.markdownRemainder.isEmpty {
+                                MarkdownPreviewView(markdown: thought.markdownRemainder, theme: theme, compact: true)
+                            }
                             HStack(spacing: 8) {
                                 Label(thought.updatedLabel, systemImage: "clock")
                                 if let creator = thought.createdBy, !creator.isEmpty {
@@ -128,7 +139,32 @@ struct ThoughtsNativePanel: View {
                 deletingThought = nil
             }
         } message: {
-            Text(deletingThought?.title ?? "This thought will be removed.")
+            Text(deletingThought?.displayTitle ?? "This thought will be removed.")
         }
+    }
+}
+
+private struct MarkdownPreviewView: View {
+    let markdown: String
+    let theme: DesktopTheme
+    var compact = false
+
+    var body: some View {
+        Group {
+            if markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Markdown preview appears here.")
+                    .foregroundStyle(theme.textTertiary)
+            } else {
+                Text((try? AttributedString(markdown: markdown)) ?? AttributedString(markdown))
+                    .foregroundStyle(theme.textSecondary)
+                    .lineLimit(compact ? 5 : nil)
+                    .textSelection(.enabled)
+            }
+        }
+        .font(.system(size: compact ? 12 : 13))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(compact ? 0 : 10)
+        .background(compact ? Color.clear : theme.card.opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

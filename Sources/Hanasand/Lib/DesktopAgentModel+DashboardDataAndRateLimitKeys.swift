@@ -84,11 +84,19 @@ extension DesktopAgentModel {
         }
 
         do {
-            let text = try await requestPrettyText(
-                endpoint.baseURL.appendingAPIPath(endpoint.path),
-                authenticated: endpoint.authenticated,
-                userAgent: endpoint.userAgent
-            )
+            let text: String
+            if path == "/content/thoughts" {
+                let rows = try await thoughtsClient().load()
+                let data = try JSONEncoder().encode(rows)
+                text = String(data: data, encoding: .utf8) ?? "[]"
+                thoughtMutationSafety = .ready
+            } else {
+                text = try await requestPrettyText(
+                    endpoint.baseURL.appendingAPIPath(endpoint.path),
+                    authenticated: endpoint.authenticated,
+                    userAgent: endpoint.userAgent
+                )
+            }
             guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
             nativeDashboardStatus = "Loaded \(endpoint.label)"
             nativeDashboardPayload = text.isEmpty ? "No data returned." : String(text.prefix(24_000))

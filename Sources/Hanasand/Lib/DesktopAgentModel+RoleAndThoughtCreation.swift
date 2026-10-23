@@ -12,6 +12,8 @@ import WebKit
 
 extension DesktopAgentModel {
 
+    var thoughtMutationNeedsRefresh: Bool { thoughtMutationSafety.requiresRefresh }
+
     func createNativeRole() async {
         guard hasHanasandAuth else {
             nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."
@@ -135,34 +137,43 @@ extension DesktopAgentModel {
             return
         }
 
-        let title = thoughtDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else {
-            nativeDashboardStatus = "Write a thought title first."
+        let markdown = thoughtDraftTitle
+        guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            nativeDashboardStatus = "Write some Markdown first."
             return
         }
-
-        let payload = ["title": title, "id": userIDForRequests]
-        let body = (try? JSONEncoder().encode(payload)) ?? Data("{}".utf8)
+        guard !thoughtMutationNeedsRefresh else {
+            nativeDashboardStatus = "Refresh Thoughts and review the list before retrying this save."
+            return
+        }
 
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Creating thought"
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("thoughts"),
-                method: "POST",
-                body: body,
-                authenticated: true
-            )
+            let client = try thoughtsClient()
+            _ = try await client.create(markdown: markdown)
             nativeDashboardStatus = "Created thought"
             thoughtDraftTitle = ""
-            append(meta: "Thought created", body: title, kind: .change)
+            append(meta: "Thought created", body: markdown, kind: .change)
             await loadNativeDashboardData()
         } catch {
+            thoughtMutationSafety.recordFailure(error)
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Thought failed", body: error.localizedDescription, kind: .error)
         }
+    }
+
+    func thoughtsClient() throws -> ThoughtsClient {
+        try ThoughtsClient(
+            apiBaseURL: settings.apiBaseURL.normalizedBaseURL,
+            userID: userIDForRequests,
+            token: authTokenForRequests,
+            organizationID: selectedOrganizationID,
+            impersonationToken: settings.impersonationToken,
+            impersonatingUserID: settings.impersonatingUserID
+        )
     }
 
     func loadThoughtIntoEditor(_ thought: DashboardThought) {

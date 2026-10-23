@@ -18,32 +18,32 @@ extension DesktopAgentModel {
             return
         }
 
-        let title = thoughtEditTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let markdown = thoughtEditTitle
         guard !selectedThoughtID.isEmpty else {
             nativeDashboardStatus = "Select a thought first."
             return
         }
-        guard !title.isEmpty else {
-            nativeDashboardStatus = "Thought title cannot be empty."
+        guard !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            nativeDashboardStatus = "Thought Markdown cannot be empty."
             return
         }
-
-        let body = (try? JSONEncoder().encode(["title": title])) ?? Data("{}".utf8)
+        guard !thoughtMutationNeedsRefresh else {
+            nativeDashboardStatus = "Refresh Thoughts and review the list before retrying this save."
+            return
+        }
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Saving thought"
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("thought/\(selectedThoughtID)"),
-                method: "PUT",
-                body: body,
-                authenticated: true
-            )
+            let client = try thoughtsClient()
+            _ = try await client.update(id: selectedThoughtID, markdown: markdown)
             nativeDashboardStatus = "Saved thought"
+            thoughtMutationSafety = .ready
             append(meta: "Thought saved", body: selectedThoughtID, kind: .change)
             await loadNativeDashboardData()
         } catch {
+            thoughtMutationSafety.recordFailure(error)
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Thought save failed", body: error.localizedDescription, kind: .error)
         }

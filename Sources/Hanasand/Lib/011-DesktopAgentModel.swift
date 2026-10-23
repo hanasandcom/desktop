@@ -119,6 +119,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var articleDraftID = ""; @Published var articleDraftContent = ""; @Published var selectedArticleID = ""; @Published var articleEditID = ""
 
     @Published var articleEditContent = ""; @Published var thoughts: [DashboardThought] = []; @Published var thoughtDraftTitle = ""; @Published var selectedThoughtID = ""
+    @Published var thoughtMutationSafety = ThoughtMutationSafety()
 
     @Published var thoughtEditTitle = ""; @Published var profile: DashboardProfile?; @Published var profileSessions: [DashboardAuthSession] = []; @Published var profileCertificates: [DashboardCertificate] = []; @Published var profileSshKeys: [ProfileSshKey] = []
     @Published var profileSshKeyName = ""; @Published var profileSshPublicKey = ""
