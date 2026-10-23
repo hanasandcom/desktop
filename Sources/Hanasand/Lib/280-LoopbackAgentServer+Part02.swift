@@ -79,6 +79,8 @@ extension LoopbackAgentServer {
                 "dashboard_refresh",
                 "open_dashboard_api_reference",
                 "open_dashboard_organization_api_keys",
+                "open_dashboard_integrations",
+                "open_dashboard_service_accounts",
                 "open_dashboard_organizations",
                 "open_dashboard_watchlists",
                 "open_dashboard_delivery_history",

@@ -426,6 +426,8 @@ run_dashboard_smoke() {
   run_step "41-analysis-rules" "open_dashboard_analysis_rules"
   run_step "42-detection-rules" "open_dashboard_detection_rules"
   run_step "43-rule-tuning" "open_dashboard_rule_tuning"
+  run_step "44-integrations" "open_dashboard_integrations"
+  run_step "45-service-accounts" "open_dashboard_service_accounts"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

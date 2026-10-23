@@ -17,6 +17,8 @@ final class LoopbackAgentServerTests: XCTestCase {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "rules/tuning", body: Data()), "open_dashboard_rule_tuning")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "POST /command HTTP/1.1", body: Data(#"{"command":"open_dashboard_api_reference"}"#.utf8)), "open_dashboard_api_reference")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization-api-keys", body: Data()), "open_dashboard_organization_api_keys")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "webhooks", body: Data()), "open_dashboard_integrations")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "service-accounts", body: Data()), "open_dashboard_service_accounts")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "host-updates", body: Data()), "open_dashboard_host_updates")
     }
 

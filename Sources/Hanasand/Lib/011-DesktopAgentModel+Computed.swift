@@ -66,6 +66,8 @@ extension DesktopAgentModel {
             .route("Detection Rules", "Manage detection and response rules.", "shield.lefthalf.filled", "/rules/detection"),
             .route("Rule Tuning", "Preview and tune rule matches.", "slider.horizontal.3", "/rules/tuning"),
             .route("Organization API keys", "Create and revoke API keys.", "key.horizontal", "/organization-api-keys"),
+            .route("Integrations", "Manage organization webhook destinations.", "point.3.connected.trianglepath.dotted", "/integrations"),
+            .route("Service Accounts", "Manage scoped organization service accounts.", "person.badge.key", "/dashboard/management/service-accounts"),
             .route("API Reference", "Search endpoint and schema docs.", "doc.text.magnifyingglass", "/api"),
             .route("Hosts", "Host health and SSH access.", "server.rack", "/system/hosts"),
             .route("Host Updates", "View automatic update history.", "arrow.down.circle", "/system/updates"),

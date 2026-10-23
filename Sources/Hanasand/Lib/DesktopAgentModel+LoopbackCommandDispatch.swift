@@ -112,6 +112,12 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_organization_api_keys" {
             openNativeDashboard(path: "/organization-api-keys", label: "Organization API keys")
             append(meta: "Dashboard", body: "Opened Organization API keys panel.", kind: .command)
+        } else if command == "open_dashboard_integrations" {
+            openNativeDashboard(path: "/integrations", label: "Integrations")
+            append(meta: "Dashboard", body: "Opened Integrations panel.", kind: .command)
+        } else if command == "open_dashboard_service_accounts" {
+            openNativeDashboard(path: "/dashboard/management/service-accounts", label: "Service Accounts")
+            append(meta: "Dashboard", body: "Opened Service Accounts panel.", kind: .command)
         } else if command == "open_dashboard_organizations" {
             openNativeDashboard(path: "/organizations", label: "Organizations")
             append(meta: "Dashboard", body: "Opened Organizations panel.", kind: .command)

@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -93,6 +93,10 @@ struct NativeDashboardDetail: View {
             ThreatRulesNativePanel(category: "detection")
         case "/rules/tuning":
             ThreatRuleTuningNativePanel()
+        case "/integrations":
+            IntegrationsNativePanel()
+        case "/dashboard/management/service-accounts":
+            ServiceAccountsNativePanel()
         case "/system/hosts":
             HostsNativePanel()
         case "/system/updates":

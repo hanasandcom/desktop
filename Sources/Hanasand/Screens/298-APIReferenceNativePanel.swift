@@ -85,12 +85,12 @@ struct APIReferenceNativePanel: View {
 
     @ViewBuilder
     private func operationList(document: APIReferenceDocument, rows: [APIReferenceOperationRow], isApplication: Bool) -> some View {
-        Text("\(rows.count) matching operations")
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
-        if rows.isEmpty {
-            NativeEmptyState(title: "No matching endpoints", message: "Try another method, path, or description.")
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(rows.count) matching operations")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            if rows.isEmpty {
+                NativeEmptyState(title: "No matching endpoints", message: "Try another method, path, or description.")
+            } else {
                 ForEach(rows) { row in
                     let example = isApplication ? APIReferenceSnapshot.current.responseExamples[row.id] : nil
                     NativeGroupPanel(title: "\(row.method)  \(row.path)", subtitle: row.operation.summary ?? row.operation.operationId ?? "Endpoint") {
@@ -106,8 +106,8 @@ struct APIReferenceNativePanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder

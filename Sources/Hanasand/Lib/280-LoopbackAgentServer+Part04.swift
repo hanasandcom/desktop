@@ -91,6 +91,12 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_organization_api_keys" || lowercasedRequest == "organization_api_keys" || lowercasedRequest == "organization-api-keys" {
             return "open_dashboard_organization_api_keys"
         }
+        if lowercasedRequest == "open_dashboard_integrations" || lowercasedRequest == "integrations" || lowercasedRequest == "webhooks" {
+            return "open_dashboard_integrations"
+        }
+        if lowercasedRequest == "open_dashboard_service_accounts" || lowercasedRequest == "service_accounts" || lowercasedRequest == "service-accounts" {
+            return "open_dashboard_service_accounts"
+        }
         if lowercasedRequest == "open_dashboard_organizations" || lowercasedRequest == "organizations" {
             return "open_dashboard_organizations"
         }
