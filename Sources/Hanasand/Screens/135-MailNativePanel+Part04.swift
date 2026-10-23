@@ -16,20 +16,20 @@ extension MailNativePanel {
         VStack(alignment: .leading, spacing: 12) {
             if let message = selectedMessage {
                 NativeGroupPanel(title: message.subjectLabel, subtitle: message.fromLabel) {
-                    HStack(spacing: 8) {
-                        ActionButton(title: message.isRead == true ? "Unread" : "Read", icon: message.isRead == true ? "envelope.badge" : "envelope.open") {
+                    LazyVGrid(columns: mailToolbarActionColumns, alignment: .leading, spacing: 8) {
+                        mailToolbarActionButton(title: message.isRead == true ? "Unread" : "Read", icon: message.isRead == true ? "envelope.badge" : "envelope.open") {
                             Task { await model.runMailAction(message.isRead == true ? "unread" : "read", message: message) }
                         }
-                        ActionButton(title: message.isFlagged == true ? "Unflag" : "Flag", icon: "flag") {
+                        mailToolbarActionButton(title: message.isFlagged == true ? "Unflag" : "Flag", icon: "flag") {
                             Task { await model.runMailAction(message.isFlagged == true ? "unflag" : "flag", message: message) }
                         }
-                        ActionButton(title: "Reply", icon: "arrowshape.turn.up.left") {
+                        mailToolbarActionButton(title: "Reply", icon: "arrowshape.turn.up.left") {
                             model.composeReplyToSelectedMail()
                         }
-                        ActionButton(title: "Reply all", icon: "arrowshape.turn.up.left.2") {
+                        mailToolbarActionButton(title: "Reply all", icon: "arrowshape.turn.up.left.2") {
                             model.composeReplyAllToSelectedMail()
                         }
-                        ActionButton(title: "Forward", icon: "arrowshape.turn.up.right") {
+                        mailToolbarActionButton(title: "Forward", icon: "arrowshape.turn.up.right") {
                             model.composeForwardSelectedMail()
                         }
                         Menu {
@@ -39,21 +39,21 @@ extension MailNativePanel {
                                 }
                             }
                         } label: {
-                            Label("Move", systemImage: "folder")
+                            mailToolbarActionLabel(title: "Move", icon: "folder")
                         }
                         .buttonStyle(.borderless)
-                        ActionButton(title: "Archive", icon: "archivebox") {
+                        mailToolbarActionButton(title: "Archive", icon: "archivebox") {
                             Task { await model.runMailAction("archive", message: message) }
                         }
-                        ActionButton(title: message.isJunk == true ? "Not spam" : "Spam", icon: message.isJunk == true ? "checkmark.shield" : "exclamationmark.octagon") {
+                        mailToolbarActionButton(title: message.isJunk == true ? "Not spam" : "Spam", icon: message.isJunk == true ? "checkmark.shield" : "exclamationmark.octagon") {
                             Task { await model.runMailAction(message.isJunk == true ? "ham" : "junk", message: message) }
                         }
                         if message.isDeleted == true {
-                            ActionButton(title: "Restore", icon: "arrow.uturn.backward") {
+                            mailToolbarActionButton(title: "Restore", icon: "arrow.uturn.backward") {
                                 Task { await model.runMailAction("restore", message: message) }
                             }
                         }
-                        ActionButton(title: "Trash", icon: "trash", tone: .danger) {
+                        mailToolbarActionButton(title: "Trash", icon: "trash", tone: .danger) {
                             Task { await model.runMailAction("trash", message: message) }
                         }
                     }

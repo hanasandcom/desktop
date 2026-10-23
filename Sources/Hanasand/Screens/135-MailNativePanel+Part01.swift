@@ -23,21 +23,21 @@ extension MailNativePanel {
             if let overview {
                 HStack(alignment: .top, spacing: 0) {
                     mailboxSidebar(overview)
-                        .frame(width: 238)
+                        .frame(minWidth: 160, idealWidth: 200, maxWidth: 238)
 
                     Divider()
                         .overlay(theme.divider)
                         .padding(.horizontal, 10)
 
                     threadedMessageList(overview)
-                        .frame(minWidth: 330, idealWidth: 390, maxWidth: 440)
+                        .frame(minWidth: 220, idealWidth: 300, maxWidth: 440)
 
                     Divider()
                         .overlay(theme.divider)
                         .padding(.horizontal, 10)
 
                     messageReader(overview)
-                        .frame(maxWidth: .infinity)
+                        .frame(minWidth: 240, maxWidth: .infinity)
                 }
                 .frame(minHeight: 590)
 
@@ -164,5 +164,37 @@ extension MailNativePanel {
         case "error": return "xmark.icloud"
         default: return "icloud.slash"
         }
+    }
+
+    var mailToolbarActionColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 88), spacing: 8)]
+    }
+
+    func mailToolbarActionLabel(title: String, icon: String, tone: ActionTone = .normal) -> some View {
+        Label(title, systemImage: icon)
+            .font(.system(size: 12, weight: .bold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.86)
+            .foregroundStyle(tone == .danger ? theme.danger : theme.text)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 34)
+            .background(tone == .danger ? theme.danger.opacity(0.12) : theme.cardRaised)
+            .overlay(
+                Capsule()
+                    .stroke(tone == .danger ? theme.danger.opacity(0.28) : theme.divider.opacity(0.8), lineWidth: 1)
+            )
+            .clipShape(Capsule())
+    }
+
+    func mailToolbarActionButton(
+        title: String,
+        icon: String,
+        tone: ActionTone = .normal,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            mailToolbarActionLabel(title: title, icon: icon, tone: tone)
+        }
+        .buttonStyle(.plain)
     }
 }

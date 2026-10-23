@@ -14,23 +14,23 @@ extension MailNativePanel {
 
     func threadedMessageList(_ overview: MailOverviewEnvelope) -> some View {
         NativeGroupPanel(title: "Messages", subtitle: "\(filteredMessages.count) visible · \(threadCount) threads") {
-            HStack(spacing: 8) {
-                ActionButton(title: "All", icon: "checkmark.circle") {
+            LazyVGrid(columns: mailToolbarActionColumns, alignment: .leading, spacing: 8) {
+                mailToolbarActionButton(title: "All", icon: "checkmark.circle") {
                     model.selectAllVisibleMailMessages(filteredMessages)
                 }
-                ActionButton(title: "Clear", icon: "xmark.circle") {
+                mailToolbarActionButton(title: "Clear", icon: "xmark.circle") {
                     model.clearMailSelection()
                 }
-                ActionButton(title: "Archive", icon: "archivebox") {
+                mailToolbarActionButton(title: "Archive", icon: "archivebox") {
                     Task { await model.runBulkMailAction("archive") }
                 }
-                ActionButton(title: "Read", icon: "envelope.open") {
+                mailToolbarActionButton(title: "Read", icon: "envelope.open") {
                     Task { await model.runBulkMailAction("read") }
                 }
-                ActionButton(title: "Unread", icon: "envelope.badge") {
+                mailToolbarActionButton(title: "Unread", icon: "envelope.badge") {
                     Task { await model.runBulkMailAction("unread") }
                 }
-                ActionButton(title: "Trash", icon: "trash", tone: .danger) {
+                mailToolbarActionButton(title: "Trash", icon: "trash", tone: .danger) {
                     Task { await model.runBulkMailAction("trash") }
                 }
             }
