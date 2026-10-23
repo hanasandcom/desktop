@@ -39,7 +39,11 @@ extension Hanasand {
         Button("Undo Image Decision") {
         model.undoImageDecision()
         }
-        .keyboardShortcut("z", modifiers: [.command, .shift])
+        .keyboardShortcut(
+            DesktopUndoShortcutRouting.commandShiftZTarget(section: model.selectedSection, dashboardPath: model.selectedDashboardPath) == .undoImageDecision
+                ? KeyboardShortcut("z", modifiers: [.command, .shift])
+                : nil
+        )
         
         Button("Reveal Current Image") {
         model.revealCurrentImage()

@@ -41,7 +41,7 @@ struct ThesisNativePanel: View {
             }
 
             if document != nil {
-                ThesisWorkspaceEditor(documentTitle: $title, bodyText: $bodyText, enabled: canEdit, busy: busy, conflicted: remoteConflict != nil)
+                ThesisWorkspaceEditor(documentTitle: $title, bodyText: $bodyText, enabled: canEdit, busy: busy, conflicted: remoteConflict != nil, revision: document?.revision ?? 0)
                 if !canEdit { Text("This account can view the shared workspace but cannot edit it. Hanasand organization owners and editors can make changes.").font(.system(size: 11)).foregroundStyle(theme.textSecondary) }
                 Text("Markdown source · \(bodyText.utf16.count) of \(ThesisDocument.bodyLimit) characters")
                     .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)

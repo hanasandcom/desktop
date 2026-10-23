@@ -7,6 +7,8 @@ struct ThesisWorkspaceEditor: View {
     let enabled: Bool
     let busy: Bool
     let conflicted: Bool
+    let revision: Int
+    @State private var undoHistory = ThesisUndoHistory()
     @State private var selectedID = "Overview"
     @State private var sourceMode = false
     @State private var newTableRows = "3"
@@ -41,6 +43,9 @@ struct ThesisWorkspaceEditor: View {
 
     var body: some View {
         NativeGroupPanel(title: "Workspace", subtitle: "Structured pages and Markdown tables") {
+            TextField("Thesis title", text: documentTitleBinding)
+                .textFieldStyle(.roundedBorder).disabled(!editable)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 7) {
                     ForEach(sheets) { sheet in
@@ -63,6 +68,10 @@ struct ThesisWorkspaceEditor: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                 ActionButton(title: sourceMode ? "Table view" : "Markdown source", icon: "text.alignleft") { sourceMode.toggle() }
+                ActionButton(title: "Undo", icon: "arrow.uturn.backward") { travelDraft(redo: false) }
+                    .disabled(!editable || undoHistory.undoCount == 0)
+                ActionButton(title: "Redo", icon: "arrow.uturn.forward") { travelDraft(redo: true) }
+                    .disabled(!editable || undoHistory.redoCount == 0)
                 if !sourceMode {
                     TextField("New page name", text: $newPageName).textFieldStyle(.roundedBorder).frame(maxWidth: 180).disabled(!editable)
                     ActionButton(title: "Add page", icon: "plus") { addPage() }.disabled(!editable || newPageName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -85,6 +94,21 @@ struct ThesisWorkspaceEditor: View {
                 }
                 }
             }
+            VStack(spacing: 0) {
+                Button("Undo Thesis Draft") { travelDraft(redo: false) }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("Redo Thesis Draft") { travelDraft(redo: true) }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                Button("Undo Thesis Draft") { travelDraft(redo: false) }
+                    .keyboardShortcut("z", modifiers: .control)
+                Button("Redo Thesis Draft") { travelDraft(redo: true) }
+                    .keyboardShortcut("z", modifiers: [.control, .shift])
+                Button("Redo Thesis Draft") { travelDraft(redo: true) }
+                    .keyboardShortcut("y", modifiers: .control)
+            }
+            .frame(width: 0, height: 0)
+            .clipped()
+            .accessibilityHidden(true)
             if confirmingPageDeletion {
                 NativeGroupPanel(title: "Delete \(active.name)?", subtitle: "The page and its content will be removed from the shared workspace. Earlier saved versions remain in Version history.") {
                     Text("Type \(active.name) to confirm.")
@@ -155,6 +179,9 @@ struct ThesisWorkspaceEditor: View {
                 }
             }
         }
+        .onChange(of: conflicted) { _, isConflicted in
+            if isConflicted { undoHistory.clear() }
+        }
     }
 
     private var sheetTitleBinding: Binding<String> {
@@ -162,11 +189,17 @@ struct ThesisWorkspaceEditor: View {
             guard editable else { return }
             var next = sheets
             next[activeIndex].metadata["title"] = value
-            bodyText = ThesisWorkspaceCodec.write(next)
+            applyBody(ThesisWorkspaceCodec.write(next), group: "sheet-title-\(active.id)")
+        })
+    }
+    private var documentTitleBinding: Binding<String> {
+        Binding(get: { documentTitle }, set: { value in
+            guard editable else { return }
+            applyTitle(value)
         })
     }
     private var sheetBodyBinding: Binding<String> {
-        Binding(get: { active.body }, set: { value in updateBody(value) })
+        Binding(get: { active.body }, set: { value in updateBody(value, group: "source-\(active.id)") })
     }
     private func cellBinding(tableIndex: Int, row: Int, column: Int) -> Binding<String> {
         Binding(get: {
@@ -179,27 +212,47 @@ struct ThesisWorkspaceEditor: View {
             guard parsed.indices.contains(tableIndex) else { return }
             var cells = parsed[tableIndex].cells
             cells[row][column] = value
-            updateBody(ThesisWorkspaceCodec.replacing(parsed[tableIndex], in: active.body, with: cells))
+            updateBody(ThesisWorkspaceCodec.replacing(parsed[tableIndex], in: active.body, with: cells), group: "cell-\(active.id)-\(tableIndex)-\(row)-\(column)")
         })
     }
-    private func updateBody(_ value: String) {
+    private func updateBody(_ value: String, group: String? = nil) {
         guard editable else { return }
         var next = sheets
         next[activeIndex].body = value
-        bodyText = ThesisWorkspaceCodec.write(next)
+        applyBody(ThesisWorkspaceCodec.write(next), group: group)
+    }
+    private func applyBody(_ value: String, group: String? = nil) {
+        guard bodyText != value else { return }
+        undoHistory.remember(currentDraft, group: group)
+        bodyText = value
+    }
+    private func applyTitle(_ value: String) {
+        guard documentTitle != value else { return }
+        undoHistory.remember(currentDraft, group: "document-title")
+        documentTitle = value
+    }
+    private var currentDraft: ThesisDocument {
+        ThesisDocument(title: documentTitle, body: bodyText, revision: revision)
+    }
+    private func travelDraft(redo: Bool) {
+        guard editable, let next = undoHistory.travel(current: currentDraft, redo: redo) else { return }
+        documentTitle = next.title
+        bodyText = next.body
+        let restoredSheets = ThesisWorkspaceCodec.sheets(title: next.title, body: next.body)
+        if !restoredSheets.contains(where: { $0.id == selectedID }) { selectedID = restoredSheets[0].id }
     }
     private func insertTable() {
         guard editable, let rows = Int(newTableRows), let columns = Int(newTableColumns), (1...100).contains(rows), (1...20).contains(columns) else { return }
         let headers = (0..<columns).map { "Column \($0 + 1)" }
         var next = sheets
         next[activeIndex].body = ThesisWorkspaceCodec.appendingTable(to: next[activeIndex].body, headers: headers, rowCount: rows)
-        bodyText = ThesisWorkspaceCodec.write(next)
+        applyBody(ThesisWorkspaceCodec.write(next))
     }
     private func appendTable(headers: [String]) {
         guard editable else { return }
         var next = sheets
         next[activeIndex].body = ThesisWorkspaceCodec.appendingTable(to: next[activeIndex].body, headers: headers)
-        bodyText = ThesisWorkspaceCodec.write(next)
+        applyBody(ThesisWorkspaceCodec.write(next))
     }
     private func addPage() {
         guard editable else { return }
@@ -208,7 +261,7 @@ struct ThesisWorkspaceEditor: View {
         let id = UUID().uuidString.lowercased()
         var next = sheets
         next.append(ThesisSheet(body: "", metadata: ["id": id, "name": name, "title": "# \(name)"]))
-        bodyText = ThesisWorkspaceCodec.write(next)
+        applyBody(ThesisWorkspaceCodec.write(next))
         selectedID = id
         newPageName = ""
     }
@@ -217,7 +270,7 @@ struct ThesisWorkspaceEditor: View {
               let remaining = ThesisWorkspaceCodec.removingSheet(id: active.id, from: sheets) else { return }
         let previousIndex = max(0, activeIndex - 1)
         selectedID = remaining[min(previousIndex, remaining.count - 1)].id
-        bodyText = ThesisWorkspaceCodec.write(remaining)
+        applyBody(ThesisWorkspaceCodec.write(remaining))
         sourceMode = false
         confirmingPageDeletion = false
         pageDeletionConfirmation = ""
@@ -605,7 +658,7 @@ struct ThesisWorkspaceEditor: View {
             activityMessage = "The thesis workspace is full. Remove content before changing the activity log."
             return false
         }
-        bodyText = body
+        applyBody(body)
         return true
     }
 
