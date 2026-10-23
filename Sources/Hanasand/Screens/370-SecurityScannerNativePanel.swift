@@ -21,6 +21,7 @@ struct SecurityScannerNativePanel: View {
     @State private var findingSeverity = "all"
     @State private var findingStatus = "actionable"
     @State private var findingAsset = "all"
+    @State private var findingSort: SecurityScannerFindingSort = .severity
     @State private var runQuery = ""
     @State private var runEngine = "all"
     @State private var runStatus = "all"
@@ -55,6 +56,10 @@ struct SecurityScannerNativePanel: View {
         catch { return error.localizedDescription }
     }
     private var writeDisabled: Bool { !model.hasHanasandAuth || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty || busy.isEmpty == false }
+    private var scannerNotice: String? {
+        guard let message = dashboard?.scannerError?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else { return nil }
+        return message
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -64,6 +69,7 @@ struct SecurityScannerNativePanel: View {
                 ActionButton(title: loading ? "Loading…" : "Retry", icon: "arrow.clockwise") { Task { await refresh() } }.disabled(loading)
             } else {
                 if let error { CompactInfoCard(title: "Scanner connection", lines: [error]) }
+                if let scannerNotice { CompactInfoCard(title: "Scanner status", lines: [scannerNotice]) }
                 if let notice { CompactInfoCard(title: "Scanner", lines: [notice]) }
                 if loading && dashboard == nil { ProgressView("Loading scanner data…") }
                 if dashboard != nil { sectionContent }
@@ -367,12 +373,14 @@ struct SecurityScannerNativePanel: View {
                         findingSeverityPicker
                         findingStatusPicker
                         findingAssetPicker
+                        findingSortPicker
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         findingEnginePicker
                         findingSeverityPicker
                         findingStatusPicker
                         findingAssetPicker
+                        findingSortPicker
                     }
                 }
                 if uniqueFindings.isEmpty { NativeEmptyState(title: "No findings", message: "Findings appear after supported scanners complete runs.") }
@@ -440,6 +448,13 @@ struct SecurityScannerNativePanel: View {
             ForEach(snapshot.assets) { Text($0.hostname).tag($0.id) }
         }
         .frame(maxWidth: 200, alignment: .leading)
+    }
+
+    private var findingSortPicker: some View {
+        Picker("Sort", selection: $findingSort) {
+            ForEach(SecurityScannerFindingSort.allCases) { sort in Text(sort.title).tag(sort) }
+        }
+        .frame(maxWidth: 160, alignment: .leading)
     }
 
     private func findingCard(_ finding: SecurityScannerFinding) -> some View {
@@ -536,13 +551,14 @@ struct SecurityScannerNativePanel: View {
     }
     private var visibleFindings: [SecurityScannerFinding] {
         let query = findingQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return uniqueFindings.filter { finding in
+        let filtered = uniqueFindings.filter { finding in
             (findingEngine == "all" || finding.engine == findingEngine)
                 && (findingSeverity == "all" || finding.severity.lowercased() == findingSeverity)
                 && (findingStatus == "all" || (findingStatus == "actionable" ? ["open", "in_progress", "pending_verification"].contains(finding.status) : finding.status == findingStatus))
                 && (findingAsset == "all" || finding.assetId == findingAsset)
                 && (query.isEmpty || [finding.title, finding.asset, finding.address ?? "", finding.externalId, finding.description ?? "", finding.evidence ?? "", finding.cveIds.joined(separator: " ")].joined(separator: " ").lowercased().contains(query))
         }
+        return findingSort.sorted(filtered)
     }
     private var visibleRuns: [SecurityScannerRun] {
         let query = runQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -562,7 +578,6 @@ struct SecurityScannerNativePanel: View {
             runCursor = dashboard?.runsNextCursor
             assessmentCursor = dashboard?.assessmentsNextCursor
             findingCursor = dashboard?.findingsNextCursor
-            error = dashboard?.scannerError
         } catch { if !quiet || dashboard == nil { self.error = error.localizedDescription } }
     }
 

@@ -11,6 +11,23 @@ import UniformTypeIdentifiers
 import WebKit
 
 extension DesktopAgentModel {
+    func loadOwnAccountActivityStats() async throws -> AccountActivityStats {
+        guard hasHanasandAuth, let profile else {
+            throw AccountActivityClientError.signInRequired
+        }
+        guard !isProfileIdentityImpersonating, profile.id == settings.userID else {
+            throw AccountActivityClientError.impersonationUnsupported
+        }
+        let client = try AccountActivityClient(
+            apiBaseURL: settings.apiBaseURL.normalizedBaseURL,
+            userID: settings.userID,
+            token: settings.authToken,
+            impersonationToken: settings.impersonationToken,
+            impersonatingUserID: settings.impersonatingUserID
+        )
+        return try await client.load()
+    }
+
     var canEditProfileIdentity: Bool {
         guard hasHanasandAuth,
               settings.impersonationToken.isEmpty,

@@ -118,4 +118,98 @@ final class SupportDeskClientTests: XCTestCase {
         do { _ = try await instance.messages(ticketID: "../../wrong"); XCTFail("Expected path guard") }
         catch SupportDeskClientError.invalidTicket {}
     }
+
+    func testOwnTicketListUsesOwnerEndpointAndRejectsSupportOrForeignRows() async throws {
+        var captured: URLRequest?
+        let own = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "customer", token: "token") { request in
+            captured = request
+            return self.response(#"{"isSupport":false,"realtime":true,"tickets":[{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"open","updated_at":"2026-10-23T12:00:00Z","user_id":"customer"}]}"#, request: request)
+        }
+        let result = try await own.loadOwnTickets()
+        XCTAssertEqual(captured?.url?.path, "/api/support/my-tickets")
+        XCTAssertEqual(captured?.httpMethod, "GET")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+        XCTAssertFalse(result.isSupport)
+        XCTAssertEqual(result.tickets.first?.userID, "customer")
+
+        for body in [
+            #"{"isSupport":true,"realtime":true,"tickets":[]}"#,
+            #"{"isSupport":false,"realtime":true,"tickets":[{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"open","updated_at":"2026-10-23T12:00:00Z","user_id":"other"}]}"#
+        ] {
+            let invalid = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "customer", token: "token") { request in
+                self.response(body, request: request)
+            }
+            do { _ = try await invalid.loadOwnTickets(); XCTFail("Expected owner-scoped response validation") }
+            catch SupportDeskClientError.invalidResponse {}
+        }
+    }
+
+    func testCurrentUserLoadFallsBackToOwnerEndpointOnlyOnForbidden() async throws {
+        var paths: [String] = []
+        let fallback = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "customer", token: "token") { request in
+            paths.append(request.url!.path)
+            if paths.count == 1 { return self.response(#"{"error":"Support queue unavailable"}"#, request: request, status: 403) }
+            return self.response(#"{"isSupport":false,"realtime":true,"tickets":[{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"open","updated_at":"2026-10-23T12:00:00Z","user_id":"customer"}]}"#, request: request)
+        }
+        let result = try await fallback.loadForCurrentUser(filters: SupportDeskFilters())
+        XCTAssertEqual(paths, ["/api/support/tickets", "/api/support/my-tickets"])
+        XCTAssertFalse(result.isSupport)
+        XCTAssertEqual(result.tickets.first?.userID, "customer")
+
+        paths = []
+        let unauthorized = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "customer", token: "token") { request in
+            paths.append(request.url!.path)
+            return self.response(#"{"error":"Sign in"}"#, request: request, status: 401)
+        }
+        do { _ = try await unauthorized.loadForCurrentUser(filters: SupportDeskFilters()); XCTFail("401 must be preserved") }
+        catch SupportDeskClientError.requestFailed(401, _) {}
+        XCTAssertEqual(paths, ["/api/support/tickets"])
+    }
+
+    func testCustomerCanCreateReplyAndRateOnlyOwnedConversation() async throws {
+        let ticket = try JSONDecoder().decode(SupportDeskTicket.self, from: Data(row.replacingOccurrences(of: #""user_id":"customer""#, with: #""user_id":"agent""#).utf8))
+        let feedbackTicket = try JSONDecoder().decode(SupportDeskTicket.self, from: Data(#"{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"closed","updated_at":"2026-10-23T12:00:00Z","user_id":"agent","resolution_version":2,"feedback_rating":null,"feedback_comment":null}"#.utf8))
+        let customer = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "agent", token: "token")
+        let ownSnapshot = SupportDeskSnapshot(scope: customer.scope, isSupport: false, realtime: true, tickets: [ticket])
+        let feedbackSnapshot = SupportDeskSnapshot(scope: customer.scope, isSupport: false, realtime: true, tickets: [feedbackTicket])
+        var captured: URLRequest?
+        let writes = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "agent", token: "token") { request in
+            captured = request
+            let body = request.url?.path.hasSuffix("/feedback") == true ? #"{"ok":true}"#
+                : request.url?.path.hasSuffix("/messages") == true ? #"{"ok":true,"messageId":"33333333-3333-4333-8333-333333333333"}"#
+                : #"{"id":"11111111-1111-4111-8111-111111111111"}"#
+            return self.response(body, request: request, status: request.url?.path == "/api/support/tickets" ? 201 : 200)
+        }
+
+        let created = try await writes.createTicket(subject: "  Help  ", message: "  Please help.  ")
+        XCTAssertEqual(created, ticketID)
+        XCTAssertEqual(captured?.url?.path, "/api/support/tickets")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        let createBody = try XCTUnwrap(captured?.httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: String] }
+        XCTAssertEqual(createBody, ["subject": "Help", "message": "Please help."])
+
+        _ = try await writes.reply(snapshot: ownSnapshot, ticket: ticket, body: "A reply", requestID: requestID)
+        XCTAssertEqual(captured?.url?.path, "/api/support/tickets/\(ticketID)/messages")
+        try await writes.submitFeedback(snapshot: feedbackSnapshot, ticket: feedbackTicket, rating: 4, comment: "Ignored for high rating")
+        XCTAssertEqual(captured?.url?.path, "/api/support/tickets/\(ticketID)/feedback")
+        let feedbackBody = try XCTUnwrap(captured?.httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertEqual(feedbackBody?["rating"] as? Int, 4)
+        XCTAssertEqual(feedbackBody?["comment"] as? String, "")
+        XCTAssertEqual(feedbackBody?["resolutionVersion"] as? Int, 2)
+
+        let foreign = try JSONDecoder().decode(SupportDeskTicket.self, from: Data(#"{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"closed","updated_at":"2026-10-23T12:00:00Z","user_id":"other","resolution_version":2,"feedback_rating":null,"feedback_comment":null}"#.utf8))
+        let foreignSnapshot = SupportDeskSnapshot(scope: customer.scope, isSupport: false, realtime: true, tickets: [foreign])
+        do { _ = try await writes.reply(snapshot: foreignSnapshot, ticket: foreign, body: "Reply", requestID: requestID); XCTFail("Customer cannot reply to a foreign ticket") }
+        catch SupportDeskClientError.readOnly {}
+        do { try await writes.submitFeedback(snapshot: foreignSnapshot, ticket: foreign, rating: 5, comment: ""); XCTFail("Foreign ticket feedback must be rejected") }
+        catch SupportDeskClientError.readOnly {}
+
+        let impersonated = try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "agent", token: "token", impersonationToken: "imp") { request in
+            XCTFail("No request should be sent while impersonating")
+            return self.response(#"{"id":"11111111-1111-4111-8111-111111111111"}"#, request: request)
+        }
+        do { _ = try await impersonated.createTicket(subject: "Help", message: "Question"); XCTFail("Impersonation must remain read-only") }
+        catch SupportDeskClientError.readOnly {}
+    }
 }

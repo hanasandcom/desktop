@@ -21,6 +21,9 @@ struct ProfileNativePanel: View {
     @State private var accountSessionsError: String?
     @State private var accountSessionsStatus: String?
     @State private var isMutatingAccountSessions = false
+    @State private var accountActivity: AccountActivityStats?
+    @State private var accountActivityError: String?
+    @State private var isLoadingAccountActivity = false
     @State var pendingCertificateDelete: DashboardCertificate?
     @State var pendingSshKeyDelete: ProfileSshKey?
     @State var isAddingSshKey = false
@@ -101,6 +104,8 @@ struct ProfileNativePanel: View {
                         CompactInfoCard(title: "Roles", lines: ["No roles returned for this session."])
                     }
                 }
+
+                accountActivitySection
 
                 NativeGroupPanel(title: "Security", subtitle: "Active sessions and SSH certificates") {
                     HStack(spacing: 12) {
@@ -274,6 +279,7 @@ struct ProfileNativePanel: View {
                 Text("This logs out every device and schedules permanent deletion after 30 days.")
             }
             .task(id: sessionCredentialKey) { await loadAccountSessions() }
+            .task(id: activityCredentialKey) { await loadAccountActivity() }
         } else {
             NativeEmptyState(title: "Profile not loaded", message: "Hanasand session is not ready yet. Log in again if this profile does not load.")
         }
@@ -286,6 +292,82 @@ struct ProfileNativePanel: View {
 
     private var sessionCredentialKey: String {
         "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
+    }
+
+    private var activityCredentialKey: String { sessionCredentialKey }
+
+    @ViewBuilder
+    private var accountActivitySection: some View {
+        NativeGroupPanel(title: "Activity", subtitle: "Recent sign-ins") {
+            HStack {
+                Spacer()
+                ActionButton(title: "Refresh activity", icon: "arrow.clockwise") { Task { await loadAccountActivity() } }
+                    .disabled(isLoadingAccountActivity || model.isProfileIdentityImpersonating)
+            }
+            if model.isProfileIdentityImpersonating {
+                NativeNotice(message: "Return to your own account to view account activity.", tone: .info)
+            } else if isLoadingAccountActivity {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading account activity…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            } else if let accountActivityError {
+                NativeNotice(message: accountActivityError, title: "Account activity unavailable")
+                ActionButton(title: "Retry activity", icon: "arrow.clockwise") { Task { await loadAccountActivity() } }
+            } else if let accountActivity {
+                let lastYear = recentAccountActivity(accountActivity.loginDays, dayCount: 365)
+                let lastTwelveWeeks = recentAccountActivity(accountActivity.loginDays, dayCount: 84)
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Login activity")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                    Text("\(lastYear.filter { $0.logins > 0 }.count) active days · \(lastYear.reduce(0) { $0 + $1.logins }) sign-ins in the past year")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 10, maximum: 12), spacing: 4)], spacing: 4) {
+                        ForEach(lastTwelveWeeks) { day in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(day.logins == 0 ? theme.divider : theme.accent.opacity(min(1, 0.3 + Double(day.logins) / 8)))
+                                .frame(width: 11, height: 11)
+                                .help("\(day.day): \(day.logins) sign-ins")
+                                .accessibilityLabel("\(day.day): \(day.logins) sign-ins")
+                        }
+                    }
+                    Text("Past 12 weeks · More color shows more sign-ins")
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("No account activity data was returned.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+    }
+
+    @MainActor
+    private func loadAccountActivity() async {
+        guard model.hasHanasandAuth, !model.isProfileIdentityImpersonating else {
+            accountActivity = nil
+            accountActivityError = model.isProfileIdentityImpersonating ? nil : "Sign in to view account activity."
+            return
+        }
+        isLoadingAccountActivity = true
+        accountActivityError = nil
+        accountActivity = nil
+        defer { isLoadingAccountActivity = false }
+        let requestCredentialKey = activityCredentialKey
+        do {
+            let stats = try await model.loadOwnAccountActivityStats()
+            guard activityCredentialKey == requestCredentialKey else { return }
+            accountActivity = stats
+        } catch {
+            guard activityCredentialKey == requestCredentialKey else { return }
+            accountActivityError = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -450,5 +532,22 @@ struct ProfileNativePanel: View {
                 if !visible { pendingSshKeyDelete = nil }
             }
         )
+    }
+}
+
+private func recentAccountActivity(_ days: [AccountActivityDay], dayCount: Int) -> [AccountActivityDay] {
+    let dayCounts = Dictionary(uniqueKeysWithValues: days.map { ($0.day, $0.logins) })
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+    let end = calendar.startOfDay(for: Date())
+    let formatter = DateFormatter()
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd"
+    return (0..<max(0, dayCount)).compactMap { offset in
+        guard let date = calendar.date(byAdding: .day, value: offset - dayCount + 1, to: end) else { return nil }
+        let day = formatter.string(from: date)
+        return AccountActivityDay(day: day, logins: dayCounts[day] ?? 0)
     }
 }

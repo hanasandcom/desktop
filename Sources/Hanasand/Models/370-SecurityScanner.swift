@@ -208,6 +208,73 @@ struct SecurityScannerFinding: Codable, Identifiable, Equatable {
     let updatedAt: String
 }
 
+enum SecurityScannerFindingSort: String, CaseIterable, Identifiable {
+    case severity
+    case firstSeen
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .severity: "Severity"
+        case .firstSeen: "First seen"
+        }
+    }
+
+    func sorted(_ findings: [SecurityScannerFinding]) -> [SecurityScannerFinding] {
+        let ranked = findings.enumerated().map { index, finding in
+            (index: index, finding: finding, firstSeen: Self.firstSeenDate(finding))
+        }
+        return ranked.sorted { left, right in
+            if self == .severity {
+                let severityDifference = Self.severityRank(left.finding.severity) - Self.severityRank(right.finding.severity)
+                if severityDifference != 0 { return severityDifference < 0 }
+                let statusDifference = Self.statusRank(left.finding.status) - Self.statusRank(right.finding.status)
+                if statusDifference != 0 { return statusDifference < 0 }
+            }
+
+            if left.firstSeen != right.firstSeen { return left.firstSeen < right.firstSeen }
+            let severityDifference = Self.severityRank(left.finding.severity) - Self.severityRank(right.finding.severity)
+            if severityDifference != 0 { return severityDifference < 0 }
+            let titleDifference = left.finding.title.localizedCaseInsensitiveCompare(right.finding.title)
+            if titleDifference != .orderedSame { return titleDifference == .orderedAscending }
+            return left.index < right.index
+        }
+        .map(\.finding)
+    }
+
+    private static func severityRank(_ severity: String) -> Int {
+        switch severity.lowercased() {
+        case "critical": 0
+        case "high": 1
+        case "medium": 2
+        case "low": 3
+        case "info", "informational": 4
+        default: 5
+        }
+    }
+
+    private static func statusRank(_ status: String) -> Int {
+        switch status {
+        case "open": 0
+        case "in_progress": 1
+        case "pending_verification": 2
+        case "accepted_risk": 3
+        case "false_positive": 4
+        case "resolved": 5
+        default: 6
+        }
+    }
+
+    private static func firstSeenDate(_ finding: SecurityScannerFinding) -> Date {
+        let value = finding.firstSeen ?? finding.lastSeen ?? finding.updatedAt
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value) ?? .distantFuture
+    }
+}
+
 struct SecurityScannerRun: Codable, Identifiable, Equatable {
     let id: String
     let scannerRunId: String?

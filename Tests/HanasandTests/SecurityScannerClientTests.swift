@@ -19,10 +19,11 @@ final class SecurityScannerClientTests: XCTestCase {
         var captured: URLRequest?
         let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
             captured = request
-            return (Data(#"{"assets":[],"engines":[],"runs":[],"assessments":[],"findings":[]}"#.utf8), self.response(request, 200))
+            return (Data(#"{"assets":[],"engines":[],"runs":[],"assessments":[],"findings":[],"scannerError":"Scanner service paused"}"#.utf8), self.response(request, 200))
         })
         let dashboard = try await client.dashboard()
         XCTAssertTrue(dashboard.assets.isEmpty)
+        XCTAssertEqual(dashboard.scannerError, "Scanner service paused")
         XCTAssertEqual(captured?.url?.host, "scanner.hanasand.com")
         XCTAssertEqual(captured?.url?.path, "/api/v1/uvm/dashboard")
         XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org-1")
@@ -30,6 +31,18 @@ final class SecurityScannerClientTests: XCTestCase {
         XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "eirik")
         XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
         XCTAssertNil(captured?.value(forHTTPHeaderField: "x-impersonation-token"))
+    }
+
+    func testFindingSortSupportsSeverityAndFirstSeen() {
+        let findings = [
+            finding(id: "old-low", severity: "low", status: "open", firstSeen: "2026-01-01T00:00:00Z"),
+            finding(id: "new-critical", severity: "critical", status: "open", firstSeen: "2026-03-01T00:00:00Z"),
+            finding(id: "old-critical", severity: "critical", status: "open", firstSeen: "2026-02-01T00:00:00Z"),
+            finding(id: "middle-critical", severity: "critical", status: "open", firstSeen: "2026-02-15T00:00:00Z")
+        ]
+
+        XCTAssertEqual(SecurityScannerFindingSort.severity.sorted(findings).map(\.id), ["old-critical", "middle-critical", "new-critical", "old-low"])
+        XCTAssertEqual(SecurityScannerFindingSort.firstSeen.sorted(findings).map(\.id), ["old-low", "old-critical", "middle-critical", "new-critical"])
     }
 
     func testHistoryUsesRunsEnvelopeAndRunDetailUsesDirectRunContract() async throws {
@@ -98,6 +111,14 @@ final class SecurityScannerClientTests: XCTestCase {
         settings.selectedOrganizationID = "org-1"
         settings.selectedOrganizationUserID = "eirik"
         return settings
+    }
+
+    private func finding(id: String, severity: String, status: String, firstSeen: String?) -> SecurityScannerFinding {
+        SecurityScannerFinding(
+            id: id, assetId: "asset-1", asset: "example.com", address: nil, engine: "nmap", externalId: id,
+            title: id, severity: severity, cvssScore: nil, cveIds: [], description: nil, solution: nil, evidence: nil,
+            status: status, triageNote: nil, firstSeen: firstSeen, lastSeen: nil, updatedAt: "2026-03-02T00:00:00Z"
+        )
     }
 
     private func response(_ request: URLRequest, _ status: Int) -> HTTPURLResponse {

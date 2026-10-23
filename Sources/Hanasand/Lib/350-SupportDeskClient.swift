@@ -38,6 +38,25 @@ struct SupportDeskClient {
     func load(filters: SupportDeskFilters) async throws -> SupportDeskSnapshot {
         let query = try Self.filterQuery(filters)
         let (data, response) = try await request(path: "support/tickets\(query)")
+        return try decodeSnapshot(data, response: response)
+    }
+
+    func loadForCurrentUser(filters: SupportDeskFilters) async throws -> SupportDeskSnapshot {
+        let snapshot: SupportDeskSnapshot
+        do { snapshot = try await load(filters: filters) }
+        catch SupportDeskClientError.requestFailed(403, _) { return try await loadOwnTickets() }
+        return snapshot.isSupport ? snapshot : try await loadOwnTickets()
+    }
+
+    func loadOwnTickets() async throws -> SupportDeskSnapshot {
+        let (data, response) = try await request(path: "support/my-tickets")
+        let snapshot = try decodeSnapshot(data, response: response)
+        guard !snapshot.isSupport,
+              snapshot.tickets.allSatisfy({ $0.userID == userID }) else { throw SupportDeskClientError.invalidResponse }
+        return snapshot
+    }
+
+    private func decodeSnapshot(_ data: Data, response: URLResponse) throws -> SupportDeskSnapshot {
         let http = try checked(response)
         guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, data: data) }
         let page: SupportDeskQueue
@@ -47,6 +66,23 @@ struct SupportDeskClient {
             throw SupportDeskClientError.invalidResponse
         }
         return SupportDeskSnapshot(scope: scope, isSupport: page.isSupport, realtime: page.realtime, tickets: page.tickets)
+    }
+
+    func createTicket(subject: String, message: String) async throws -> String {
+        guard canMutate else { throw SupportDeskClientError.readOnly }
+        let cleanSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleanSubject.count <= 160, !cleanMessage.isEmpty, cleanMessage.count <= 10_000 else {
+            throw SupportDeskClientError.invalidDraft("Enter a subject under 160 characters and a message under 10,000 characters.")
+        }
+        let payload = try Self.json(["subject": cleanSubject.isEmpty ? "Support question" : cleanSubject, "message": cleanMessage])
+        let (data, response) = try await request(path: "support/tickets", method: "POST", body: payload, writing: true)
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, data: data, writing: true) }
+        guard let result = try? JSONDecoder().decode(SupportDeskCreateReceipt.self, from: data), Self.validUUID(result.id) else {
+            throw SupportDeskClientError.uncertainResult
+        }
+        return result.id
     }
 
     func messages(ticketID: String) async throws -> [SupportDeskMessage] {
@@ -61,9 +97,15 @@ struct SupportDeskClient {
         return envelope.messages
     }
 
+    func ownMessages(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket) async throws -> [SupportDeskMessage] {
+        try authorizeOwn(snapshot: snapshot, ticket: ticket)
+        return try await messages(ticketID: ticket.id)
+    }
+
     @discardableResult
     func reply(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket, body: String, requestID: String) async throws -> String {
-        try authorize(snapshot: snapshot, ticket: ticket)
+        if snapshot.isSupport { try authorize(snapshot: snapshot, ticket: ticket) }
+        else { try authorizeOwn(snapshot: snapshot, ticket: ticket) }
         let message = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ticket.status != "closed", !message.isEmpty, message.count <= 10_000, Self.validUUID(requestID) else {
             throw SupportDeskClientError.invalidDraft("Reopen the conversation and enter a message under 10,000 characters.")
@@ -81,6 +123,7 @@ struct SupportDeskClient {
 
     func setStatus(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket, status: String) async throws {
         try authorize(snapshot: snapshot, ticket: ticket)
+        guard snapshot.isSupport else { throw SupportDeskClientError.readOnly }
         guard status == "open" || status == "closed" else { throw SupportDeskClientError.invalidDraft("Choose an open or resolved conversation.") }
         let id = try Self.ticketComponent(ticket.id)
         let payload = try Self.json(["status": status])
@@ -93,6 +136,7 @@ struct SupportDeskClient {
 
     func changeAccount(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket, field: SupportDeskAccountField, value: String) async throws {
         try authorize(snapshot: snapshot, ticket: ticket)
+        guard snapshot.isSupport else { throw SupportDeskClientError.readOnly }
         guard let userID = ticket.userID, !userID.isEmpty, ticket.channel == "human" else { throw SupportDeskClientError.readOnly }
         try Self.validateAccountChange(field: field, value: value)
         let id = try Self.ticketComponent(ticket.id)
@@ -104,9 +148,30 @@ struct SupportDeskClient {
         guard (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else { throw SupportDeskClientError.uncertainResult }
     }
 
+    func submitFeedback(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket, rating: Int, comment: String) async throws {
+        try authorizeOwn(snapshot: snapshot, ticket: ticket)
+        guard ticket.status == "closed", ticket.feedbackRating == nil,
+              let resolutionVersion = ticket.resolutionVersion,
+              (1...5).contains(rating), comment.count <= 2_000 else {
+            throw SupportDeskClientError.invalidDraft("Choose 1–5 stars and keep feedback under 2,000 characters for a resolved conversation.")
+        }
+        let cleanComment = rating <= 3 ? comment.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let payload = try JSONSerialization.data(withJSONObject: ["rating": rating, "comment": cleanComment, "resolutionVersion": resolutionVersion])
+        let id = try Self.ticketComponent(ticket.id)
+        let (data, response) = try await request(path: "support/tickets/\(id)/feedback", method: "POST", body: payload, writing: true)
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, data: data, writing: true) }
+        guard (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else { throw SupportDeskClientError.uncertainResult }
+    }
+
     private func authorize(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket) throws {
         guard canMutate, snapshot.isSupport, snapshot.scope == scope,
-              snapshot.tickets.contains(where: { $0.id == ticket.id }) else { throw SupportDeskClientError.readOnly }
+              snapshot.tickets.contains(where: { $0 == ticket }) else { throw SupportDeskClientError.readOnly }
+    }
+
+    private func authorizeOwn(snapshot: SupportDeskSnapshot, ticket: SupportDeskTicket) throws {
+        guard canMutate, !snapshot.isSupport, snapshot.scope == scope, ticket.userID == userID,
+              snapshot.tickets.contains(where: { $0 == ticket }) else { throw SupportDeskClientError.readOnly }
     }
 
     private func request(path: String, method: String = "GET", body: Data? = nil, writing: Bool = false) async throws -> (Data, URLResponse) {
@@ -210,6 +275,7 @@ struct SupportDeskClient {
 enum SupportDeskAccountField: String { case password, email }
 
 private struct SupportDeskQueue: Decodable { let isSupport: Bool; let realtime: Bool; let tickets: [SupportDeskTicket] }
+private struct SupportDeskCreateReceipt: Decodable { let id: String }
 private struct SupportDeskMessages: Decodable { let messages: [SupportDeskMessage] }
 private struct SupportDeskReplyReceipt: Decodable { let ok: Bool; let messageId: String }
 private struct SupportDeskStatusReceipt: Decodable { let ok: Bool; let ticket: TicketStatus }
