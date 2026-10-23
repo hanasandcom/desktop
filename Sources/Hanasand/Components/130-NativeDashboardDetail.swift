@@ -39,7 +39,7 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard/automations", "/dashboard/automation", "/system/cron", "/api", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system/hosts", "/system/updates", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -87,6 +87,8 @@ struct NativeDashboardDetail: View {
             TrafficMapNativePanel()
         case "/images/library":
             GalleryLibraryNativePanel()
+        case "/scanner", "/dashboard/scanner":
+            SecurityScannerNativePanel()
         case "/organization-privacy":
             OrganizationPrivacyNativePanel()
         case "/dashboard/delivery-history":
@@ -115,7 +117,7 @@ struct NativeDashboardDetail: View {
             HostUpdatesNativePanel()
         case "/g":
             LinksNativePanel()
-        case "/dashboard/tests":
+        case "/dashboard/tests", "/load-testing", "/test":
             RecentTestsNativePanel()
         case "/dashboard/automations", "/dashboard/automation":
             AutomationsNativePanel()
