@@ -19,6 +19,9 @@ final class LoopbackAgentServerTests: XCTestCase {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "organization-api-keys", body: Data()), "open_dashboard_organization_api_keys")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "webhooks", body: Data()), "open_dashboard_integrations")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "service-accounts", body: Data()), "open_dashboard_service_accounts")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "password-check", body: Data()), "open_dashboard_password_check")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "support-desk", body: Data()), "open_support_desk")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "thesis-workspace", body: Data()), "open_dashboard_thesis")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "host-updates", body: Data()), "open_dashboard_host_updates")
     }
 

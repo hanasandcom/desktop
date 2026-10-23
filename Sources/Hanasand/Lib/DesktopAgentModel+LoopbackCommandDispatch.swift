@@ -109,6 +109,15 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_api_reference" {
             openNativeDashboard(path: "/api", label: "API Reference")
             append(meta: "Dashboard", body: "Opened API Reference panel.", kind: .command)
+        } else if command == "open_dashboard_password_check" {
+            openNativeDashboard(path: "/pwned", label: "Password Check")
+            append(meta: "Dashboard", body: "Opened Password Check panel.", kind: .command)
+        } else if command == "open_support_desk" {
+            openNativeDashboard(path: "/support", label: "Support Desk")
+            append(meta: "Dashboard", body: "Opened Support Desk panel.", kind: .command)
+        } else if command == "open_dashboard_thesis" {
+            openNativeDashboard(path: "/thesis", label: "Thesis")
+            append(meta: "Dashboard", body: "Opened Thesis panel.", kind: .command)
         } else if command == "open_dashboard_organization_api_keys" {
             openNativeDashboard(path: "/organization-api-keys", label: "Organization API keys")
             append(meta: "Dashboard", body: "Opened Organization API keys panel.", kind: .command)

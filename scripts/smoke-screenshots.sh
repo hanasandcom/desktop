@@ -428,6 +428,9 @@ run_dashboard_smoke() {
   run_step "43-rule-tuning" "open_dashboard_rule_tuning"
   run_step "44-integrations" "open_dashboard_integrations"
   run_step "45-service-accounts" "open_dashboard_service_accounts"
+  run_step "46-password-check" "open_dashboard_password_check"
+  run_step "47-support-desk" "open_support_desk"
+  run_step "48-thesis" "open_dashboard_thesis"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

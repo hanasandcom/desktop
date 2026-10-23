@@ -88,6 +88,15 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_api_reference" || lowercasedRequest == "api_reference" || lowercasedRequest == "api-reference" {
             return "open_dashboard_api_reference"
         }
+        if lowercasedRequest == "open_dashboard_password_check" || lowercasedRequest == "pwned" || lowercasedRequest == "password-check" {
+            return "open_dashboard_password_check"
+        }
+        if lowercasedRequest == "open_support_desk" || lowercasedRequest == "support-desk" || lowercasedRequest == "open_support" {
+            return "open_support_desk"
+        }
+        if lowercasedRequest == "open_dashboard_thesis" || lowercasedRequest == "thesis" || lowercasedRequest == "thesis-workspace" {
+            return "open_dashboard_thesis"
+        }
         if lowercasedRequest == "open_dashboard_organization_api_keys" || lowercasedRequest == "organization_api_keys" || lowercasedRequest == "organization-api-keys" {
             return "open_dashboard_organization_api_keys"
         }
