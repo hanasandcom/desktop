@@ -25,6 +25,17 @@ struct SandboxHistoryNativePanel: View {
                     }
                     .disabled(isLoading || !model.hasHanasandAuth)
                 }
+                Button {
+                    let url = SandboxHistoryWebsiteLink.url(siteBaseURL: model.settings.websiteBaseURL)
+                    model.openURL(url.absoluteString, label: "Sandbox website")
+                } label: {
+                    Label("Open full Sandbox on website", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.bordered)
+                Text("The website provides full Sandbox reports. Desktop history remains metadata-only.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 if !error.isEmpty { NativeNotice(message: error) }
             }
 

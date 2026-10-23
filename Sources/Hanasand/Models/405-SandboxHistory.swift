@@ -16,6 +16,31 @@ struct SandboxHistoryPage: Equatable {
     let nextOffset: Int?
 }
 
+enum SandboxHistoryWebsiteLink {
+    static let fallbackURL = URL(string: "https://hanasand.com/sandbox")!
+
+    static func url(siteBaseURL: String) -> URL {
+        guard var components = URLComponents(string: siteBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else {
+            return fallbackURL
+        }
+
+        components.scheme = "https"
+        components.path = "/sandbox"
+        guard let url = components.url,
+              url.scheme?.lowercased() == "https",
+              url.host == host,
+              url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else {
+            return fallbackURL
+        }
+        return url
+    }
+}
+
 enum SandboxHistoryLimits {
     static let pageSize = 50
     static let responseBytes = 1 * 1024 * 1024

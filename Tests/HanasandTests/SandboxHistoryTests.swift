@@ -6,6 +6,33 @@ import XCTest
 final class SandboxHistoryTests: XCTestCase {
     private let api = URL(string: "https://api.example.test/api")!
 
+    func testWebsiteHandoffUsesConfiguredHTTPSOriginAndCanonicalSandboxPath() {
+        XCTAssertEqual(
+            SandboxHistoryWebsiteLink.url(siteBaseURL: "https://staging.hanasand.example/deployment/").absoluteString,
+            "https://staging.hanasand.example/sandbox"
+        )
+        XCTAssertEqual(
+            SandboxHistoryWebsiteLink.url(siteBaseURL: " https://hanasand.com ").absoluteString,
+            "https://hanasand.com/sandbox"
+        )
+    }
+
+    func testWebsiteHandoffFallsBackToCanonicalProductionPageForUnsafeOrMalformedBases() {
+        for siteBaseURL in [
+            "http://hanasand.com",
+            "not a URL",
+            "https://user:password@hanasand.com",
+            "https://hanasand.com/?workspace=private",
+            "https://hanasand.com/#section",
+        ] {
+            XCTAssertEqual(
+                SandboxHistoryWebsiteLink.url(siteBaseURL: siteBaseURL),
+                URL(string: "https://hanasand.com/sandbox"),
+                "Unexpected handoff for \(siteBaseURL)"
+            )
+        }
+    }
+
     func testLoadsOwnerHistoryWithNarrowAuthenticatedRequest() async throws {
         var captured: URLRequest?
         let client = try makeClient { request in
