@@ -111,6 +111,127 @@ final class ThesisClientTests: XCTestCase {
         XCTAssertEqual(restored[1].body, sheets[1].body)
     }
 
+    func testWorkspaceCodecRemovesConfirmedPageAndPreservesRemainingMetadata() throws {
+        let sheets = [
+            ThesisSheet(body: "Overview content", metadata: ["id": "overview", "name": "Overview", "title": "# Overview"]),
+            ThesisSheet(body: "Private plan details", metadata: ["id": "plan", "name": "Plan", "title": "# Plan", "settings": ["history": true]]),
+            ThesisSheet(body: "Research notes", metadata: ["id": "research", "name": "Research", "title": "# Research"]),
+        ]
+
+        let remaining = try XCTUnwrap(ThesisWorkspaceCodec.removingSheet(id: "plan", from: sheets))
+        XCTAssertEqual(remaining.map(\.id), ["overview", "research"])
+        XCTAssertFalse(remaining.contains(where: { $0.body == "Private plan details" }))
+        let restored = ThesisWorkspaceCodec.sheets(title: "Ignored", body: ThesisWorkspaceCodec.write(remaining))
+        XCTAssertEqual(restored.map(\.body), ["Overview content", "Research notes"])
+        XCTAssertEqual((restored[0].metadata["name"] as? String), "Overview")
+    }
+
+    func testWorkspaceCodecRefusesDeletingLastOrAmbiguousPage() {
+        let only = [ThesisSheet(body: "Keep me", metadata: ["id": "only", "name": "Only"])]
+        XCTAssertNil(ThesisWorkspaceCodec.removingSheet(id: "only", from: only))
+
+        let duplicateIDs = [
+            ThesisSheet(body: "A", metadata: ["id": "duplicate", "name": "A"]),
+            ThesisSheet(body: "B", metadata: ["id": "duplicate", "name": "B"]),
+        ]
+        XCTAssertNil(ThesisWorkspaceCodec.removingSheet(id: "duplicate", from: duplicateIDs))
+        XCTAssertNil(ThesisWorkspaceCodec.removingSheet(id: "missing", from: duplicateIDs))
+    }
+
+    func testWorkspaceCodecRoundTripsAndValidatesDatedActivityLogMetadata() throws {
+        let log = ThesisActivityLog(startYear: 2026, activities: [
+            ThesisActivity(id: "activity-1", date: "2026-01-02", hours: 2.5, category: "Writing", description: "Draft chapter 🧭"),
+            ThesisActivity(id: "activity-2", date: "2026-01-03", hours: 1.25, category: "Research", description: "Review sources"),
+        ])
+        let sheet = ThesisSheet(body: "| Week | Research | Total |\n| --- | --- | --- |\n", metadata: [
+            "id": "Timetable", "name": "Timetable", "custom": "kept",
+            "activityLog": [
+                "startYear": 2026,
+                "calendarPolicy": "custom",
+                "activities": [
+                    ["id": "activity-1", "date": "2026-01-02", "hours": 2.5, "category": "Writing", "description": "Draft chapter 🧭", "origin": "mobile"],
+                    ["id": "activity-2", "date": "2026-01-03", "hours": 1.25, "category": "Research", "description": "Review sources"],
+                ],
+            ],
+        ])
+        let updated = try XCTUnwrap(ThesisWorkspaceCodec.settingActivityLog(log, on: sheet))
+        let writtenLog = try XCTUnwrap(updated.metadata["activityLog"] as? [String: Any])
+        XCTAssertEqual(writtenLog["calendarPolicy"] as? String, "custom")
+        let writtenActivities = try XCTUnwrap(writtenLog["activities"] as? [[String: Any]])
+        XCTAssertEqual(writtenActivities.first?["origin"] as? String, "mobile")
+        let restored = try XCTUnwrap(ThesisWorkspaceCodec.activityLog(for: ThesisWorkspaceCodec.sheets(title: "Thesis", body: ThesisWorkspaceCodec.write([updated]))[0]))
+        XCTAssertEqual(restored, log)
+        XCTAssertEqual(updated.metadata["custom"] as? String, "kept")
+
+        let invalidLogs = [
+            ThesisActivityLog(startYear: 1899, activities: []),
+            ThesisActivityLog(startYear: 2026, activities: [log.activities[0], log.activities[0]]),
+            ThesisActivityLog(startYear: 2026, activities: [ThesisActivity(id: "bad-date", date: "2024-02-30", hours: 1, category: "Research", description: "x")]),
+            ThesisActivityLog(startYear: 2026, activities: [ThesisActivity(id: "fine-hours", date: "2026-01-02", hours: 0.333, category: "Research", description: "x")]),
+        ]
+        for invalid in invalidLogs {
+            XCTAssertFalse(invalid.isValid)
+            XCTAssertNil(ThesisWorkspaceCodec.settingActivityLog(invalid, on: sheet))
+        }
+
+        let dayLog = ThesisActivityLog(startYear: 2026, activities: [
+            ThesisActivity(id: "morning", date: "2026-01-02", hours: 20, category: "Writing", description: "Morning work"),
+        ])
+        let evening = ThesisActivity(id: "evening", date: "2026-01-02", hours: 5, category: "Writing", description: "Evening work")
+        XCTAssertEqual(ThesisActivityLog.validationError(for: evening, in: dayLog), "The activities for one date cannot exceed 24 hours.")
+        XCTAssertNil(ThesisActivityLog.validationError(for: ThesisActivity(id: "short", date: "2026-01-02", hours: 4, category: "Writing", description: "Short shift"), in: dayLog))
+    }
+
+    func testTimetableSummaryCombinesDatedActivitiesWithLegacyRowsAndNorwegianCalendar() throws {
+        let body = """
+        | Week | Research | Total |
+        | --- | --- | --- |
+        | 2026-W01 | 4 | 4 |
+        | 2026-W14 | 0 | 0 |
+        | 2026-W51 | 2 | 2 |
+        """
+        let table = try XCTUnwrap(ThesisWorkspaceCodec.tables(in: body).first)
+        let log = ThesisActivityLog(startYear: 2026, activities: [
+            ThesisActivity(id: "activity-2", date: "2026-01-02", hours: 2.5, category: "Writing", description: "Draft"),
+            ThesisActivity(id: "activity-1", date: "2026-01-01", hours: 1.5, category: "Research", description: "Read"),
+            ThesisActivity(id: "activity-3", date: "2026-01-05", hours: 1, category: "Writing", description: "Plan"),
+        ])
+
+        let summary = try XCTUnwrap(ThesisWorkspaceCodec.timetableSummary(for: table, log: log))
+        XCTAssertEqual(summary.categories, ["Research", "Writing"])
+        XCTAssertEqual(summary.plannedWeeks, 3)
+        XCTAssertEqual(summary.weeks.count, 4)
+        XCTAssertEqual(summary.weeks[0].key, "2026-W01")
+        XCTAssertEqual(summary.weeks[0].start, "2025-12-29")
+        XCTAssertEqual(summary.weeks[0].values, ["5.5", "2.5", "8"])
+        XCTAssertEqual(summary.weeks[0].activities.map(\.id), ["activity-1", "activity-2"])
+        XCTAssertTrue(summary.weeks[0].exclusions.contains(where: { $0.contains("2026-01-01: New Year's Day") }))
+        XCTAssertEqual(summary.weeks[1].key, "2026-W02")
+        XCTAssertEqual(summary.weeks[1].expectedHours, 0)
+        XCTAssertEqual(summary.weeks[1].exclusions, ["Outside the planned rows"])
+        XCTAssertEqual(summary.weeks[2].key, "2026-W14")
+        XCTAssertEqual(summary.weeks[2].expectedHours, 7.2)
+        XCTAssertTrue(summary.weeks[2].exclusions.contains(where: { $0.contains("2026-04-02: Maundy Thursday") }))
+        XCTAssertTrue(summary.weeks[2].exclusions.contains(where: { $0.contains("2026-04-03: Good Friday") }))
+        XCTAssertEqual(summary.weeks[3].key, "2026-W51")
+        XCTAssertEqual(summary.weeks[3].expectedHours, 0)
+        XCTAssertEqual(summary.weeks[3].values, ["2", "", "2"])
+        XCTAssertEqual(summary.totals, ["7.5", "3.5", "11"])
+    }
+
+    func testTimetableSummaryEvaluatesExistingSummarizeFormulas() throws {
+        let body = """
+        | Week | Research | Total |
+        | --- | --- | --- |
+        | 2026-W02 | =SUMMARIZE(B3:B3) | =SUMMARIZE(C3:C3) |
+        | Notes | 6 | 6 |
+        """
+        let table = try XCTUnwrap(ThesisWorkspaceCodec.tables(in: body).first)
+        let summary = try XCTUnwrap(ThesisWorkspaceCodec.timetableSummary(for: table, log: .empty))
+        XCTAssertEqual(summary.weeks.first?.values, ["6", "6"])
+        XCTAssertTrue(summary.notes.contains(where: { $0.hasPrefix("Original row 3:") }))
+    }
+
     func testTableCodecFindsPlanAndTimetableTablesOutsideFencedCodeAndPreservesCells() throws {
         let body = """
         Intro 🧭

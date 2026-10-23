@@ -12,6 +12,18 @@ struct ThesisWorkspaceEditor: View {
     @State private var newTableRows = "3"
     @State private var newTableColumns = "3"
     @State private var newPageName = ""
+    @State private var confirmingPageDeletion = false
+    @State private var pageDeletionConfirmation = ""
+    @State private var activityStartYear = ""
+    @State private var activityDate = ""
+    @State private var activityHours = ""
+    @State private var activityCategory = ""
+    @State private var activityDescription = ""
+    @State private var editingActivityID: String?
+    @State private var pendingActivityRemovalID: String?
+    @State private var expandedActivityWeek = ""
+    @State private var showingActivityForm = false
+    @State private var activityMessage = ""
 
     private var sheets: [ThesisSheet] { ThesisWorkspaceCodec.sheets(title: documentTitle, body: bodyText) }
     private var activeIndex: Int { max(0, sheets.firstIndex(where: { $0.id == selectedID }) ?? 0) }
@@ -49,6 +61,10 @@ struct ThesisWorkspaceEditor: View {
                 if !sourceMode {
                     TextField("New page name", text: $newPageName).textFieldStyle(.roundedBorder).frame(maxWidth: 180).disabled(!editable)
                     ActionButton(title: "Add page", icon: "plus") { addPage() }.disabled(!editable || newPageName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ActionButton(title: "Delete page", icon: "trash") {
+                        confirmingPageDeletion = true
+                        pageDeletionConfirmation = ""
+                    }.disabled(!editable || sheets.count <= 1)
                     TextField("Rows", text: $newTableRows).textFieldStyle(.roundedBorder).frame(maxWidth: 55).disabled(!editable)
                     TextField("Columns", text: $newTableColumns).textFieldStyle(.roundedBorder).frame(maxWidth: 65).disabled(!editable)
                     ActionButton(title: "Insert table", icon: "tablecells") { insertTable() }.disabled(!editable || !validTableDimensions)
@@ -62,6 +78,23 @@ struct ThesisWorkspaceEditor: View {
                         }.disabled(!editable || !ThesisWorkspaceCodec.tables(in: active.body).isEmpty)
                     }
                 }
+                }
+            }
+            if confirmingPageDeletion {
+                NativeGroupPanel(title: "Delete \(active.name)?", subtitle: "The page and its content will be removed from the shared workspace. Earlier saved versions remain in Version history.") {
+                    Text("Type \(active.name) to confirm.")
+                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    TextField("Page name", text: $pageDeletionConfirmation)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(!editable)
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Cancel", icon: "xmark") {
+                            confirmingPageDeletion = false
+                            pageDeletionConfirmation = ""
+                        }
+                        ActionButton(title: "Delete page", icon: "trash") { deleteActivePage() }
+                            .disabled(!editable || pageDeletionConfirmation != active.name || sheets.count <= 1)
+                    }
                 }
             }
             if sourceMode {
@@ -106,10 +139,8 @@ struct ThesisWorkspaceEditor: View {
                             ActionButton(title: "Delete table", icon: "trash") { deleteTable(table) }.disabled(!editable)
                         }
                     }
+                    if table.kind == .timetable { timetableActivityPanel(table) }
                     if index + 1 < tables.count { Divider() }
-                }
-                if tables.contains(where: { $0.kind == .timetable }) {
-                    NativeNotice(message: "Edit planned week rows here. For dated activity logs and calendar totals, open the Thesis timetable in the web workspace.")
                 }
                 if tables.contains(where: { $0.kind == .plan }) {
                     NativeNotice(message: "Edit plan task rows here. For status boards, subgoals, and sprint filters, open the Thesis plan in the web workspace.")
@@ -173,6 +204,16 @@ struct ThesisWorkspaceEditor: View {
         selectedID = id
         newPageName = ""
     }
+    private func deleteActivePage() {
+        guard editable, pageDeletionConfirmation == active.name,
+              let remaining = ThesisWorkspaceCodec.removingSheet(id: active.id, from: sheets) else { return }
+        let previousIndex = max(0, activeIndex - 1)
+        selectedID = remaining[min(previousIndex, remaining.count - 1)].id
+        bodyText = ThesisWorkspaceCodec.write(remaining)
+        sourceMode = false
+        confirmingPageDeletion = false
+        pageDeletionConfirmation = ""
+    }
     private func reshape(tableIndex: Int, addingRow: Bool) {
         guard editable else { return }
         let tables = ThesisWorkspaceCodec.tables(in: active.body)
@@ -193,4 +234,207 @@ struct ThesisWorkspaceEditor: View {
         guard table.start >= 0, table.end <= ns.length, table.end >= table.start else { return }
         updateBody(ns.replacingCharacters(in: NSRange(location: table.start, length: table.end - table.start), with: ""))
     }
+
+    @ViewBuilder private func timetableActivityPanel(_ table: ThesisTable) -> some View {
+        let log = ThesisWorkspaceCodec.activityLog(for: active)
+        let activityLog = log ?? .empty
+        let summary = log.flatMap { ThesisWorkspaceCodec.timetableSummary(for: table, log: $0) }
+        NativeGroupPanel(title: "Timetable activity", subtitle: "Dated work is summarized by ISO week alongside the planned hours.") {
+            if log == nil {
+                NativeNotice(message: "This activity log has invalid data and is read only here. The rest of the timetable remains available.")
+            } else if let summary {
+                Text("\(summary.totals.last ?? "0") h spent · \(Self.hoursText(summary.expectedHours)) h expected · \(summary.plannedWeeks) planned weeks")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                if editable {
+                    HStack(spacing: 8) {
+                        TextField("Initial timetable year", text: $activityStartYear)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 150)
+                            .onAppear { if activityStartYear.isEmpty { activityStartYear = String(activityLog.startYear) } }
+                        ActionButton(title: "Apply year", icon: "calendar") { applyActivityStartYear(activityLog) }
+                            .disabled(!validActivityYear)
+                        ActionButton(title: showingActivityForm ? "Cancel activity" : "Log activity", icon: showingActivityForm ? "xmark" : "plus") {
+                            showingActivityForm.toggle()
+                            editingActivityID = nil
+                            activityMessage = ""
+                            if showingActivityForm { beginActivity(categories: summary.categories) }
+                        }
+                    }
+                }
+                if showingActivityForm && editable {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(editingActivityID == nil ? "Log activity" : "Edit activity")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                        TextField("Date (YYYY-MM-DD)", text: $activityDate).textFieldStyle(.roundedBorder)
+                        TextField("Hours", text: $activityHours).textFieldStyle(.roundedBorder)
+                        TextField("Category", text: $activityCategory).textFieldStyle(.roundedBorder)
+                        TextEditor(text: $activityDescription)
+                            .font(.system(size: 11))
+                            .frame(minHeight: 64)
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.divider, lineWidth: 1))
+                        if let validation = activityDraftValidationError(activityLog) {
+                            Text(validation).font(.system(size: 10)).foregroundStyle(theme.danger)
+                        }
+                        HStack(spacing: 8) {
+                            ActionButton(title: editingActivityID == nil ? "Add activity" : "Save activity", icon: "checkmark") { saveActivity(activityLog) }
+                                .disabled(!editable)
+                            ActionButton(title: "Cancel", icon: "xmark") { showingActivityForm = false; editingActivityID = nil }
+                        }
+                    }
+                    .padding(10)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8))
+                }
+                if !activityMessage.isEmpty {
+                    Text(activityMessage).font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                }
+                if summary.weeks.isEmpty {
+                    Text("No weeks or dated activities yet.").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                }
+                ForEach(summary.weeks) { week in
+                    VStack(alignment: .leading, spacing: 7) {
+                        Button {
+                            expandedActivityWeek = expandedActivityWeek == week.id ? "" : week.id
+                        } label: {
+                            HStack {
+                                Text("\(week.key) · \(week.values.last?.isEmpty == false ? week.values.last! : "0") h")
+                                Spacer(minLength: 8)
+                                Text("\(Self.hoursText(week.expectedHours)) h expected")
+                            }
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.plain)
+                        Text("\(week.start) – \(week.end) · " + summary.categories.enumerated().map { index, name in "\(name): \(week.values.indices.contains(index) && !week.values[index].isEmpty ? week.values[index] : "0")" }.joined(separator: " · "))
+                            .font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                        if expandedActivityWeek == week.id {
+                            ForEach(week.activities) { activity in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("\(activity.date) · \(Self.hoursText(activity.hours)) h · \(activity.category)")
+                                        .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.text)
+                                    Text(activity.description).font(.system(size: 10)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+                                    if editable {
+                                        HStack(spacing: 8) {
+                                            ActionButton(title: "Edit", icon: "pencil") { editActivity(activity) }
+                                            if pendingActivityRemovalID == activity.id {
+                                                ActionButton(title: "Confirm remove", icon: "trash") { removeActivity(activity, from: activityLog) }
+                                                ActionButton(title: "Cancel", icon: "xmark") { pendingActivityRemovalID = nil }
+                                            } else {
+                                                ActionButton(title: "Remove", icon: "trash") { pendingActivityRemovalID = activity.id }
+                                            }
+                                        }
+                                    }
+                                }.padding(.vertical, 4)
+                            }
+                            if week.activities.isEmpty {
+                                Text("No dated activities for this week.").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                            }
+                            if !week.exclusions.isEmpty {
+                                Text(week.exclusions.joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(theme.cardRaised.opacity(0.55), in: RoundedRectangle(cornerRadius: 7))
+                }
+                ForEach(Array(summary.notes.enumerated()), id: \.offset) { _, note in
+                    Text(note).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                }
+            }
+        }
+        .onChange(of: active.id) { _, _ in
+            activityStartYear = ThesisWorkspaceCodec.activityLog(for: active).map { String($0.startYear) } ?? ""
+            showingActivityForm = false
+            editingActivityID = nil
+            pendingActivityRemovalID = nil
+        }
+    }
+
+    private var validActivityYear: Bool {
+        guard let year = Int(activityStartYear) else { return false }
+        return (1900...2198).contains(year)
+    }
+
+    private func beginActivity(categories: [String]) {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)!
+        formatter.dateFormat = "yyyy-MM-dd"
+        activityDate = formatter.string(from: Date())
+        activityHours = ""
+        activityCategory = categories.first ?? "Research"
+        activityDescription = ""
+    }
+
+    private func activityDraftValidationError(_ log: ThesisActivityLog) -> String? {
+        guard let hours = Double(activityHours) else {
+            return "Enter a valid date, 0.01–24 hours (up to two decimal places), a category and a description of at most 4,000 characters."
+        }
+        let id = editingActivityID ?? UUID().uuidString.lowercased()
+        let value = ThesisActivity(id: id, date: activityDate, hours: hours,
+                                  category: activityCategory.trimmingCharacters(in: .whitespacesAndNewlines),
+                                  description: activityDescription.trimmingCharacters(in: .whitespacesAndNewlines))
+        return ThesisActivityLog.validationError(for: value, in: log)
+    }
+
+    private func saveActivity(_ log: ThesisActivityLog) {
+        guard editable else { return }
+        if let validation = activityDraftValidationError(log) { activityMessage = validation; return }
+        guard let hours = Double(activityHours) else { return }
+        let id = editingActivityID ?? UUID().uuidString.lowercased()
+        let value = ThesisActivity(id: id, date: activityDate, hours: hours,
+                                   category: activityCategory.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   description: activityDescription.trimmingCharacters(in: .whitespacesAndNewlines))
+        var next = log
+        next.activities.removeAll { $0.id == id }
+        next.activities.append(value)
+        guard updateActivityLog(next) else { return }
+        activityMessage = "Activity added to the draft. Save the thesis to share it."
+        showingActivityForm = false
+        editingActivityID = nil
+    }
+
+    private func editActivity(_ value: ThesisActivity) {
+        editingActivityID = value.id
+        activityDate = value.date
+        activityHours = Self.hoursText(value.hours)
+        activityCategory = value.category
+        activityDescription = value.description
+        showingActivityForm = true
+        activityMessage = ""
+    }
+
+    private func removeActivity(_ value: ThesisActivity, from log: ThesisActivityLog) {
+        guard editable, pendingActivityRemovalID == value.id else { return }
+        var next = log
+        next.activities.removeAll { $0.id == value.id }
+        guard updateActivityLog(next) else { return }
+        pendingActivityRemovalID = nil
+        activityMessage = "Activity removed from the draft. Save the thesis to share the change."
+    }
+
+    private func applyActivityStartYear(_ log: ThesisActivityLog) {
+        guard editable, validActivityYear, let year = Int(activityStartYear) else { return }
+        var next = log
+        next.startYear = year
+        guard updateActivityLog(next) else { return }
+        activityMessage = "Initial timetable year updated in the draft. Save the thesis to share it."
+    }
+
+    private func updateActivityLog(_ log: ThesisActivityLog) -> Bool {
+        guard editable, let updated = ThesisWorkspaceCodec.settingActivityLog(log, on: active) else { return false }
+        var nextSheets = sheets
+        nextSheets[activeIndex] = updated
+        let body = ThesisWorkspaceCodec.write(nextSheets)
+        guard body.utf16.count <= ThesisDocument.bodyLimit else {
+            activityMessage = "The thesis workspace is full. Remove content before changing the activity log."
+            return false
+        }
+        bodyText = body
+        return true
+    }
+
+    private static func hoursText(_ value: Double) -> String {
+        String((value * 100).rounded() / 100)
+    }
+
 }
