@@ -142,32 +142,50 @@ extension BrowserWorkspace {
     }
 
     var tabStrip: some View {
-        HStack(spacing: 8) {
-            ForEach(workspace.selectedGroup?.tabs ?? []) { tab in
-                BrowserTabButton(tab: tab, selected: workspace.selectedTabID == tab.id) {
-                    workspace.selectTab(tab.id)
-                } close: {
-                    workspace.close(tab)
-                } moveTargets: {
-                    workspace.groups.filter { $0.id != workspace.selectedGroupID }
-                } move: { groupID in
-                    workspace.move(tab, to: groupID)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(workspace.selectedGroup?.tabs ?? []) { tab in
+                        BrowserTabButton(tab: tab, selected: workspace.selectedTabID == tab.id) {
+                            workspace.selectTab(tab.id)
+                        } close: {
+                            workspace.close(tab)
+                        } moveTargets: {
+                            workspace.groups.filter { $0.id != workspace.selectedGroupID }
+                        } move: { groupID in
+                            workspace.move(tab, to: groupID)
+                        }
+                        .id(tab.id)
+                    }
+                    Button {
+                        workspace.open(url: model.settings.websiteBaseURL)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .bold))
+                            .frame(width: 28, height: 28)
+                            .background(theme.cardRaised)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 14)
             }
-            Button {
-                workspace.open(url: model.settings.websiteBaseURL)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 28, height: 28)
-                    .background(theme.cardRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .scrollIndicators(.visible)
+            .padding(.bottom, 8)
+            .background(theme.backgroundElevated)
+            .onAppear {
+                scrollToSelectedTab(using: proxy)
             }
-            .buttonStyle(.plain)
-            Spacer()
+            .onChange(of: workspace.selectedTabID) { _, _ in
+                scrollToSelectedTab(using: proxy)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 8)
-        .background(theme.backgroundElevated)
+    }
+
+    private func scrollToSelectedTab(using proxy: ScrollViewProxy) {
+        guard let selectedTabID = workspace.selectedTabID else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            proxy.scrollTo(selectedTabID, anchor: .trailing)
+        }
     }
 }
