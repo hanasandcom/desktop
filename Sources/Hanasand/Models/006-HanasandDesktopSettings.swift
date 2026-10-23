@@ -22,6 +22,8 @@ struct HanasandDesktopSettings: Codable, Equatable {
     var impersonationToken = ""
     var impersonatingUserID = ""
     var impersonatingUserName = ""
+    var selectedOrganizationID = ""
+    var selectedOrganizationUserID = ""
     var codexAPIPath = "/tools/ai"
     var aiAPIURL = "https://api.hanasand.com/api/tools/ai"
     var desktopAgentBaseURL = "https://localhost:45731"
@@ -45,6 +47,8 @@ struct HanasandDesktopSettings: Codable, Equatable {
         case impersonationToken
         case impersonatingUserID
         case impersonatingUserName
+        case selectedOrganizationID
+        case selectedOrganizationUserID
         case codexAPIPath
         case aiAPIURL
         case desktopAgentBaseURL
@@ -72,6 +76,8 @@ struct HanasandDesktopSettings: Codable, Equatable {
         impersonationToken = try container.decodeIfPresent(String.self, forKey: .impersonationToken) ?? impersonationToken
         impersonatingUserID = try container.decodeIfPresent(String.self, forKey: .impersonatingUserID) ?? impersonatingUserID
         impersonatingUserName = try container.decodeIfPresent(String.self, forKey: .impersonatingUserName) ?? impersonatingUserName
+        selectedOrganizationID = try container.decodeIfPresent(String.self, forKey: .selectedOrganizationID) ?? selectedOrganizationID
+        selectedOrganizationUserID = try container.decodeIfPresent(String.self, forKey: .selectedOrganizationUserID) ?? selectedOrganizationUserID
         codexAPIPath = try container.decodeIfPresent(String.self, forKey: .codexAPIPath) ?? codexAPIPath
         aiAPIURL = try container.decodeIfPresent(String.self, forKey: .aiAPIURL) ?? aiAPIURL
         let savedDesktopAgentBaseURL = try container.decodeIfPresent(String.self, forKey: .desktopAgentBaseURL)

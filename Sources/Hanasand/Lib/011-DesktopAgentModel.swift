@@ -74,6 +74,10 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var isCheckingServerReachability = false; @Published var isRunningServerAction = false; @Published var serverActionStatus = "No server action running"; @Published var selectedDashboardPath: String?
 
+    @Published var organizationDirectory: [DashboardDirectoryOrganization] = []; @Published var organizationMemberships: [DashboardOrganizationMembership] = []
+    @Published var isLoadingOrganizationDirectory = false; @Published var organizationDirectoryError: String?; @Published var organizationDirectorySnapshotUserID = ""
+    var organizationDirectoryLoadID = UUID()
+
     @Published var selectedDashboardTitle = "Dashboard"; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
     var nativeDashboardLoadID = UUID()
 

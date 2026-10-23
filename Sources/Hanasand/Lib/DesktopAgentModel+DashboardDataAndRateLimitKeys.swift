@@ -47,6 +47,10 @@ extension DesktopAgentModel {
             await loadMonitoringCases()
             return
         }
+        if path == "/organizations" {
+            await loadOrganizationDirectory()
+            return
+        }
         guard let endpoint = nativeEndpoint(for: path) else {
             guard nativeDashboardLoadID == loadID, selectedDashboardPath == path else { return }
             nativeDashboardStatus = "Native controls"

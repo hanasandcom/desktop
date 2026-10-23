@@ -65,6 +65,8 @@ struct NativeDashboardDetail: View {
             DashboardOverviewNativePanel()
         case "/cases":
             MonitoringCasesNativePanel()
+        case "/organizations":
+            OrganizationDirectoryNativePanel()
         case "/g":
             LinksNativePanel()
         case "/dashboard/tests":

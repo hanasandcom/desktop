@@ -41,6 +41,15 @@ extension DesktopAgentModel {
         !authTokenForRequests.isEmpty && !userIDForRequests.isEmpty
     }
 
+    var selectedOrganizationID: String {
+        guard hasHanasandAuth,
+              !settings.selectedOrganizationID.isEmpty,
+              settings.selectedOrganizationUserID == userIDForRequests,
+              settings.impersonationToken.isEmpty,
+              settings.impersonatingUserID.isEmpty else { return "" }
+        return settings.selectedOrganizationID
+    }
+
     var dashboardActions: [DesktopAction] {
         [
             .route("Overview", "Main dashboard and service overview.", "gauge.with.dots.needle", "/dashboard"),
@@ -73,6 +82,7 @@ extension DesktopAgentModel {
             .route("Management", "Admin management console.", "checkmark.shield", "/management"),
             .route("Users", "User administration.", "person.2", "/users"),
             .route("Roles", "Role administration.", "person.badge.key", "/role"),
+            .route("Organizations", "Browse Hanasand organizations and switch to an active membership.", "building.2", "/organizations"),
         ]
     }
 }
