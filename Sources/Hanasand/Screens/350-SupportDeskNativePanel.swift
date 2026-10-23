@@ -1,0 +1,225 @@
+import SwiftUI
+
+struct SupportDeskNativePanel: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    @State private var snapshot: SupportDeskSnapshot?
+    @State private var filters = SupportDeskFilters()
+    @State private var pendingFilters = SupportDeskFilters()
+    @State private var messages: [SupportDeskMessage] = []
+    @State private var selectedID = ""
+    @State private var draft = ""
+    @State private var searchOpen = false
+    @State private var accountOpen = false
+    @State private var password = ""
+    @State private var email = ""
+    @State private var busy = false
+    @State private var revision = 0
+    @State private var error = ""
+    @State private var notice = ""
+    @State private var refreshRequired = false
+    @State private var pendingAction: PendingAction?
+
+    private var ticket: SupportDeskTicket? { snapshot?.tickets.first(where: { $0.id == selectedID }) }
+    private var canWrite: Bool {
+        guard let snapshot, let client = try? makeClient() else { return false }
+        return snapshot.isSupport && snapshot.scope == client.scope && client.canMutate && !busy && !refreshRequired
+    }
+    private var visibleTickets: [SupportDeskTicket] {
+        (snapshot?.tickets ?? []).filter { item in
+            filters.status == .all || (filters.status == .resolved ? item.status == "closed" : item.status != "closed")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            NativeGroupPanel(title: "Support Desk", subtitle: "Customer conversations · latest 100 maximum") {
+                HStack(spacing: 8) {
+                    ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
+                    ActionButton(title: searchOpen ? "Hide filters" : "Find conversations", icon: "line.3.horizontal.decrease.circle") { searchOpen.toggle() }.disabled(busy)
+                    if !selectedID.isEmpty { ActionButton(title: "Back to queue", icon: "list.bullet") { selectedID = ""; messages = []; accountOpen = false }.disabled(busy) }
+                }
+                if let snapshot {
+                    Text(snapshot.realtime ? "Live updates are available. Refresh to load the latest queue snapshot." : "Refresh to check for new conversations.")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                }
+                if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
+                if !notice.isEmpty { NativeNotice(message: notice) }
+                if refreshRequired { NativeNotice(message: "Refresh and review this conversation before another change. The previous operation may have completed.") }
+                if !canWrite && snapshot?.isSupport == true {
+                    NativeNotice(message: model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
+                        ? "Support changes are locked until access is refreshed."
+                        : "Read-only while impersonating. Return to your own account before changing conversations.")
+                }
+            }
+
+            if searchOpen { filtersPanel }
+
+            if busy && snapshot == nil { NativeEmptyState(title: "Loading Support", message: "Checking the signed-in account’s support access.") }
+            else if let snapshot, !snapshot.isSupport {
+                NativeEmptyState(title: "Support queue unavailable", message: "This account does not have staff access to the global Support queue.")
+            } else if let ticket {
+                conversation(ticket)
+            } else if let snapshot {
+                NativeGroupPanel(title: "Conversations · \(visibleTickets.count)", subtitle: "\(snapshot.tickets.count) returned by Support") {
+                    if visibleTickets.isEmpty { NativeEmptyState(title: "No conversations found", message: "No conversations match this status filter.") }
+                    ForEach(visibleTickets) { row in ticketRow(row) }
+                }
+            } else if !busy {
+                NativeEmptyState(title: model.hasHanasandAuth ? "Support unavailable" : "Sign in required", message: model.hasHanasandAuth ? "Refresh to try loading the Support queue." : "Sign in to review Support conversations.")
+            }
+        }
+        .task(id: "\(model.userIDForRequests):\(model.authTokenForRequests):\(model.settings.impersonatingUserID):\(revision)") { await load() }
+        .confirmationDialog(pendingAction?.title ?? "Confirm Support action", isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
+            if let pendingAction {
+                Button(pendingAction.confirmTitle, role: pendingAction.destructive ? .destructive : nil) { Task { await perform(pendingAction) } }
+            }
+            Button("Cancel", role: .cancel) { pendingAction = nil }
+        } message: { Text(pendingAction?.message ?? "") }
+    }
+
+    private var filtersPanel: some View {
+        NativeGroupPanel(title: "Find conversations", subtitle: "Search, dates and feedback filters are applied on the server.") {
+            TextField("Search support conversations", text: $pendingFilters.search).textFieldStyle(.roundedBorder).disabled(busy)
+            HStack(spacing: 8) {
+                TextField("Created from · YYYY-MM-DD", text: $pendingFilters.from).textFieldStyle(.roundedBorder).disabled(busy)
+                TextField("Created through · YYYY-MM-DD", text: $pendingFilters.to).textFieldStyle(.roundedBorder).disabled(busy)
+            }
+            Picker("Rating", selection: $pendingFilters.stars) { ForEach(SupportDeskStarsFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
+            Picker("Feedback", selection: $pendingFilters.feedback) { ForEach(SupportDeskFeedbackFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
+            Picker("Status", selection: $pendingFilters.status) { ForEach(SupportDeskStatusFilter.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented).disabled(busy)
+            HStack(spacing: 8) {
+                ActionButton(title: "Apply filters", icon: "checkmark") { applyFilters() }.disabled(busy)
+                ActionButton(title: "Clear filters", icon: "xmark") { pendingFilters = SupportDeskFilters(); applyFilters() }.disabled(busy)
+            }
+        }
+    }
+
+    @ViewBuilder private func ticketRow(_ row: SupportDeskTicket) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(row.subject).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
+            Text("\(row.userName ?? row.userID ?? "Visitor") · \(row.status == "closed" ? "Resolved" : row.status.capitalized) · \(date(row.updatedAt))")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+            if let last = row.lastMessage, !last.isEmpty { Text(last).font(.system(size: 11)).foregroundStyle(theme.textTertiary).lineLimit(2) }
+            ActionButton(title: "Open conversation", icon: "bubble.left.and.bubble.right") { selectedID = row.id; draft = ""; messages = []; accountOpen = false; Task { await loadMessages(row.id) } }.disabled(busy)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private func conversation(_ ticket: SupportDeskTicket) -> some View {
+        NativeGroupPanel(title: ticket.subject, subtitle: "\(ticket.userName ?? ticket.userID ?? "Visitor") · \(ticket.channel ?? "Channel not supplied") · updated \(date(ticket.updatedAt))") {
+            if let rating = ticket.feedbackRating { Text("Customer feedback: \(rating)/5\(ticket.feedbackComment.map { $0.isEmpty ? "" : " · \($0)" } ?? "")").font(.system(size: 11)).foregroundStyle(theme.textSecondary) }
+            ActionButton(title: ticket.status == "closed" ? "Reopen conversation" : "Resolve conversation", icon: ticket.status == "closed" ? "arrow.uturn.backward" : "checkmark.circle") {
+                pendingAction = PendingAction(kind: .status(ticket.status == "closed" ? "open" : "closed"), ticket: ticket)
+            }.disabled(!canWrite)
+
+            if messages.isEmpty && !busy { NativeEmptyState(title: "No messages returned", message: "Refresh to check this conversation again.") }
+            ForEach(messages) { item in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.senderName).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                    Text(item.body).font(.system(size: 12)).foregroundStyle(theme.textSecondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    Text(date(item.createdAt)).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+            }
+            TextField("Reply to customer", text: $draft, axis: .vertical).lineLimit(3...8).textFieldStyle(.roundedBorder).disabled(!canWrite || ticket.status == "closed")
+            ActionButton(title: "Review and send reply", icon: "paperplane") {
+                pendingAction = PendingAction(kind: .reply, ticket: ticket, body: draft)
+            }.disabled(!canWrite || ticket.status == "closed" || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if ticket.userID != nil && ticket.channel == "human" {
+                ActionButton(title: accountOpen ? "Hide account changes" : "Customer account changes", icon: "person.crop.circle") { accountOpen.toggle() }.disabled(!canWrite)
+                if accountOpen {
+                    SecureField("New password · 16 characters minimum", text: $password).textFieldStyle(.roundedBorder).disabled(!canWrite)
+                    ActionButton(title: "Review password change", icon: "key") { pendingAction = PendingAction(kind: .account(.password), ticket: ticket, body: password) }.disabled(!canWrite || password.isEmpty)
+                    TextField("New email address", text: $email).textFieldStyle(.roundedBorder).disabled(!canWrite)
+                    ActionButton(title: "Review email change", icon: "envelope") { pendingAction = PendingAction(kind: .account(.email), ticket: ticket, body: email) }.disabled(!canWrite || email.isEmpty)
+                }
+            }
+        }
+    }
+
+    private func applyFilters() {
+        do { _ = try SupportDeskClient.filterQuery(pendingFilters); filters = pendingFilters; searchOpen = false; selectedID = ""; messages = []; revision += 1 }
+        catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func load() async {
+        guard model.hasHanasandAuth else { snapshot = nil; return }
+        busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            let client = try makeClient()
+            let next = try await client.load(filters: filters)
+            guard !Task.isCancelled else { return }
+            snapshot = next
+            if !next.isSupport { selectedID = ""; messages = []; return }
+            if !selectedID.isEmpty && !next.tickets.contains(where: { $0.id == selectedID }) { selectedID = ""; messages = [] }
+            if !selectedID.isEmpty { await loadMessages(selectedID) }
+            guard !Task.isCancelled else { return }
+            refreshRequired = false
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    @MainActor private func loadMessages(_ id: String) async {
+        do {
+            let loaded = try await makeClient().messages(ticketID: id)
+            guard !Task.isCancelled, selectedID == id else { return }
+            messages = loaded; error = ""
+        } catch { if !Task.isCancelled, selectedID == id { self.error = error.localizedDescription } }
+    }
+
+    @MainActor private func perform(_ action: PendingAction) async {
+        pendingAction = nil; busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            let client = try makeClient()
+            guard let snapshot, let current = snapshot.tickets.first(where: { $0.id == action.ticket.id }), current == action.ticket else { throw SupportDeskClientError.readOnly }
+            switch action.kind {
+            case .reply:
+                let requestID = UUID().uuidString.lowercased()
+                _ = try await client.reply(snapshot: snapshot, ticket: current, body: action.body, requestID: requestID)
+                draft = ""; notice = "Reply sent."
+            case .status(let status):
+                try await client.setStatus(snapshot: snapshot, ticket: current, status: status)
+                notice = status == "closed" ? "Conversation resolved." : "Conversation reopened."
+            case .account(let field):
+                try await client.changeAccount(snapshot: snapshot, ticket: current, field: field, value: action.body)
+                if field == .password { password = ""; notice = "Password changed. Existing customer sessions were revoked." }
+                else { email = ""; notice = "Customer email address changed." }
+            }
+            revision += 1
+        } catch { self.error = error.localizedDescription; refreshRequired = true }
+    }
+
+    private func makeClient() throws -> SupportDeskClient {
+        guard let site = URL(string: model.settings.websiteBaseURL) else { throw SupportDeskClientError.invalidServiceURL }
+        return try SupportDeskClient(siteBaseURL: site, userID: model.userIDForRequests, token: model.authTokenForRequests,
+            organizationID: model.selectedOrganizationID, impersonationToken: model.settings.impersonationToken,
+            impersonatingUserID: model.settings.impersonatingUserID)
+    }
+
+    private func date(_ value: String) -> String {
+        guard let parsed = ISO8601DateFormatter().date(from: value) else { return "Date unavailable" }
+        return parsed.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private struct PendingAction: Identifiable {
+        enum Kind { case reply, status(String), account(SupportDeskAccountField) }
+        let id = UUID()
+        let kind: Kind
+        let ticket: SupportDeskTicket
+        var body = ""
+        var title: String {
+            switch kind { case .reply: "Send support reply?"; case .status("closed"): "Resolve conversation?"; case .status: "Reopen conversation?"; case .account(.password): "Change customer password?"; case .account(.email): "Change customer email?" }
+        }
+        var confirmTitle: String {
+            switch kind { case .reply: "Send reply"; case .status("closed"): "Resolve"; case .status: "Reopen"; case .account(.password): "Change password"; case .account(.email): "Change email" }
+        }
+        var destructive: Bool { if case .status("closed") = kind { true } else { false } }
+        var message: String {
+            switch kind {
+            case .reply: "Send this reply to \(ticket.userName ?? "the selected customer") in “\(ticket.subject)”?"
+            case .status(let status): "\(status == "closed" ? "Resolve" : "Reopen") “\(ticket.subject)” for \(ticket.userName ?? "this customer")?"
+            case .account(.password): "Change the password for \(ticket.userName ?? ticket.userID ?? "this customer")? Existing sessions will be revoked."
+            case .account(.email): "Change the email for \(ticket.userName ?? ticket.userID ?? "this customer") to \(body)?"
+            }
+        }
+    }
+}
