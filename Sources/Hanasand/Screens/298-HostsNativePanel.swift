@@ -39,16 +39,20 @@ struct HostsNativePanel: View {
 
     private func hostCard(_ host: HostOverviewEnvelope.Host) -> some View {
         NativeGroupPanel(title: host.name, subtitle: host.id.rawValue.uppercased()) {
-            HStack(spacing: 8) {
-                Circle().fill(statusColor(host.status)).frame(width: 8, height: 8)
-                Text(statusLabel(host.status))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(statusColor(host.status))
-                Spacer()
-                Text(host.address.isEmpty ? "Address not reported" : host.address)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Circle().fill(statusColor(host.status)).frame(width: 8, height: 8)
+                    Text(statusLabel(host.status))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(statusColor(host.status))
+                    Spacer(minLength: 0)
+                }
+                Text("Address: \(host.address.isEmpty ? "Not reported" : host.address)")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(theme.textSecondary)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             metadata(label: "SSH user", value: host.username.isEmpty ? "Not reported" : host.username)
             metadata(label: "Hostname", value: host.hostname?.isEmpty == false ? host.hostname! : "Not reported")
