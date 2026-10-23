@@ -8,6 +8,7 @@ final class SupportDeskClientTests: XCTestCase {
     private let ticketID = "11111111-1111-4111-8111-111111111111"
     private let requestID = "22222222-2222-4222-8222-222222222222"
     private let messageID = "33333333-3333-4333-8333-333333333333"
+    private let guestToken = String(repeating: "a", count: 64)
     private let row = #"{"id":"11111111-1111-4111-8111-111111111111","subject":"Help","status":"open","updated_at":"2026-10-23T12:00:00Z","created_at":"2026-10-23T11:00:00Z","user_id":"customer","user_name":"Customer","channel":"human","last_message":"Question","feedback_rating":5,"feedback_comment":"Thanks","resolution_version":2,"reply_count":3}"#
 
     private func client(send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws -> SupportDeskClient {
@@ -211,5 +212,107 @@ final class SupportDeskClientTests: XCTestCase {
         }
         do { _ = try await impersonated.createTicket(subject: "Help", message: "Question"); XCTFail("Impersonation must remain read-only") }
         catch SupportDeskClientError.readOnly {}
+    }
+
+    func testGuestSessionRenewsForThirtyDaysAndRotatesAfterExpiry() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let token = String(repeating: "b", count: 64)
+        let fresh = try SupportGuestSession.loadOrRefresh(storedValue: nil, now: now) { token }
+        XCTAssertEqual(fresh.session.token, token)
+        XCTAssertEqual(fresh.session.expiresAt, now.addingTimeInterval(30 * 24 * 60 * 60))
+        XCTAssertEqual(DesktopCredential.supportGuestSession.rawValue, "supportGuestSession")
+
+        let renewed = try SupportGuestSession.loadOrRefresh(storedValue: fresh.encodedValue, now: now.addingTimeInterval(10)) {
+            XCTFail("A valid guest session must be reused")
+            return ""
+        }
+        XCTAssertEqual(renewed.session.token, token)
+        XCTAssertEqual(renewed.session.expiresAt, now.addingTimeInterval(10 + 30 * 24 * 60 * 60))
+
+        let expired = try SupportGuestSession.loadOrRefresh(storedValue: fresh.encodedValue, now: fresh.session.expiresAt) { token }
+        XCTAssertEqual(expired.session.token, token)
+        XCTAssertNotEqual(expired.encodedValue, fresh.encodedValue)
+        XCTAssertThrowsError(try SupportGuestSession.loadOrRefresh(storedValue: nil, now: now) { "not-a-capability" })
+    }
+
+    func testGuestChatUsesOnlyCapabilityHeaderAndExistingGuestActions() async throws {
+        let ticket = #"{"id":"11111111-1111-4111-8111-111111111111","subject":"Guest question","status":"open","updated_at":"2026-10-23T12:00:00Z","channel":"ai","reply_count":0}"#
+        let guest = #"{"id":"11111111-1111-4111-8111-111111111111","channel":"ai","status":"open","pending":false,"has_response":false,"resolution_version":0,"messages":[],"tickets":["# + ticket + #"]}"#
+        var captured: [URLRequest] = []
+        let client = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+            captured.append(request)
+            let isAction = ((try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any])?["action"] as? String) != nil
+            let body = request.httpMethod == "GET" || request.url?.path == "/api/support/chat" && !isAction
+                ? guest : #"{"ok":true,"ticket":{"id":"11111111-1111-4111-8111-111111111111","status":"closed"}}"#
+            return self.response(body, request: request)
+        }
+
+        let transcript = try await client.load(conversationID: ticketID)
+        XCTAssertEqual(transcript.id, ticketID)
+        XCTAssertEqual(captured[0].url?.absoluteString, "https://support.synthetic.invalid/api/support/chat?conversationId=11111111-1111-4111-8111-111111111111")
+        let posted = try await client.sendMessage("Question", requestID: requestID, conversationID: ticketID)
+        XCTAssertEqual(posted.id, ticketID)
+        let sentBody = try XCTUnwrap(captured[1].httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertEqual(sentBody?["requestId"] as? String, requestID)
+        XCTAssertEqual(sentBody?["message"] as? String, "Question")
+        _ = try await client.sendMessage("", requestID: requestID, conversationID: ticketID, handoff: true)
+        let handoffBody = try XCTUnwrap(captured[2].httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        XCTAssertEqual(handoffBody?["handoff"] as? Bool, true)
+        try await client.resolve(conversationID: ticketID)
+        try await client.submitFeedback(conversationID: ticketID, resolutionVersion: 2, rating: 3, comment: "Helpful")
+        try await client.submitCloseFeedback(conversationID: ticketID, resolutionVersion: 2, foundWhatLookingFor: false, reason: "Still need help")
+
+        for request in captured {
+            let headers = Set((request.allHTTPHeaderFields ?? [:]).keys.map { $0.lowercased() })
+            let expectedHeaders: Set<String> = request.httpBody == nil
+                ? ["accept", "cache-control", "x-support-session"]
+                : ["accept", "cache-control", "content-type", "x-support-session"]
+            XCTAssertEqual(headers, expectedHeaders)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "x-support-session"), guestToken)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "id"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "x-impersonation-token"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "x-organization-id"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            XCTAssertFalse(request.httpShouldHandleCookies)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        }
+    }
+
+    func testGuestTransportRejectsInvalidCapabilityAndMessageInput() async throws {
+        XCTAssertThrowsError(try SupportGuestChatClient(baseURL: service, token: "short"))
+        let client = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+            self.response("{}", request: request)
+        }
+        XCTAssertThrowsError(try SupportGuestChatClient(baseURL: URL(string: "http://support.synthetic.invalid/api")!, token: guestToken))
+        do { _ = try await client.sendMessage("", requestID: requestID, conversationID: ticketID); XCTFail("An empty guest message must be rejected") }
+        catch SupportDeskClientError.invalidDraft(_) {}
+        do { _ = try await client.sendMessage(String(repeating: "x", count: 4001), requestID: requestID, conversationID: ticketID); XCTFail("An oversized guest message must be rejected") }
+        catch SupportDeskClientError.invalidDraft(_) {}
+        do { _ = try await client.sendMessage(String(repeating: "😀", count: 2001), requestID: requestID, conversationID: ticketID); XCTFail("UTF-16 message size must match the server limit") }
+        catch SupportDeskClientError.invalidDraft(_) {}
+        do { try await client.submitCloseFeedback(conversationID: ticketID, resolutionVersion: 1, foundWhatLookingFor: false, reason: String(repeating: "😀", count: 1001)); XCTFail("UTF-16 feedback size must match the server limit") }
+        catch SupportDeskClientError.invalidDraft(_) {}
+        do { try await client.resolve(conversationID: "../../ticket"); XCTFail("A malformed conversation ID must be rejected") }
+        catch SupportDeskClientError.invalidTicket {}
+
+        let different = #"{"id":"44444444-4444-4444-8444-444444444444","channel":"ai","status":"open","pending":false,"has_response":false,"messages":[],"tickets":[{"id":"44444444-4444-4444-8444-444444444444","subject":"Other chat","status":"open","updated_at":"2026-10-23T12:00:00Z"}]}"#
+        let mismatchedReceipt = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+            self.response(different, request: request)
+        }
+        do { _ = try await mismatchedReceipt.sendMessage("Question", requestID: requestID, conversationID: ticketID); XCTFail("A mismatched conversation receipt must remain uncertain") }
+        catch SupportDeskClientError.uncertainResult {}
+    }
+
+    func testGuestEmptySessionUsesBackendNoConversationEnvelope() async throws {
+        let client = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+            self.response(#"{"id":null,"channel":"ai","status":"open","pending":false,"messages":[],"tickets":[]}"#, request: request)
+        }
+        let conversation = try await client.load()
+        XCTAssertNil(conversation.id)
+        XCTAssertEqual(conversation.channel, "ai")
+        XCTAssertEqual(conversation.status, "open")
+        XCTAssertFalse(conversation.hasResponse)
+        XCTAssertTrue(conversation.tickets.isEmpty)
     }
 }

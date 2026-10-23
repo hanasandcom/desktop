@@ -101,6 +101,46 @@ struct SupportDeskSnapshot: Equatable {
     let tickets: [SupportDeskTicket]
 }
 
+struct SupportGuestConversation: Decodable, Equatable {
+    let id: String?
+    let channel: String
+    let status: String
+    let pending: Bool
+    let hasResponse: Bool
+    let resolutionVersion: Int?
+    let feedbackRating: Int?
+    let feedbackComment: String?
+    let closeFeedbackFound: Bool?
+    let messages: [SupportDeskMessage]
+    let tickets: [SupportDeskTicket]
+    let accepted: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id, channel, status, pending, messages, tickets, accepted
+        case hasResponse = "has_response", resolutionVersion = "resolution_version"
+        case feedbackRating = "feedback_rating", feedbackComment = "feedback_comment"
+        case closeFeedbackFound = "close_feedback_found"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? values.decode(String.self, forKey: .id)
+        channel = try values.decode(String.self, forKey: .channel)
+        status = try values.decode(String.self, forKey: .status)
+        pending = try values.decode(Bool.self, forKey: .pending)
+        hasResponse = (try? values.decode(Bool.self, forKey: .hasResponse)) ?? false
+        let version = try? values.decode(Int.self, forKey: .resolutionVersion)
+        resolutionVersion = version.flatMap { $0 >= 0 ? $0 : nil }
+        let rating = try? values.decode(Int.self, forKey: .feedbackRating)
+        feedbackRating = rating.flatMap { (1...5).contains($0) ? $0 : nil }
+        feedbackComment = try? values.decode(String.self, forKey: .feedbackComment)
+        closeFeedbackFound = try? values.decode(Bool.self, forKey: .closeFeedbackFound)
+        messages = try values.decode([SupportDeskMessage].self, forKey: .messages)
+        tickets = try values.decode([SupportDeskTicket].self, forKey: .tickets)
+        accepted = try? values.decode(Bool.self, forKey: .accepted)
+    }
+}
+
 enum SupportDeskClientError: LocalizedError {
     case signInRequired, invalidServiceURL, invalidResponse, invalidTicket, readOnly
     case requestFailed(Int, String?)

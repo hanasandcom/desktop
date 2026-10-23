@@ -4,6 +4,8 @@ struct SupportDeskNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var snapshot: SupportDeskSnapshot?
+    @State private var guestConversation: SupportGuestConversation?
+    @State private var guestSession: SupportGuestSession?
     @State private var filters = SupportDeskFilters()
     @State private var pendingFilters = SupportDeskFilters()
     @State private var messages: [SupportDeskMessage] = []
@@ -23,6 +25,12 @@ struct SupportDeskNativePanel: View {
     @State private var notice = ""
     @State private var refreshRequired = false
     @State private var pendingAction: PendingAction?
+    @State private var pendingGuestResolve = false
+    @State private var guestFeedbackRating = 5
+    @State private var guestFeedbackComment = ""
+    @State private var guestCloseFeedbackFound: Bool? = nil
+    @State private var guestCloseFeedbackReason = ""
+    @State private var guestRetry: (requestID: String, message: String, handoff: Bool)?
 
     private var ticket: SupportDeskTicket? { snapshot?.tickets.first(where: { $0.id == selectedID }) }
     private var canWrite: Bool {
@@ -41,6 +49,117 @@ struct SupportDeskNativePanel: View {
     }
 
     var body: some View {
+        Group {
+            if model.hasHanasandAuth { authenticatedWorkspace }
+            else { guestWorkspace }
+        }
+    }
+
+    private var guestWorkspace: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            NativeGroupPanel(title: "Guest support chat", subtitle: "Ask a question or continue a conversation.", fillsAvailableWidth: true) {
+                Text("This guest session is stored in this Mac’s Keychain and expires after 30 days without use. If it expires or is removed, its conversations cannot be recovered.")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                if let guestSession {
+                    Text("Session expires \(guestSession.expiresAt.formatted(date: .abbreviated, time: .shortened)).")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { guestActions }
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) { guestActions }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
+                if !notice.isEmpty { NativeNotice(message: notice) }
+                if busy && guestConversation == nil { NativeEmptyState(title: "Loading Support", message: "Opening the guest support session.") }
+            }
+
+            if let guestConversation {
+                if !guestConversation.tickets.isEmpty {
+                    NativeGroupPanel(title: "Your conversations · \(guestConversation.tickets.count)", subtitle: "Only conversations saved with this guest session are shown.") {
+                        ForEach(guestConversation.tickets) { row in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(row.subject).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
+                                Text("\(row.status == "closed" ? "Resolved" : "Open") · updated \(date(row.updatedAt))")
+                                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                                if let last = row.lastMessage, !last.isEmpty { Text(last).font(.system(size: 11)).foregroundStyle(theme.textTertiary).lineLimit(2) }
+                                ActionButton(title: "Open conversation", icon: "bubble.left.and.bubble.right") {
+                                    selectedID = row.id; guestFeedbackRating = 5; guestFeedbackComment = ""
+                                    guestCloseFeedbackFound = nil; guestCloseFeedbackReason = ""; guestRetry = nil; revision += 1
+                                }.disabled(busy)
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+                guestConversationPanel(guestConversation)
+            } else if !busy {
+                NativeEmptyState(title: "Guest support unavailable", message: "Refresh to open a new guest session.")
+            }
+        }
+        .task(id: revision) { await loadGuest() }
+        .confirmationDialog("Resolve this conversation?", isPresented: $pendingGuestResolve, titleVisibility: .visible) {
+            Button("Resolve conversation", role: .destructive) { Task { await resolveGuestConversation() } }
+            Button("Cancel", role: .cancel) { }
+        } message: { Text("You can still review this conversation and leave feedback after it is resolved.") }
+    }
+
+    @ViewBuilder private var guestActions: some View {
+        ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
+        ActionButton(title: "New chat", icon: "plus") {
+            selectedID = UUID().uuidString.lowercased(); draft = ""; guestRetry = nil
+            guestFeedbackRating = 5; guestFeedbackComment = ""; guestCloseFeedbackFound = nil; guestCloseFeedbackReason = ""; revision += 1
+        }.disabled(busy)
+    }
+
+    @ViewBuilder private func guestConversationPanel(_ conversation: SupportGuestConversation) -> some View {
+        let activeTicket = conversation.tickets.first(where: { $0.id == selectedID })
+        let isSelected = conversation.id == selectedID
+        NativeGroupPanel(title: activeTicket?.subject ?? "New conversation", subtitle: activeTicket.map { "Guest conversation · \($0.status == "closed" ? "resolved" : "open") · updated \(date($0.updatedAt))" } ?? "Your message starts a new guest conversation.") {
+            if isSelected {
+                ForEach(conversation.messages) { item in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.senderName).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                        Text(item.body).font(.system(size: 12)).foregroundStyle(theme.textSecondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        Text(date(item.createdAt)).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if activeTicket?.status != "closed" {
+                TextField("Write a message", text: $draft, axis: .vertical).lineLimit(3...8).textFieldStyle(.roundedBorder).disabled(busy)
+                ActionButton(title: busy ? "Sending…" : "Send message", icon: "paperplane") { Task { await sendGuestMessage(handoff: false) } }
+                    .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ActionButton(title: "Talk to a person", icon: "person.crop.circle.badge.questionmark") { Task { await sendGuestMessage(handoff: true) } }.disabled(busy)
+                if activeTicket != nil {
+                    ActionButton(title: "Resolve conversation", icon: "checkmark.circle") { pendingGuestResolve = true }.disabled(busy)
+                }
+            } else if let activeTicket, let version = activeTicket.resolutionVersion {
+                if activeTicket.feedbackRating != nil {
+                    Text("Thank you for your feedback.").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                } else {
+                    Text("How was your support experience?").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                    Picker("Rating", selection: $guestFeedbackRating) { ForEach(1...5, id: \.self) { Text("\($0) stars").tag($0) } }
+                    if guestFeedbackRating <= 4 { TextField("Optional feedback", text: $guestFeedbackComment, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder) }
+                    ActionButton(title: "Send rating", icon: "star") { Task { await submitGuestRating(ticket: activeTicket, version: version) } }.disabled(busy)
+                }
+                if conversation.closeFeedbackFound == nil {
+                    Picker("Did you find what you needed?", selection: $guestCloseFeedbackFound) {
+                        Text("Choose an answer").tag(Optional<Bool>.none)
+                        Text("Yes").tag(Optional(true)); Text("No").tag(Optional(false))
+                    }
+                    TextField("Optional note", text: $guestCloseFeedbackReason, axis: .vertical).lineLimit(2...4).textFieldStyle(.roundedBorder)
+                    ActionButton(title: "Send answer", icon: "checkmark") { Task { await submitGuestCloseFeedback(ticket: activeTicket, version: version) } }
+                        .disabled(busy || guestCloseFeedbackFound == nil)
+                }
+                ActionButton(title: "New chat", icon: "plus") {
+                    selectedID = UUID().uuidString.lowercased(); draft = ""; guestRetry = nil
+                    guestFeedbackRating = 5; guestFeedbackComment = ""; guestCloseFeedbackFound = nil; guestCloseFeedbackReason = ""; revision += 1
+                }.disabled(busy)
+            }
+        }
+    }
+
+    private var authenticatedWorkspace: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: isSupport ? "Support Desk" : "Support", subtitle: isSupport ? "Customer conversations · latest 100 maximum" : "Your support conversations", fillsAvailableWidth: true) {
                 ViewThatFits(in: .horizontal) {
@@ -234,6 +353,89 @@ struct SupportDeskNativePanel: View {
     private func applyFilters() {
         do { _ = try SupportDeskClient.filterQuery(pendingFilters); filters = pendingFilters; searchOpen = false; selectedID = ""; messages = []; revision += 1 }
         catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func loadGuest() async {
+        busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            let previousToken = guestSession?.token
+            let session = try SupportGuestSession.loadFromKeychain()
+            guestSession = session
+            if let previousToken, previousToken != session.token {
+                notice = "The previous guest session expired. Its conversations cannot be recovered; this is a new chat history."
+                selectedID = ""
+            }
+            let conversation = try await makeGuestClient(session: session).load(conversationID: selectedID.isEmpty ? nil : selectedID)
+            guard !Task.isCancelled else { return }
+            guestConversation = conversation
+            if selectedID.isEmpty {
+                selectedID = conversation.id ?? UUID().uuidString.lowercased()
+            } else if conversation.id == nil && !conversation.tickets.contains(where: { $0.id == selectedID }) {
+                // Keep a locally selected, not-yet-created chat ID for the first message.
+            }
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    @MainActor private func sendGuestMessage(handoff: Bool) async {
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let retry = guestRetry.flatMap { $0.message == message && $0.handoff == handoff ? $0 : nil }
+        let requestID = retry?.requestID ?? UUID().uuidString.lowercased()
+        guestRetry = (requestID, message, handoff)
+        busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            guard let guestSession else { throw SupportGuestSessionError.invalidStorage }
+            let client = try makeGuestClient(session: guestSession)
+            let result = try await client.sendMessage(message, requestID: requestID, conversationID: selectedID, handoff: handoff)
+            guard !Task.isCancelled else { return }
+            if result.accepted == false {
+                guestConversation = try await client.load(conversationID: selectedID)
+                error = "Support is still preparing a reply. Refresh before trying again."
+                return
+            }
+            if let returnedID = result.id { selectedID = returnedID }
+            guestConversation = try await client.load(conversationID: selectedID)
+            draft = ""; guestRetry = nil
+            notice = handoff ? "Your request for a person was sent." : "Message sent."
+        } catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func resolveGuestConversation() async {
+        pendingGuestResolve = false; busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            guard let guestSession else { throw SupportGuestSessionError.invalidStorage }
+            let client = try makeGuestClient(session: guestSession)
+            try await client.resolve(conversationID: selectedID)
+            guestConversation = try await client.load(conversationID: selectedID)
+            notice = "Conversation resolved. You can leave feedback here."
+        } catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func submitGuestRating(ticket: SupportDeskTicket, version: Int) async {
+        busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            guard let guestSession else { throw SupportGuestSessionError.invalidStorage }
+            let client = try makeGuestClient(session: guestSession)
+            try await client.submitFeedback(conversationID: ticket.id, resolutionVersion: version,
+                                            rating: guestFeedbackRating, comment: guestFeedbackComment)
+            guestConversation = try await client.load(conversationID: ticket.id)
+            notice = "Feedback sent. Thank you."
+        } catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func submitGuestCloseFeedback(ticket: SupportDeskTicket, version: Int) async {
+        busy = true; error = ""; notice = ""; defer { busy = false }
+        do {
+            guard let guestSession, let answer = guestCloseFeedbackFound else { throw SupportGuestSessionError.invalidStorage }
+            let client = try makeGuestClient(session: guestSession)
+            try await client.submitCloseFeedback(conversationID: ticket.id, resolutionVersion: version,
+                                                 foundWhatLookingFor: answer, reason: guestCloseFeedbackReason)
+            guestConversation = try await client.load(conversationID: ticket.id)
+            notice = "Your answer was sent."
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func makeGuestClient(session: SupportGuestSession) throws -> SupportGuestChatClient {
+        try SupportGuestChatClient(token: session.token)
     }
 
     @MainActor private func load() async {

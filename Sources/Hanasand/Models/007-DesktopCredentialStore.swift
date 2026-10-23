@@ -4,6 +4,7 @@ import Security
 enum DesktopCredential: String {
     case authToken
     case impersonationToken
+    case supportGuestSession
 }
 
 enum DesktopCredentialStore {

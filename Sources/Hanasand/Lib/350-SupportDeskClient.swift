@@ -272,6 +272,164 @@ struct SupportDeskClient {
     }
 }
 
+struct SupportGuestChatClient {
+    static let defaultBaseURL = URL(string: "https://support.hanasand.com/api")!
+    private let baseURL: URL
+    private let token: String
+    private let send: (URLRequest) async throws -> (Data, URLResponse)
+
+    init(baseURL: URL = Self.defaultBaseURL, token: String,
+         send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
+        guard Self.validBase(baseURL), token.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+            throw SupportDeskClientError.invalidServiceURL
+        }
+        self.baseURL = baseURL
+        self.token = token
+        self.send = try send ?? Self.urlSessionSender()
+    }
+
+    func load(conversationID: String? = nil) async throws -> SupportGuestConversation {
+        let path: String
+        if let conversationID {
+            guard Self.validGuestUUID(conversationID) else { throw SupportDeskClientError.invalidTicket }
+            var components = URLComponents()
+            components.queryItems = [URLQueryItem(name: "conversationId", value: conversationID.lowercased())]
+            path = "support/chat?\(components.percentEncodedQuery ?? "")"
+        } else { path = "support/chat" }
+        let (data, response) = try await request(path: path)
+        let conversation = try decode(data, response: response)
+        try validate(conversation)
+        return conversation
+    }
+
+    func sendMessage(_ message: String, requestID: String, conversationID: String?, handoff: Bool = false) async throws -> SupportGuestConversation {
+        let clean = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.validGuestUUID(requestID), conversationID.map(Self.validGuestUUID) ?? true,
+              clean.utf16.count <= 4_000, (handoff || !clean.isEmpty) else {
+            throw SupportDeskClientError.invalidDraft("Enter a message under 4,000 characters.")
+        }
+        var body: [String: Any] = ["requestId": requestID.lowercased(), "message": clean]
+        if let conversationID { body["conversationId"] = conversationID.lowercased() }
+        if handoff { body["handoff"] = true }
+        let (data, response) = try await request(path: "support/chat", method: "POST", body: body, writing: true)
+        let conversation = try decode(data, response: response)
+        try validate(conversation)
+        guard let id = conversation.id, conversation.tickets.contains(where: { $0.id == id }),
+              conversationID.map({ $0.lowercased() == id }) ?? true else {
+            throw SupportDeskClientError.uncertainResult
+        }
+        return conversation
+    }
+
+    func resolve(conversationID: String) async throws {
+        guard Self.validGuestUUID(conversationID) else { throw SupportDeskClientError.invalidTicket }
+        try await postAction(["action": "resolve", "conversationId": conversationID.lowercased()])
+    }
+
+    func submitFeedback(conversationID: String, resolutionVersion: Int, rating: Int, comment: String) async throws {
+        guard Self.validGuestUUID(conversationID), resolutionVersion >= 0,
+              (1...5).contains(rating), comment.utf16.count <= 2_000 else {
+            throw SupportDeskClientError.invalidDraft("Choose 1–5 stars and keep feedback under 2,000 characters.")
+        }
+        try await postAction(["action": "feedback", "conversationId": conversationID.lowercased(),
+                              "resolutionVersion": resolutionVersion, "rating": rating,
+                              "comment": rating <= 4 ? comment.trimmingCharacters(in: .whitespacesAndNewlines) : ""])
+    }
+
+    func submitCloseFeedback(conversationID: String, resolutionVersion: Int, foundWhatLookingFor: Bool, reason: String) async throws {
+        guard Self.validGuestUUID(conversationID), resolutionVersion >= 0, reason.utf16.count <= 2_000 else {
+            throw SupportDeskClientError.invalidDraft("Keep feedback under 2,000 characters.")
+        }
+        try await postAction(["action": "close-feedback", "conversationId": conversationID.lowercased(),
+                              "resolutionVersion": resolutionVersion, "foundWhatLookingFor": foundWhatLookingFor,
+                              "reason": reason.trimmingCharacters(in: .whitespacesAndNewlines)])
+    }
+
+    private func postAction(_ body: [String: Any]) async throws {
+        let (data, response) = try await request(path: "support/chat", method: "POST", body: body, writing: true)
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, writing: true) }
+        guard (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else {
+            throw SupportDeskClientError.uncertainResult
+        }
+    }
+
+    private func decode(_ data: Data, response: URLResponse) throws -> SupportGuestConversation {
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode) }
+        do { return try JSONDecoder().decode(SupportGuestConversation.self, from: data) }
+        catch { throw SupportDeskClientError.invalidResponse }
+    }
+
+    private func validate(_ conversation: SupportGuestConversation) throws {
+        guard conversation.tickets.allSatisfy({ Self.validGuestUUID($0.id) }),
+              conversation.messages.allSatisfy({ Self.validGuestUUID($0.id) && !$0.body.isEmpty && !$0.createdAt.isEmpty }) else {
+            throw SupportDeskClientError.invalidResponse
+        }
+        if let id = conversation.id, !Self.validGuestUUID(id) { throw SupportDeskClientError.invalidResponse }
+    }
+
+    private func request(path: String, method: String = "GET", body: [String: Any]? = nil,
+                         writing: Bool = false) async throws -> (Data, URLResponse) {
+        let parts = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        var url = baseURL
+        for component in parts[0].split(separator: "/") where !component.isEmpty { url.appendPathComponent(String(component)) }
+        if parts.count == 2, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.percentEncodedQuery = String(parts[1])
+            guard let queried = components.url else { throw SupportDeskClientError.invalidServiceURL }
+            url = queried
+        }
+        guard url.scheme == "https", url.host == baseURL.host, url.user == nil, url.password == nil, url.fragment == nil else {
+            throw SupportDeskClientError.invalidServiceURL
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = method
+        request.httpShouldHandleCookies = false
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue(token, forHTTPHeaderField: "x-support-session")
+        if let body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        do {
+            let (data, response) = try await send(request)
+            guard response.url?.host == baseURL.host, response.url?.scheme == "https" else { throw SupportDeskClientError.invalidServiceURL }
+            return (data, response)
+        } catch let error as SupportDeskClientError { throw error }
+        catch { throw writing ? SupportDeskClientError.uncertainResult : SupportDeskClientError.requestFailed(0, "Support is unavailable. Refresh to try again.") }
+    }
+
+    private func checked(_ response: URLResponse) throws -> HTTPURLResponse {
+        guard let response = response as? HTTPURLResponse else { throw SupportDeskClientError.invalidResponse }
+        return response
+    }
+
+    private func failure(status: Int, writing: Bool = false) -> SupportDeskClientError {
+        if writing && (status >= 500 || status == 409) { return .uncertainResult }
+        if status == 400 { return .requestFailed(status, "Support could not accept this guest request. Check the message and refresh to try again.") }
+        return .requestFailed(status, "Support request failed (HTTP \(status)).")
+    }
+
+    private static func validBase(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && url.host != nil && url.user == nil && url.password == nil && url.query == nil && url.fragment == nil
+    }
+
+    private static func validGuestUUID(_ value: String) -> Bool {
+        value.range(of: #"^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"#,
+                    options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static func urlSessionSender() throws -> (URLRequest) async throws -> (Data, URLResponse) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        let session = URLSession(configuration: configuration, delegate: SupportDeskRedirectBlocker(), delegateQueue: nil)
+        return { request in try await session.data(for: request) }
+    }
+}
+
 enum SupportDeskAccountField: String { case password, email }
 
 private struct SupportDeskQueue: Decodable { let isSupport: Bool; let realtime: Bool; let tickets: [SupportDeskTicket] }
