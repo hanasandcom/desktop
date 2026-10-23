@@ -10,6 +10,19 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum MailNativePanelLayout {
+    static let stackedBreakpoint: CGFloat = 560
+    static let originalColumnsBreakpoint: CGFloat = 660
+    static let horizontalChromeWidth: CGFloat = 34
+
+    static func compactPaneWidths(contentWidth: CGFloat) -> (mailboxes: CGFloat, messages: CGFloat, reader: CGFloat) {
+        let paneWidth = max(0, contentWidth - horizontalChromeWidth)
+        let mailboxes = min(238, max(120, paneWidth * 0.23))
+        let messages = min(440, max(180, paneWidth * 0.34))
+        return (mailboxes, messages, max(0, paneWidth - mailboxes - messages))
+    }
+}
+
 extension MailNativePanel {
 
     var overview: MailOverviewEnvelope? { model.mailOverview }
@@ -21,23 +34,59 @@ extension MailNativePanel {
             headerBar
 
             if let overview {
-                HStack(alignment: .top, spacing: 0) {
-                    mailboxSidebar(overview)
-                        .frame(minWidth: 160, idealWidth: 200, maxWidth: 238)
+                GeometryReader { geometry in
+                    Group {
+                        if geometry.size.width >= MailNativePanelLayout.originalColumnsBreakpoint {
+                            HStack(alignment: .top, spacing: 0) {
+                                mailboxSidebar(overview)
+                                    .frame(minWidth: 160, idealWidth: 200, maxWidth: 238)
 
-                    Divider()
-                        .overlay(theme.divider)
-                        .padding(.horizontal, 10)
+                                Divider()
+                                    .overlay(theme.divider)
+                                    .padding(.horizontal, 10)
 
-                    threadedMessageList(overview)
-                        .frame(minWidth: 220, idealWidth: 300, maxWidth: 440)
+                                threadedMessageList(overview)
+                                    .frame(minWidth: 220, idealWidth: 300, maxWidth: 440)
 
-                    Divider()
-                        .overlay(theme.divider)
-                        .padding(.horizontal, 10)
+                                Divider()
+                                    .overlay(theme.divider)
+                                    .padding(.horizontal, 10)
 
-                    messageReader(overview)
-                        .frame(minWidth: 240, maxWidth: .infinity)
+                                messageReader(overview)
+                                    .frame(minWidth: 240, maxWidth: .infinity)
+                            }
+                        } else if geometry.size.width >= MailNativePanelLayout.stackedBreakpoint {
+                            let widths = MailNativePanelLayout.compactPaneWidths(contentWidth: geometry.size.width)
+                            HStack(alignment: .top, spacing: 8) {
+                                mailboxSidebar(overview)
+                                    .frame(width: widths.mailboxes, alignment: .topLeading)
+
+                                Divider()
+                                    .overlay(theme.divider)
+                                    .frame(width: 1)
+
+                                threadedMessageList(overview)
+                                    .frame(width: widths.messages, alignment: .topLeading)
+
+                                Divider()
+                                    .overlay(theme.divider)
+                                    .frame(width: 1)
+
+                                messageReader(overview)
+                                    .frame(width: widths.reader, alignment: .topLeading)
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                mailboxSidebar(overview)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                                threadedMessageList(overview)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                                messageReader(overview)
+                                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 .frame(minHeight: 590)
 
