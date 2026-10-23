@@ -52,6 +52,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleExecutable</key>
   <string>Hanasand</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
   <key>CFBundleIdentifier</key>
   <string>com.hanasand.desktop</string>
   <key>CFBundleName</key>
@@ -62,14 +64,22 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>Hanasand</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleSignature</key>
+  <string>????</string>
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+    <string>MacOSX</string>
+  </array>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>
@@ -84,6 +94,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Keep the legacy package-type marker alongside Info.plist. Launch Services
+# uses this in addition to the executable metadata when registering app bundles.
+printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
 
 if [[ "${HANASAND_ALLOW_ADHOC_SIGNING:-}" == "1" ]]; then
   echo "Signing ad-hoc because HANASAND_ALLOW_ADHOC_SIGNING=1 is set." >&2
