@@ -99,6 +99,77 @@ final class ThreatRulesTests: XCTestCase {
         XCTAssertEqual(body?["limit"] as? Int, 2000)
         XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, ThreatRulesClient.tuningOrganizationID)
     }
+
+    func testRuleDetailPreservesHistoricalVersionAndPagesAuditInSelectedOrganization() async throws {
+        var captured: URLRequest?
+        let audit = #"{"id":"audit-1","event_type":"event.rule.updated","actor_id":"owner","created_at":"2026-10-22T17:31:00.000Z","context":{"before":{"version":"1","enabled":true,"name":"Old name"},"after":{"version":"2","enabled":false,"name":"New name"},"action":"event.rule.updated"}}"#
+        let historicalRule = #"{"id":"custom.example.v1","name":"Old name","explanation":"A representative organization rule.","severity":"medium","version":"2","enabled":true,"source":"owned","family":"Custom","hitCount":8,"definition":{"stage":"analyze","action":"drop","conditions":[{"path":"message","operator":"equals","value":"bad","caseSensitive":true}]}}"#
+        let client = ThreatRulesClient(settings: settings) { request in
+            captured = request
+            return self.response(#"{"organizationId":"org-1","canEdit":false,"isHistorical":true,"rule":\#(historicalRule),"triggerCount":8,"audit":[\#(audit)],"nextOffset":100}"#, for: request)
+        }
+
+        let detail = try await client.loadRule(id: "custom.example.v2", organizationID: "org-1", offset: 50)
+
+        XCTAssertEqual(captured?.url?.path, "/api/rules/custom.example.v2")
+        let query = URLComponents(url: try XCTUnwrap(captured?.url), resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first(where: { $0.name == "organizationId" })?.value, "org-1")
+        XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "50")
+        XCTAssertEqual(detail.rule.version, "2")
+        XCTAssertTrue(detail.isHistorical)
+        XCTAssertFalse(detail.canEdit)
+        XCTAssertEqual(detail.audit.first?.actor_id, "owner")
+        XCTAssertEqual(detail.audit.first?.event_type, "event.rule.updated")
+        XCTAssertEqual(detail.audit.first?.before["name"]?.stringValue, "Old name")
+        XCTAssertEqual(detail.audit.first?.after["name"]?.stringValue, "New name")
+        XCTAssertEqual(detail.audit.first?.action, "event.rule.updated")
+        XCTAssertEqual(detail.nextOffset, 100)
+    }
+
+    func testCurrentRuleDetailUsesVersionFreeSlug() async throws {
+        var captured: URLRequest?
+        let client = ThreatRulesClient(settings: settings) { request in
+            captured = request
+            return self.response(#"{"organizationId":"org-1","canEdit":true,"isHistorical":false,"rule":\#(self.ruleJSON),"triggerCount":8,"audit":[],"nextOffset":null}"#, for: request)
+        }
+
+        let detail = try await client.loadRule(id: "custom.example", organizationID: "org-1")
+
+        XCTAssertEqual(captured?.url?.path, "/api/rules/custom.example")
+        XCTAssertFalse(detail.isHistorical)
+        XCTAssertEqual(detail.rule.id, "custom.example.v1")
+    }
+
+    func testHistoricalRuleDetailRejectsMismatchedReturnedVersion() async {
+        let client = ThreatRulesClient(settings: settings) { request in
+            self.response(#"{"organizationId":"org-1","canEdit":true,"isHistorical":false,"rule":\#(self.ruleJSON),"triggerCount":8,"audit":[],"nextOffset":null}"#, for: request)
+        }
+        do {
+            _ = try await client.loadRule(id: "custom.example.v9", organizationID: "org-1")
+            XCTFail("Expected an unavailable historical snapshot to be rejected")
+        } catch ThreatRulesError.organizationUnavailable {
+        } catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func testRuleMetricsUseOrganizationScopedReadEndpoints() async throws {
+        var requests: [URLRequest] = []
+        let client = ThreatRulesClient(settings: settings) { request in
+            requests.append(request)
+            if request.url?.path.hasSuffix("/hits") == true {
+                return self.response(#"{"organizationId":"org-1","triggerCount":12}"#, for: request)
+            }
+            return self.response(#"{"organizationId":"org-1","estimate":{"count":21,"bytes":8192,"checkedDate":"2026-10-22","generatedAt":"2026-10-22T12:00:00.000Z"}}"#, for: request)
+        }
+
+        let count = try await client.loadRuleHitCount(id: "custom.example.v1", organizationID: "org-1")
+        let estimate = try await client.loadRuleStorageEstimate(id: "custom.example.v1", organizationID: "org-1")
+
+        XCTAssertEqual(count, 12)
+        XCTAssertEqual(estimate?.count, 21)
+        XCTAssertEqual(estimate?.bytes, 8192)
+        XCTAssertEqual(requests.map { $0.url?.path }, ["/api/rules/custom.example/hits", "/api/rules/custom.example/storage-estimate"])
+        XCTAssertTrue(requests.allSatisfy { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "organizationId" && $0.value == "org-1" }) == true })
+    }
 }
 
 private extension Data {

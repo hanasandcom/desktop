@@ -6,6 +6,12 @@ struct ThreatRulesNativePanel: View {
     let category: String
     @State private var page: ThreatRulesPage?
     @State private var selected: ThreatRuleRecord?
+    @State private var selectedDetail: RuleDetailEnvelope?
+    @State private var selectedDetailRequestID: String?
+    @State private var ruleHitCount: Int?
+    @State private var storageEstimate: RuleStorageEstimateEnvelope.Estimate?
+    @State private var storageEstimateStatus = ""
+    @State private var loadingOlderAudit = false
     @State private var draftName = ""
     @State private var draftExplanation = ""
     @State private var draftSeverity = "medium"
@@ -28,7 +34,10 @@ struct ThreatRulesNativePanel: View {
     } ?? [] }
     private var visibleRules: [ThreatRuleRecord] { Array(rules.dropFirst(pageNumber * 30).prefix(30)) }
     private var canManage: Bool { !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty ? false : ["owner", "admin", "editor"].contains(page?.organization.role.lowercased() ?? "") }
-    private var canEditDraft: Bool { canManage && (category != "analysis" || page?.canManageRetention == true) }
+    private var canEditDraft: Bool {
+        guard canManage, category != "analysis" || page?.canManageRetention == true else { return false }
+        return selected == nil || selectedDetail?.canEdit == true
+    }
     private var isBuiltIn: Bool { selected?.source == "hanasand" }
 
     var body: some View {
@@ -70,6 +79,7 @@ struct ThreatRulesNativePanel: View {
             else { NativeEmptyState(title: model.hasHanasandAuth ? "Select an organization" : "Sign in required", message: model.hasHanasandAuth ? "Choose an active organization in Organizations to review its rules." : "Sign in to review organization rules.") }
         }
         .task(id: "\(organizationID):\(category):\(model.userIDForRequests)") { await load() }
+        .task(id: "\(organizationID):\(selected?.id ?? "")") { await refreshSelectedRuleMetrics() }
         .confirmationDialog("Save rule changes?", isPresented: $confirmSave, titleVisibility: .visible) {
             Button(selected == nil ? "Create rule" : "Save changes", role: draftAction == "drop" ? .destructive : nil) { Task { await save() } }
             Button("Cancel", role: .cancel) { }
@@ -112,19 +122,121 @@ struct ThreatRulesNativePanel: View {
     @ViewBuilder private func detail(_ rule: ThreatRuleRecord) -> some View {
         NativeGroupPanel(title: rule.name, subtitle: "Version \(rule.version) · \(rule.source)") {
             HStack(spacing: 8) {
-                ActionButton(title: "Back to rules", icon: "chevron.left") { selected = nil; preview = nil }
-                ActionButton(title: canEditDraft ? "Edit rule" : "View definition", icon: "pencil") { beginEdit(rule) }.disabled(busy)
+                ActionButton(title: "Back to rules", icon: "chevron.left") { selected = nil; selectedDetail = nil; selectedDetailRequestID = nil; ruleHitCount = nil; storageEstimate = nil; preview = nil }
+                if selectedDetail?.isHistorical == true {
+                    ActionButton(title: "Open current rule", icon: "arrow.uturn.backward") { Task { await openCurrentRule() } }.disabled(busy)
+                } else if selectedDetail?.canEdit == true {
+                    ActionButton(title: "Edit rule", icon: "pencil") { beginEdit(rule) }.disabled(busy)
+                }
+            }
+            if selectedDetail?.isHistorical == true {
+                NativeNotice(message: "Historical version \(rule.version). This snapshot is read-only.")
+            } else if selectedDetail?.canEdit != true {
+                NativeNotice(message: "Read-only view. Your current organization role cannot edit this rule.")
             }
             Text(rule.explanation).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
-            Text("\(rule.enabled ? "Enabled" : "Disabled") · \(rule.severity) · \(rule.stage) · \(rule.action) · \(rule.hitCount.map(String.init) ?? "Hits unavailable") hits")
+            Text("\(rule.enabled ? "Enabled" : "Disabled") · \(rule.severity) · \(rule.stage) · \(rule.action) · \(ruleHitCount.map(String.init) ?? "Unavailable") hits")
                 .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+            if rule.stage == "analyze" && rule.action == "drop" {
+                if let storageEstimate {
+                    Text("Undropped estimate: \(storageEstimate.count) events · \(storageEstimate.bytes) bytes · checked \(storageEstimate.checkedDate)")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+                } else {
+                    Text("Storage estimate: \(storageEstimateStatus.isEmpty ? "Unavailable" : storageEstimateStatus)")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                }
+            }
             ForEach(Array(rule.conditions.enumerated()), id: \.offset) { index, condition in
                 Text("\(index + 1). \(condition.path) \(condition.operation) \(condition.value)").font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
             }
         }
+        if let selectedDetail {
+            NativeGroupPanel(title: "Audit history · \(selectedDetail.audit.count)", subtitle: "Organization rule changes · newest first") {
+                if selectedDetail.audit.isEmpty {
+                    Text("No recorded changes for this rule in this organization.")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+                }
+                ForEach(selectedDetail.audit) { entry in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(auditAction(entry.event_type))
+                                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+                            if let action = entry.action, !action.isEmpty {
+                                Text("· \(action)").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                            }
+                        }
+                        Text("\(entry.actor_id ?? "System") · \(entry.created_at)")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+                        ForEach(auditChangedFields(entry), id: \.key) { change in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(change.key.capitalized).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                                if let before = change.before {
+                                    Text("Before: \(displayAuditValue(before))")
+                                        .font(.system(size: 10, weight: .regular, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+                                }
+                                if let after = change.after {
+                                    Text("After: \(displayAuditValue(after))")
+                                        .font(.system(size: 10, weight: .regular, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        HStack(spacing: 8) {
+                            if let version = auditVersion(entry.before["version"]), version != selectedDetail.rule.version {
+                                ActionButton(title: "View version \(version)", icon: "clock.arrow.circlepath") { Task { await openRuleVersion(version) } }.disabled(busy)
+                            }
+                            if let version = auditVersion(entry.after["version"]), version != selectedDetail.rule.version {
+                                ActionButton(title: "View version \(version)", icon: "clock.arrow.circlepath") { Task { await openRuleVersion(version) } }.disabled(busy)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 7)
+                }
+                if selectedDetail.nextOffset != nil {
+                    ActionButton(title: loadingOlderAudit ? "Loading older changes…" : "Load older changes", icon: "arrow.down") { Task { await loadOlderAudit() } }
+                        .disabled(busy || loadingOlderAudit)
+                }
+            }
+        }
+    }
+
+    private func auditAction(_ eventType: String) -> String {
+        switch eventType {
+        case "event.rule.created": "Rule created"
+        case "event.rule.imported": "Rule imported"
+        default: "Rule updated"
+        }
+    }
+
+    private func auditVersion(_ value: ThreatRuleJSON?) -> String? {
+        guard let version = value?.stringValue, !version.isEmpty else { return nil }
+        return version
+    }
+
+    private func auditChangedFields(_ entry: RuleAuditRecord) -> [(key: String, before: ThreatRuleJSON?, after: ThreatRuleJSON?)] {
+        Set(entry.before.keys).union(entry.after.keys).sorted().compactMap { key in
+            let before = entry.before[key]
+            let after = entry.after[key]
+            guard before != after else { return nil }
+            return (key, before, after)
+        }
+    }
+
+    private func displayAuditValue(_ value: ThreatRuleJSON) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value), let text = String(data: data, encoding: .utf8) else { return "Unavailable" }
+        return String(text.prefix(1000))
     }
 
     private func load() async {
+        selected = nil
+        selectedDetail = nil
+        selectedDetailRequestID = nil
+        ruleHitCount = nil
+        storageEstimate = nil
+        storageEstimateStatus = ""
+        showingEditor = false
         guard model.hasHanasandAuth, !organizationID.isEmpty, model.settings.selectedOrganizationUserID == model.userIDForRequests else { page = nil; return }
         busy = true; error = ""; status = "Loading \(title.lowercased())"
         defer { busy = false }
@@ -138,11 +250,104 @@ struct ThreatRulesNativePanel: View {
     private func open(_ rule: ThreatRuleRecord) async {
         busy = true; error = ""; defer { busy = false }
         do {
-            let detail = try await ThreatRulesClient(settings: model.settings).loadRule(id: rule.id, organizationID: organizationID).rule
-            selected = detail
-            beginEdit(detail)
+            let requestID = rule.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression)
+            let loaded = try await ThreatRulesClient(settings: model.settings).loadRule(id: requestID, organizationID: organizationID)
+            guard organizationID == model.selectedOrganizationID else { throw ThreatRulesError.organizationScopeChanged }
+            selectedDetail = loaded
+            selectedDetailRequestID = requestID
+            selected = loaded.rule
+            ruleHitCount = loaded.triggerCount
+            storageEstimate = nil
+            storageEstimateStatus = loaded.isHistorical ? "Unavailable for historical versions" : "Loading estimate…"
+            showingEditor = false
         }
         catch { self.error = error.localizedDescription }
+    }
+
+    private func openRuleVersion(_ version: String) async {
+        guard let selected else { return }
+        let id = "\(selected.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression)).v\(version)"
+        await loadRuleDetail(id: id)
+    }
+
+    private func openCurrentRule() async {
+        guard let selected else { return }
+        await loadRuleDetail(id: selected.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression))
+    }
+
+    private func loadRuleDetail(id: String, offset: Int = 0, appendAudit: Bool = false) async {
+        busy = true
+        error = ""
+        defer { busy = false }
+        do {
+            let loaded = try await ThreatRulesClient(settings: model.settings).loadRule(id: id, organizationID: organizationID, offset: offset)
+            guard organizationID == model.selectedOrganizationID else { throw ThreatRulesError.organizationScopeChanged }
+            if appendAudit, let current = selectedDetail {
+                selectedDetail = RuleDetailEnvelope(
+                    organizationId: loaded.organizationId,
+                    canEdit: current.canEdit,
+                    isHistorical: current.isHistorical,
+                    rule: current.rule,
+                    triggerCount: current.triggerCount,
+                    audit: current.audit + loaded.audit,
+                    nextOffset: loaded.nextOffset
+                )
+            } else {
+                selectedDetail = loaded
+                selectedDetailRequestID = id
+                selected = loaded.rule
+                ruleHitCount = loaded.triggerCount
+                storageEstimate = nil
+                storageEstimateStatus = loaded.isHistorical ? "Unavailable for historical versions" : "Loading estimate…"
+                showingEditor = false
+            }
+        } catch let caughtError { error = caughtError.localizedDescription }
+    }
+
+    private func loadOlderAudit() async {
+        guard let nextOffset = selectedDetail?.nextOffset, let requestID = selectedDetailRequestID else { return }
+        loadingOlderAudit = true
+        defer { loadingOlderAudit = false }
+        await loadRuleDetail(id: requestID, offset: nextOffset, appendAudit: true)
+    }
+
+    private func refreshSelectedRuleMetrics() async {
+        guard selected != nil, !showingEditor else { return }
+        await updateSelectedRuleMetrics()
+        while !Task.isCancelled {
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            guard !Task.isCancelled, selected != nil, !showingEditor else { return }
+            await updateSelectedRuleMetrics()
+        }
+    }
+
+    private func updateSelectedRuleMetrics() async {
+        guard let selected else { return }
+        let client = ThreatRulesClient(settings: model.settings)
+        do {
+            let hitCount = try await client.loadRuleHitCount(id: selected.id, organizationID: organizationID)
+            guard selected.id == self.selected?.id, organizationID == model.selectedOrganizationID else { return }
+            ruleHitCount = hitCount
+            if selectedDetail?.isHistorical == true {
+                storageEstimate = nil
+                storageEstimateStatus = "Unavailable for historical versions"
+            } else if selected.stage == "analyze" && selected.action == "drop" {
+                let estimateValue = try await client.loadRuleStorageEstimate(id: selected.id, organizationID: organizationID)
+                guard selected.id == self.selected?.id, organizationID == model.selectedOrganizationID else { return }
+                storageEstimate = estimateValue
+                storageEstimateStatus = estimateValue == nil ? "Pending" : "Available"
+            } else {
+                storageEstimate = nil
+                storageEstimateStatus = "Not applicable"
+            }
+            if let current = selectedDetail {
+                selectedDetail = RuleDetailEnvelope(organizationId: current.organizationId, canEdit: current.canEdit, isHistorical: current.isHistorical, rule: current.rule, triggerCount: hitCount, audit: current.audit, nextOffset: current.nextOffset)
+            }
+        } catch {
+            guard selected.id == self.selected?.id else { return }
+            storageEstimate = nil
+            storageEstimateStatus = "Unavailable"
+        }
     }
 
     private func beginNewRule() {
@@ -171,6 +376,7 @@ struct ThreatRulesNativePanel: View {
             guard organizationID == model.selectedOrganizationID else { throw ThreatRulesError.organizationScopeChanged }
             selected = saved; showingEditor = false; status = "Rule saved. Existing events were not reprocessed."; preview = nil
             await load()
+            await loadRuleDetail(id: saved.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression))
         } catch { self.error = error.localizedDescription }
     }
 

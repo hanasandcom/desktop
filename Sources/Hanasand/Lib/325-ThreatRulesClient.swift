@@ -18,13 +18,42 @@ struct ThreatRulesClient {
         return ThreatRulesPage(organization: membership, canManageRetention: envelope.canManageRetention, rules: envelope.rules)
     }
 
-    func loadRule(id: String, organizationID: String) async throws -> RuleDetailEnvelope {
+    func loadRule(id: String, organizationID: String, offset: Int = 0) async throws -> RuleDetailEnvelope {
         try requireCurrentOrganization(organizationID)
-        let envelope: RuleDetailEnvelope = try await request(path: "rules/\(segment(ruleSlug(id)))", query: [URLQueryItem(name: "organizationId", value: organizationID)])
-        guard envelope.organizationId == organizationID, envelope.rule.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression) == ruleSlug(id) else {
+        guard (0...1_000_000).contains(offset), id.range(of: #"^[A-Za-z0-9_.:@-]{1,200}$"#, options: .regularExpression) != nil else {
+            throw ThreatRulesError.invalidInput("Choose a valid rule version and history page.")
+        }
+        var query = [URLQueryItem(name: "organizationId", value: organizationID)]
+        if offset > 0 { query.append(URLQueryItem(name: "offset", value: String(offset))) }
+        let envelope: RuleDetailEnvelope = try await request(path: "rules/\(segment(id))", query: query)
+        guard envelope.organizationId == organizationID, ruleSlug(envelope.rule.id) == ruleSlug(id) else {
+            throw ThreatRulesError.organizationUnavailable
+        }
+        if let requestedVersion = id.range(of: #"\.v(\d+)$"#, options: .regularExpression).map({ String(id[$0].dropFirst(2)) }),
+           envelope.rule.version != requestedVersion {
             throw ThreatRulesError.organizationUnavailable
         }
         return envelope
+    }
+
+    func loadRuleHitCount(id: String, organizationID: String) async throws -> Int? {
+        try requireCurrentOrganization(organizationID)
+        let envelope: RuleHitCountEnvelope = try await request(
+            path: "rules/\(segment(ruleSlug(id)))/hits",
+            query: [URLQueryItem(name: "organizationId", value: organizationID)]
+        )
+        guard envelope.organizationId == organizationID else { throw ThreatRulesError.organizationUnavailable }
+        return envelope.triggerCount
+    }
+
+    func loadRuleStorageEstimate(id: String, organizationID: String) async throws -> RuleStorageEstimateEnvelope.Estimate? {
+        try requireCurrentOrganization(organizationID)
+        let envelope: RuleStorageEstimateEnvelope = try await request(
+            path: "rules/\(segment(ruleSlug(id)))/storage-estimate",
+            query: [URLQueryItem(name: "organizationId", value: organizationID)]
+        )
+        guard envelope.organizationId == organizationID else { throw ThreatRulesError.organizationUnavailable }
+        return envelope.estimate
     }
 
     func preview(definition: ThreatRuleJSON, organizationID: String, from: String, until: String, cursor: ThreatRulePreview.Cursor? = nil) async throws -> ThreatRulePreview {
@@ -65,7 +94,7 @@ struct ThreatRulesClient {
         let cleanExplanation = explanation.trimmingCharacters(in: .whitespacesAndNewlines)
         var body: [String: Any] = ["name": cleanName, "explanation": cleanExplanation, "severity": action == "drop" ? "low" : severity, "enabled": enabled]
         if let rule {
-            let latest = try await loadRule(id: rule.id, organizationID: organizationID)
+            let latest = try await loadRule(id: ruleSlug(rule.id), organizationID: organizationID)
             guard latest.canEdit, !latest.isHistorical, latest.rule.version == rule.version else { throw ThreatRulesError.permissionDenied }
             body["version"] = rule.version
             if rule.source == "hanasand" { body["definition"] = try jsonValue(definition) }
@@ -281,7 +310,33 @@ struct TuningAccess: Equatable { let verified = true; let canWrite: Bool }
 struct RuleListEnvelope: Decodable { let organizationId: String; let rules: [ThreatRuleRecord]; let canManageRetention: Bool }
 private struct TuningRuleListEnvelope: Decodable { let organizationId: String; let rules: [ThreatRuleSummary] }
 struct RuleDetailEnvelope: Decodable { let organizationId: String; let canEdit: Bool; let isHistorical: Bool; let rule: ThreatRuleRecord; let triggerCount: Int?; let audit: [RuleAuditRecord]; let nextOffset: Int? }
-struct RuleAuditRecord: Decodable, Identifiable { let id: String; let event_type: String; let created_at: String }
+struct RuleAuditRecord: Decodable, Identifiable {
+    let id: String
+    let event_type: String
+    let actor_id: String?
+    let created_at: String
+    let context: [String: ThreatRuleJSON]
+
+    var before: [String: ThreatRuleJSON] { context["before"]?.objectValue ?? [:] }
+    var after: [String: ThreatRuleJSON] { context["after"]?.objectValue ?? [:] }
+    var action: String? { context["action"]?.stringValue }
+
+    private enum CodingKeys: String, CodingKey { case id, event_type, actor_id, created_at, context }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        event_type = try container.decode(String.self, forKey: .event_type)
+        actor_id = try container.decodeIfPresent(String.self, forKey: .actor_id)
+        created_at = try container.decode(String.self, forKey: .created_at)
+        context = try container.decodeIfPresent([String: ThreatRuleJSON].self, forKey: .context) ?? [:]
+    }
+}
+struct RuleHitCountEnvelope: Decodable { let organizationId: String; let triggerCount: Int? }
+struct RuleStorageEstimateEnvelope: Decodable {
+    struct Estimate: Decodable, Equatable { let count: Int; let bytes: Int; let checkedDate: String; let generatedAt: String }
+    let organizationId: String
+    let estimate: Estimate?
+}
 struct RuleReceiptEnvelope: Decodable { let rule: ThreatRuleRecord }
 private struct OrganizationListEnvelope: Decodable { let organizations: [ThreatRuleOrganization] }
 private struct TuningAccessEnvelope: Decodable { let allowed: Bool; let canEdit: Bool }
