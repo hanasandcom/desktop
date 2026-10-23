@@ -24,7 +24,7 @@ struct ThesisNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "Thesis", subtitle: "Shared Hanasand workspace") {
+            NativeGroupPanel(title: "Thesis", subtitle: "Shared Hanasand workspace", fillsAvailableWidth: true) {
                 HStack(spacing: 8) {
                     ActionButton(title: busy ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }
                         .disabled(busy)

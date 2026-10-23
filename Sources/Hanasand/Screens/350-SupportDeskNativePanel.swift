@@ -33,7 +33,7 @@ struct SupportDeskNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "Support Desk", subtitle: "Customer conversations · latest 100 maximum") {
+            NativeGroupPanel(title: "Support Desk", subtitle: "Customer conversations · latest 100 maximum", fillsAvailableWidth: true) {
                 HStack(spacing: 8) {
                     ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
                     ActionButton(title: searchOpen ? "Hide filters" : "Find conversations", icon: "line.3.horizontal.decrease.circle") { searchOpen.toggle() }.disabled(busy)
