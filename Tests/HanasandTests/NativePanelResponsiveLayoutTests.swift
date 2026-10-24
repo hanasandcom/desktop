@@ -40,4 +40,11 @@ final class NativePanelResponsiveLayoutTests: XCTestCase {
         XCTAssertLessThan(500, MailNativePanelLayout.stackedBreakpoint)
         XCTAssertLessThan(500, SharesNativePanelLayout.stackedBreakpoint)
     }
+
+    func testMailQuickFilterGridKeepsLabelsReadableInTwoColumnMessagePanes() {
+        let twoColumnMinimum = MailNativePanelLayout.quickFilterMinimumColumnWidth * 2 + 6
+
+        XCTAssertGreaterThanOrEqual(MailNativePanelLayout.quickFilterMinimumColumnWidth, 160)
+        XCTAssertLessThanOrEqual(twoColumnMinimum, 326)
+    }
 }

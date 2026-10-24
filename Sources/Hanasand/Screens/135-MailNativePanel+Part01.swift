@@ -15,6 +15,7 @@ enum MailNativePanelLayout {
     static let originalColumnsBreakpoint: CGFloat = 660
     static let expandedColumnsBreakpoint: CGFloat = 1120
     static let horizontalChromeWidth: CGFloat = 34
+    static let quickFilterMinimumColumnWidth: CGFloat = 160
 
     enum Mode: Equatable { case stacked, compact, expanded }
 

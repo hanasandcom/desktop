@@ -14,7 +14,7 @@ extension MailNativePanel {
 
     func threadedMessageList(_ overview: MailOverviewEnvelope) -> some View {
         NativeGroupPanel(title: "Messages", subtitle: "\(filteredMessages.count) visible · \(threadCount) threads") {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 6)], alignment: .leading, spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: MailNativePanelLayout.quickFilterMinimumColumnWidth), spacing: 6)], alignment: .leading, spacing: 6) {
                 ForEach(MailQuickFilter.allCases) { filter in
                     let selected = quickFilter == filter
                     Button {
@@ -23,6 +23,8 @@ extension MailNativePanel {
                         HStack(spacing: 5) {
                             Image(systemName: filter.symbol)
                             Text(filter.title)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                             Text("\(quickFilterCounts[filter, default: 0])")
                                 .monospacedDigit()
                         }
