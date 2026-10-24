@@ -208,17 +208,39 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testStripeDestinationOpensInBuiltInBrowserWithoutLoggingSessionURL() {
+    func testStripeDestinationOpensExternallyWithoutLoggingSessionURL() {
         let model = DesktopAgentModel()
         let sessionURL = "https://checkout.stripe.com/c/pay/cs_test_sensitive"
         model.events = []
+        var openedURL: URL?
 
-        model.openInlineBrowser(url: sessionURL, title: "Stripe checkout", source: "VM failover", includeURLInActivityLog: false)
+        let didOpen = model.openStripeExternally(url: sessionURL, title: "checkout", source: "VM failover") {
+            openedURL = $0
+            return true
+        }
 
-        XCTAssertEqual(model.selectedSection, .browser)
-        XCTAssertEqual(model.browserOpenRequest?.url, sessionURL)
-        XCTAssertEqual(model.browserOpenRequest?.title, "Stripe checkout")
+        XCTAssertTrue(didOpen)
+        XCTAssertEqual(openedURL?.absoluteString, sessionURL)
         XCTAssertFalse(model.events.contains { $0.body.contains("cs_test_sensitive") })
+    }
+
+    @MainActor
+    func testStripeExternalOpeningRejectsNonStripeHosts() {
+        let model = DesktopAgentModel()
+        var handlerCalled = false
+
+        let didOpen = model.openStripeExternally(
+            url: "https://checkout.stripe.com.attacker.test/session",
+            title: "checkout",
+            source: "VM failover"
+        ) { _ in
+            handlerCalled = true
+            return true
+        }
+
+        XCTAssertFalse(didOpen)
+        XCTAssertFalse(handlerCalled)
+        XCTAssertEqual(model.events.last?.kind, .error)
     }
 
     func testCanonicalMobileNavigationPathsResolveToTheirNativeWorkflows() {

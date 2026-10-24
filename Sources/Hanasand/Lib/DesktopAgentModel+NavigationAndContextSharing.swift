@@ -154,6 +154,30 @@ extension DesktopAgentModel {
         append(meta: "Opened \(label)", body: url.absoluteString, kind: .command)
     }
 
+    @discardableResult
+    func openStripeExternally(
+        url rawValue: String,
+        title: String,
+        source: String,
+        open: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    ) -> Bool {
+        guard let url = URL(string: rawValue),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              ["billing.stripe.com", "checkout.stripe.com"].contains(host),
+              url.user == nil, url.password == nil,
+              url.port == nil || url.port == 443 else {
+            append(meta: "Stripe", body: "Could not open the secure Stripe page.", kind: .error)
+            return false
+        }
+        guard open(url) else {
+            append(meta: "Stripe", body: "Could not open the secure Stripe page in your default browser.", kind: .error)
+            return false
+        }
+        append(meta: "Stripe", body: "\(source) opened \(title) in your default browser.", kind: .command)
+        return true
+    }
+
     func copyCurrentContext() {
         let context = currentShareContext()
         NSPasteboard.general.clearContents()
