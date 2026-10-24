@@ -33,6 +33,91 @@ final class SecurityScannerClientTests: XCTestCase {
         XCTAssertNil(captured?.value(forHTTPHeaderField: "x-impersonation-token"))
     }
 
+    func testPausedDashboardBlocksScannerWritesBeforeAnyTransportCall() async throws {
+        var sent = 0
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: true, send: { request in
+            sent += 1
+            return (Data(), self.response(request, 200))
+        })
+        do {
+            _ = try await client.createAsset(hostname: "example.com")
+            XCTFail("paused scanner must reject writes")
+        } catch {
+            XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.servicesPaused.localizedDescription)
+        }
+        XCTAssertEqual(sent, 0, "paused write guard must run before membership or scanner requests")
+        let dashboard = try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner services are stopped pending disk expansion."}"#.utf8))
+        XCTAssertTrue(dashboard.servicesPaused)
+        XCTAssertFalse(try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner service is loading."}"#.utf8)).servicesPaused)
+    }
+
+    func testHistoryFiltersAndLocalPagingMatchWebsiteSearchFields() throws {
+        let runs = try (0..<23).map { index in
+            try scannerRun(id: "run-\(index)", target: index == 4 ? "api.example.com" : "host-\(index).example.com",
+                           engine: index.isMultiple(of: 2) ? "nmap" : "naabu", source: index == 3 ? "scheduled" : "manual")
+        }
+        let filtered = SecurityScannerHistoryFilter.runs(runs, query: " SCHEDULED ", engine: "all", status: "all")
+        XCTAssertEqual(filtered.map(\.id), ["run-3"])
+        XCTAssertEqual(SecurityScannerHistoryFilter.runs(runs, query: "api.example", engine: "all", status: "all").map(\.id), ["run-4"])
+        XCTAssertEqual(SecurityScannerHistoryFilter.runs(runs, query: "", engine: "naabu", status: "failed").count, 0)
+        XCTAssertEqual(SecurityScannerHistoryFilter.page(runs, index: 2, size: 10).map(\.id), ["run-20", "run-21", "run-22"])
+        XCTAssertEqual(SecurityScannerHistoryFilter.page(runs, index: -1, size: 10).count, 10)
+        XCTAssertEqual(SecurityScannerHistoryFilter.pageCount(total: 23, size: 10), 3)
+
+        let assessments = try [
+            scannerAssessment(id: "assessment-1", status: "succeeded", asset: "api.example.com"),
+            scannerAssessment(id: "assessment-2", status: "failed", asset: "other.example.com"),
+        ]
+        XCTAssertEqual(SecurityScannerHistoryFilter.assessments(assessments, query: "api.example", status: "all").map(\.id), ["assessment-1"])
+        XCTAssertEqual(SecurityScannerHistoryFilter.assessments(assessments, query: "", status: "failed").map(\.id), ["assessment-2"])
+    }
+
+    func testRunDecodingPreservesEngineSpecificObservationsFindingsAndCoverage() async throws {
+        let fixture = #"{"id":"run-rich","scannerRunId":null,"requestId":"req-rich","assetId":"asset-1","target":"example.com","targetOrigin":"https://example.com","engine":"tlsx","profile":"tlsx-certificate-metadata-v1","source":"assessment","status":"succeeded","createdAt":"2026-10-23T10:00:00Z","startedAt":null,"finishedAt":null,"error":null,"engineVersion":"1.2","rawXmlSha256":null,"rawOutputSha256":"sha-output","reportHashes":{"json":"sha-report"},"attemptedAddresses":["203.0.113.5"],"completedAddresses":["203.0.113.5"],"coverage":{"known":true,"requestedAddresses":1,"attemptedAddresses":1,"completedAddresses":1,"completedAddressList":["203.0.113.5"],"missingAddresses":[],"unattemptedAddresses":[],"origin":"https://example.com","urlsVisited":3,"urlsDiscovered":2,"clientUrlsDiscovered":4,"traditionalSpiderComplete":true,"clientSpiderComplete":false,"totalAlerts":2,"acceptedAlerts":1,"acceptedInstances":1,"scopeFiltered":true,"truncationReasons":["time_limit"],"truncated":true,"complete":false},"observations":[{"id":"tls-1","address":"203.0.113.5","hostname":"example.com","port":443,"probeStatus":true,"tlsVersion":"TLS 1.3","cipher":"TLS_AES_128_GCM_SHA256","connectionMode":"direct","sni":"example.com","subjectCommonNames":["example.com"],"subjectAlternativeNames":["example.com","www.example.com"],"subjectOrganizations":[],"notBefore":"2026-01-01","notAfter":"2027-01-01","certificateSha256":"cert-sha","certificateSerial":"serial-1"}],"findings":[{"findingId":"nuclei-1","provider":"nuclei","title":"Example exposed endpoint","severity":"medium","assetAddress":"203.0.113.5","description":"Fixture description","evidence":"fixture evidence","templateId":"http/exposed","host":"https://example.com","matchedAt":"https://example.com/admin","tags":["exposure","panel"],"reference":["https://example.invalid/advisory"],"disposition":"finding"}]}"#
+        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in (Data(fixture.utf8), self.response(request, 200)) })
+        let run = try await client.run(id: "run-rich", engine: "tlsx")
+        XCTAssertEqual(run.rawOutputSha256, "sha-output")
+        XCTAssertEqual(run.reportHashes?["json"], "sha-report")
+        XCTAssertEqual(run.attemptedAddresses, ["203.0.113.5"])
+        XCTAssertEqual(run.coverage?.clientUrlsDiscovered, 4)
+        XCTAssertEqual(run.coverage?.traditionalSpiderComplete, true)
+        XCTAssertEqual(run.coverage?.clientSpiderComplete, false)
+        XCTAssertEqual(run.observations?.first?.certificateSHA256, "cert-sha")
+        XCTAssertEqual(run.observations?.first?.subjectAlternativeNames, ["example.com", "www.example.com"])
+        XCTAssertEqual(run.findings?.first?.pluginID, nil)
+        XCTAssertEqual(run.findings?.first?.matchedAt, "https://example.com/admin")
+        XCTAssertEqual(run.findings?.first?.references, ["https://example.invalid/advisory"])
+        XCTAssertEqual(run.findings?.first?.tags, ["exposure", "panel"])
+    }
+
+    func testUDPProfileIsSerializedForManualAndScheduledNmapScans() async throws {
+        let asset = scannerAsset()
+        var capturedBodies: [[String: Any]] = []
+        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+            if request.url?.host == "identity.hanasand.com" {
+                return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
+            }
+            if let body = request.httpBody, let decoded = try JSONSerialization.jsonObject(with: body) as? [String: Any] { capturedBodies.append(decoded) }
+            if request.url?.path.hasSuffix("/scans") == true {
+                let receipt = ["run": ["id": "run-udp", "requestId": "request-udp", "assetId": asset.id, "target": asset.hostname,
+                                        "engine": "nmap", "profile": "udp-top-100", "status": "queued", "createdAt": "2026-10-23T10:00:00Z"]]
+                return (try JSONSerialization.data(withJSONObject: receipt), self.response(request, 202))
+            }
+            let receipt = ["asset": ["id": asset.id, "hostname": asset.hostname, "verificationStatus": "verified", "verificationRecordName": "",
+                                      "verificationRecordValue": "", "verificationMethod": "dns_txt", "authorizedAddresses": ["203.0.113.1"],
+                                      "scheduleEnabled": true, "schedulePlan": [["engine": "nmap", "profile": "udp-top-100"]],
+                                      "scheduleEngine": "nmap", "scheduleProfile": "udp-top-100", "intervalMinutes": 1440,
+                                      "createdAt": "2026-10-23T10:00:00Z"]] as [String: Any]
+            return (try JSONSerialization.data(withJSONObject: receipt), self.response(request, 200))
+        })
+        let run = try await client.runScan(asset: asset, engine: .nmap, authorized: true, nmapProfile: .udpTop100)
+        XCTAssertEqual(run.profile, "udp-top-100")
+        _ = try await client.setSchedule(asset: asset, enabled: true, intervalMinutes: 1440, authorized: true,
+                                         engines: [.init(engine: "nmap", scanId: nil, profile: SecurityScannerNmapProfile.udpTop100.rawValue)])
+        XCTAssertEqual(capturedBodies.first?["profile"] as? String, "udp-top-100")
+        XCTAssertEqual((capturedBodies.last?["engines"] as? [[String: String]])?.first?["profile"], "udp-top-100")
+    }
+
     func testFindingSortSupportsSeverityAndFirstSeen() {
         let findings = [
             finding(id: "old-low", severity: "low", status: "open", firstSeen: "2026-01-01T00:00:00Z"),
@@ -200,6 +285,28 @@ final class SecurityScannerClientTests: XCTestCase {
                              authorizedAddresses: ["203.0.113.1"], scheduleEnabled: false, schedulePlan: [], scheduleEngine: "nmap",
                              scheduleScanId: nil, scheduleProfile: nil, zapApiDefinitionPath: nil, intervalMinutes: 60,
                              nextRunAt: nil, createdAt: "2026-10-23T10:00:00Z")
+    }
+
+    private func scannerRun(id: String, target: String, engine: String, source: String) throws -> SecurityScannerRun {
+        let value: [String: Any] = [
+            "id": id, "requestId": "request-\(id)", "assetId": "asset-1", "target": target,
+            "engine": engine, "profile": "tcp-top-1000", "source": source, "status": "succeeded",
+            "createdAt": "2026-10-23T10:00:00Z",
+        ]
+        return try JSONDecoder().decode(SecurityScannerRun.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    private func scannerAssessment(id: String, status: String, asset: String) throws -> SecurityScannerAssessment {
+        let job: [String: Any] = [
+            "id": "job-\(id)", "assetId": "asset-1", "asset": asset, "engine": "nmap", "profile": "tcp-top-1000",
+            "stageIndex": 0, "stage": "inventory", "status": "succeeded", "attemptCount": 1,
+            "createdAt": "2026-10-23T10:00:00Z",
+        ]
+        let value: [String: Any] = [
+            "id": id, "requestId": "request-\(id)", "status": status, "source": "manual",
+            "createdAt": "2026-10-23T10:00:00Z", "jobs": [job],
+        ]
+        return try JSONDecoder().decode(SecurityScannerAssessment.self, from: JSONSerialization.data(withJSONObject: value))
     }
 
     private func response(_ request: URLRequest, _ status: Int) -> HTTPURLResponse {

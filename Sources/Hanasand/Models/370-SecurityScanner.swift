@@ -43,7 +43,7 @@ enum SecurityScannerEngineID: String, Codable, CaseIterable, Identifiable {
 }
 
 enum SecurityScannerNmapProfile: String, Codable, CaseIterable, Identifiable {
-    case top100 = "tcp-top-100", top1000 = "tcp-top-1000", safeVuln = "tcp-top-1000-safe-vuln", allTCP = "tcp-all"
+    case top100 = "tcp-top-100", top1000 = "tcp-top-1000", safeVuln = "tcp-top-1000-safe-vuln", allTCP = "tcp-all", udpTop100 = "udp-top-100"
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -51,6 +51,7 @@ enum SecurityScannerNmapProfile: String, Codable, CaseIterable, Identifiable {
         case .top1000: "Standard · top 1,000 TCP ports"
         case .safeVuln: "Safe checks · top 1,000 ports + NSE"
         case .allTCP: "Thorough · all TCP ports"
+        case .udpTop100: "UDP · top 100 ports"
         }
     }
 }
@@ -167,6 +168,10 @@ struct SecurityScannerDashboard: Codable, Equatable {
     var tenableIntegration: SecurityScannerTenableIntegration?
     var tenableScans: [SecurityScannerTenableScan] = []
     var findingSummary: SecurityScannerFindingSummary?
+
+    var servicesPaused: Bool {
+        (scannerError ?? "").localizedCaseInsensitiveContains("stopped pending disk expansion")
+    }
 
     private enum CodingKeys: String, CodingKey {
         case assets, coverage, engines, scannerCatalog, runs, runsNextCursor, assessments, assessmentsNextCursor
@@ -326,9 +331,14 @@ struct SecurityScannerRun: Codable, Identifiable, Equatable {
     let error: String?
     let engineVersion: String?
     let rawXmlSha256: String?
+    let rawOutputSha256: String?
+    let reportHashes: [String: String]?
+    let attemptedAddresses: [String]?
+    let completedAddresses: [String]?
     let coverage: SecurityScannerRunCoverage?
     let hosts: [SecurityScannerHost]?
     let findings: [SecurityScannerRunFinding]?
+    let observations: [SecurityScannerObservation]?
 }
 
 struct SecurityScannerHost: Codable, Equatable, Identifiable {
@@ -378,12 +388,78 @@ struct SecurityScannerRunFinding: Codable, Equatable, Identifiable {
     let cveIDs: [String]?
     let confidence: String?
     let instanceURL: String?
+    let url: String?
     let method: String?
     let parameter: String?
+    let pluginID: String?
+    let nvtOID: String?
+    let qualityOfDetection: String?
+    let disposition: String?
+    let uri: String?
+    let host: String?
+    let matchedAt: String?
+    let tags: [String]?
+    let references: [String]?
+    let checkID: String?
+    let plugin: String?
+    let targetOrigin: String?
+    let target: String?
+    let statusCode: Int?
+    let firewall: String?
+    let manufacturer: String?
+    let observed: Bool?
 
     enum CodingKeys: String, CodingKey {
         case findingID = "findingId", provider, title, severity, description, solution, evidence, assetAddress
-        case port, protocolName = "protocol", cveIDs = "cveIds", confidence, instanceURL = "instanceUrl", method, parameter
+        case port, protocolName = "protocol", cveIDs = "cveIds", confidence, instanceURL = "instanceUrl", url, method, parameter
+        case pluginID = "pluginId", nvtOID = "nvtOid", qualityOfDetection, disposition, uri, host, matchedAt, tags
+        case references = "reference", checkID = "checkId", plugin, targetOrigin, target, statusCode, firewall, manufacturer, observed
+    }
+}
+
+struct SecurityScannerObservation: Codable, Equatable, Identifiable {
+    let id: String
+    let checkID: String?
+    let host: String?
+    let port: Int?
+    let severity: String?
+    let disposition: String?
+    let result: String?
+    let cve: String?
+    let cwe: String?
+    let evidence: String?
+    let address: String?
+    let url: String?
+    let statusCode: Int?
+    let title: String?
+    let contentType: String?
+    let contentLength: Int?
+    let webServer: String?
+    let technologies: [String]?
+    let hostname: String?
+    let probeStatus: Bool?
+    let tlsVersion: String?
+    let cipher: String?
+    let connectionMode: String?
+    let sni: String?
+    let subjectCommonNames: [String]?
+    let subjectAlternativeNames: [String]?
+    let subjectOrganizations: [String]?
+    let notBefore: String?
+    let notAfter: String?
+    let certificateSHA256: String?
+    let certificateSerial: String?
+    let method: String?
+    let detected: Bool?
+    let firewall: String?
+    let manufacturer: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, host, port, severity, disposition, result, cve, cwe, evidence, address, url, title
+        case checkID = "checkId", statusCode, contentType, contentLength, webServer, technologies, hostname
+        case probeStatus, tlsVersion, cipher, connectionMode, sni, subjectCommonNames, subjectAlternativeNames
+        case subjectOrganizations, notBefore, notAfter, certificateSHA256 = "certificateSha256", certificateSerial
+        case method, detected, firewall, manufacturer
     }
 }
 
@@ -399,6 +475,9 @@ struct SecurityScannerRunCoverage: Codable, Equatable {
     let origin: String?
     let urlsVisited: Int?
     let urlsDiscovered: Int?
+    let clientUrlsDiscovered: Int?
+    let traditionalSpiderComplete: Bool?
+    let clientSpiderComplete: Bool?
     let crawlComplete: Bool?
     let totalAlerts: Int?
     let acceptedAlerts: Int?
@@ -472,6 +551,41 @@ struct SecurityScannerAssessmentReportJob: Codable, Identifiable, Equatable {
 struct SecurityScannerHistoryPage<T: Decodable>: Decodable {
     let items: [T]
     let nextCursor: String?
+}
+
+enum SecurityScannerHistoryFilter {
+    static func runs(_ items: [SecurityScannerRun], query: String, engine: String, status: String) -> [SecurityScannerRun] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return items.filter { run in
+            (engine == "all" || run.engine == engine)
+                && (status == "all" || run.status == status)
+                && (needle.isEmpty || [run.target, run.engine, run.profile, run.status, run.source ?? "", run.id].joined(separator: " ").lowercased().contains(needle))
+        }
+    }
+
+    static func assessments(_ items: [SecurityScannerAssessment], query: String, status: String) -> [SecurityScannerAssessment] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return items.filter { assessment in
+            (status == "all" || assessment.status == status)
+                && (needle.isEmpty || [assessment.status, assessment.source] .joined(separator: " ").lowercased().contains(needle)
+                    || assessment.jobs.contains { job in
+                        [job.asset, job.engine, job.profile, job.stage, job.status].joined(separator: " ").lowercased().contains(needle)
+                    })
+        }
+    }
+
+    static func page<T>(_ items: [T], index: Int, size: Int) -> [T] {
+        guard size > 0, !items.isEmpty else { return [] }
+        let safeIndex = max(0, index)
+        let start = min(safeIndex * size, items.count)
+        let end = min(start + size, items.count)
+        return Array(items[start..<end])
+    }
+
+    static func pageCount(total: Int, size: Int) -> Int {
+        guard size > 0 else { return 0 }
+        return max(1, (total + size - 1) / size)
+    }
 }
 
 enum SecurityScannerPanelSection: String, CaseIterable, Identifiable {

@@ -8,10 +8,12 @@ struct SecurityScannerClient {
     private let tokenState: SecurityScannerTokenState
     private var token: String { tokenState.read() }
     let settings: HanasandDesktopSettings
+    let servicesPaused: Bool
     var send: (URLRequest) async throws -> (Data, URLResponse)
     var onRefreshedToken: ((String) -> Void)?
 
     init(settings: HanasandDesktopSettings, baseURL: URL = URL(string: "https://scanner.hanasand.com/api")!,
+         servicesPaused: Bool = false,
          send: ((URLRequest) async throws -> (Data, URLResponse))? = nil,
          onRefreshedToken: ((String) -> Void)? = nil) throws {
         let userID = settings.userID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -37,6 +39,7 @@ struct SecurityScannerClient {
         self.userID = userID
         self.tokenState = SecurityScannerTokenState(token)
         self.settings = settings
+        self.servicesPaused = servicesPaused
         self.send = send ?? { request in try await URLSession.shared.data(for: request) }
         self.onRefreshedToken = onRefreshedToken
     }
@@ -221,6 +224,7 @@ struct SecurityScannerClient {
     }
 
     private func request<T: Decodable>(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
+        guard !servicesPaused || method == "GET" else { throw SecurityScannerClientError.servicesPaused }
         let pieces = path.split(separator: "?", maxSplits: 1).map(String.init)
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
               components.scheme == "https", let host = components.host else { throw SecurityScannerClientError.invalidBaseURL }
@@ -256,6 +260,7 @@ struct SecurityScannerClient {
     }
 
     private func requireEditorMembership() async throws {
+        guard !servicesPaused else { throw SecurityScannerClientError.servicesPaused }
         let base = apiBaseURL.host?.lowercased() == "api.hanasand.com" ? URL(string: "https://identity.hanasand.com/api")! : apiBaseURL
         let membership: OrganizationMembershipReceipt = try await requestIdentity("organizations", base: base)
         guard let current = membership.organizations.first(where: { $0.id == organizationID && $0.status == "active" }),
@@ -334,7 +339,7 @@ private struct FindingHistoryReceipt: Decodable { let findings: [SecurityScanner
 
 enum SecurityScannerClientError: LocalizedError {
     case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, selectOrganization
-    case permissionDenied, authorizationRequired, invalidResponse, unconfirmedMutation
+    case permissionDenied, authorizationRequired, servicesPaused, invalidResponse, unconfirmedMutation
     case invalidInput(String), requestFailed(Int, String?), transport(String)
     var errorDescription: String? {
         switch self {
@@ -345,6 +350,7 @@ enum SecurityScannerClientError: LocalizedError {
         case .selectOrganization: "Choose the Hanasand organization workspace to use Security Scanner."
         case .permissionDenied: "An active organization editor role is required for this action."
         case .authorizationRequired: "Confirm that you are authorized to scan these assets."
+        case .servicesPaused: "Scanner services are stopped pending disk expansion. Changes and new scans are paused."
         case .invalidResponse: "The scanner returned an unexpected response. Refresh and try again."
         case .unconfirmedMutation: "The result could not be confirmed. Refresh before trying again."
         case let .invalidInput(message): message
