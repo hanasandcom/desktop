@@ -31,14 +31,37 @@ struct NativeDeveloperOnboardingPanel: View {
             NativeGroupPanel(title: "First request", subtitle: "Replace the endpoint and key with values from your workspace") {
                 Text("curl 'https://api.hanasand.com/api/v1/actors?page=1&limit=20' -H 'X-API-Key: YOUR_API_KEY'")
                     .font(.system(size: 11, weight: .medium, design: .monospaced)).textSelection(.enabled)
-                Text("This request lists public actor records using an organization API key granted the GET /actors scope. Pagination uses page and limit; responses include request and quota headers.")
+                Text("This request lists public actor records using an organization API key granted the GET /actors scope. Responses include request and quota headers.")
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
                 ActionButton(title: showReference ? "Hide API reference" : "Show API reference", icon: "doc.text.magnifyingglass") {
                     showReference.toggle()
                 }
             }
+            NativeGroupPanel(title: "Generate API types", subtitle: "Create TypeScript types from the published OpenAPI contract") {
+                developerCode(NativeDeveloperOnboardingContent.typeGenerationCommand)
+            }
+            NativeGroupPanel(title: "Typed TypeScript client", subtitle: "Install openapi-fetch and keep your key in an environment variable") {
+                developerCode(NativeDeveloperOnboardingContent.clientInstallCommand)
+                developerCode(NativeDeveloperOnboardingContent.typedClientExample)
+            }
+            NativeGroupPanel(title: "Pagination", subtitle: "Follow the response until there are no more pages") {
+                Text(NativeDeveloperOnboardingContent.paginationGuidance)
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
             if showKeys { OrganizationApiKeysNativePanel() }
             if showReference { APIReferenceNativePanel() }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func developerCode(_ source: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Text(source)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.vertical, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
