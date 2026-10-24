@@ -199,6 +199,18 @@ enum SandboxLiveProtocol {
         return try? jsonString(payload)
     }
 
+    static func pointerMessage(event: String, x: Int, y: Int, button: Int, buttons: Int) -> String? {
+        guard ["pointerdown", "pointermove", "pointerup", "pointercancel"].contains(event),
+              (event == "pointermove" ? (-1...2).contains(button) : (0...2).contains(button)),
+              (0...7).contains(buttons), x >= 0, y >= 0,
+              x < maximumFrameWidth, y < maximumFrameHeight else { return nil }
+        let payload: [String: Any] = [
+            "type": "pointer", "event": event, "x": x, "y": y,
+            "button": button, "buttons": buttons,
+        ]
+        return try? jsonString(payload)
+    }
+
     static func keyMessage(key: String, command: Bool = false, control: Bool = false,
                            option: Bool = false, shift: Bool = false) -> String? {
         let supportedSpecialKeys: Set<String> = [

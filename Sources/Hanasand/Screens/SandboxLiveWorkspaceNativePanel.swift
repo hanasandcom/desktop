@@ -154,6 +154,8 @@ private final class NativeSandboxLiveInputView: NSView {
     var imageWidth = 0
     var imageHeight = 0
     var onInput: ((String) -> Void)?
+    private var viewportTrackingArea: NSTrackingArea?
+    private var lastPointerMoveTime: TimeInterval = 0
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -164,19 +166,60 @@ private final class NativeSandboxLiveInputView: NSView {
         image.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1)
     }
 
+    override func updateTrackingAreas() {
+        if let viewportTrackingArea { removeTrackingArea(viewportTrackingArea) }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        viewportTrackingArea = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        sendPointer(event, eventName: "pointermove", button: -1, buttons: 0, throttleMove: true)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        sendClick(event, button: 0)
+        sendPointer(event, eventName: "pointerdown", button: 0, buttons: 1)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        sendPointer(event, eventName: "pointerup", button: 0, buttons: 0)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        sendPointer(event, eventName: "pointermove", button: 0, buttons: 1, throttleMove: true)
     }
 
     override func rightMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        sendClick(event, button: 2)
+        sendPointer(event, eventName: "pointerdown", button: 2, buttons: 2)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        sendPointer(event, eventName: "pointerup", button: 2, buttons: 0)
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        sendPointer(event, eventName: "pointermove", button: 2, buttons: 2, throttleMove: true)
     }
 
     override func otherMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        sendClick(event, button: 1)
+        sendPointer(event, eventName: "pointerdown", button: 1, buttons: 4)
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        sendPointer(event, eventName: "pointerup", button: 1, buttons: 0)
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        sendPointer(event, eventName: "pointermove", button: 1, buttons: 4, throttleMove: true)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -222,9 +265,22 @@ private final class NativeSandboxLiveInputView: NSView {
         return (min(imageWidth - 1, max(0, x)), min(imageHeight - 1, max(0, y)))
     }
 
-    private func sendClick(_ event: NSEvent, button: Int) {
+    private func sendPointer(
+        _ event: NSEvent,
+        eventName: String,
+        button: Int,
+        buttons: Int,
+        throttleMove: Bool = false
+    ) {
+        if throttleMove {
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - lastPointerMoveTime >= 1.0 / 30.0 else { return }
+            lastPointerMoveTime = now
+        }
         guard let point = browserPoint(for: event),
-              let message = SandboxLiveProtocol.inputMessage(type: "click", x: point.x, y: point.y, button: button) else { return }
+              let message = SandboxLiveProtocol.pointerMessage(
+                event: eventName, x: point.x, y: point.y, button: button, buttons: buttons
+              ) else { return }
         onInput?(message)
     }
 

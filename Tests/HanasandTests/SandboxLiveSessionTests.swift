@@ -71,6 +71,15 @@ final class SandboxLiveSessionTests: XCTestCase {
         let clickPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(click.utf8)) as? [String: Any])
         XCTAssertEqual(clickPayload["type"] as? String, "click")
         XCTAssertEqual(clickPayload["button"] as? Int, 2)
+        let pointer = try XCTUnwrap(SandboxLiveProtocol.pointerMessage(
+            event: "pointermove", x: 21, y: 42, button: 0, buttons: 1
+        ))
+        let pointerPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(pointer.utf8)) as? [String: Any])
+        XCTAssertEqual(pointerPayload["type"] as? String, "pointer")
+        XCTAssertEqual(pointerPayload["event"] as? String, "pointermove")
+        XCTAssertEqual(pointerPayload["buttons"] as? Int, 1)
+        XCTAssertNil(SandboxLiveProtocol.pointerMessage(event: "mousemove", x: 1, y: 2, button: 0, buttons: 0))
+        XCTAssertNil(SandboxLiveProtocol.pointerMessage(event: "pointerup", x: 1, y: 2, button: -1, buttons: 0))
         XCTAssertNil(SandboxLiveProtocol.inputMessage(type: "click", x: -1, y: 2))
         XCTAssertNil(SandboxLiveProtocol.keyMessage(key: "Unidentified"))
         XCTAssertNotNil(SandboxLiveProtocol.keyMessage(key: "Enter"))
