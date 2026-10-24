@@ -55,6 +55,54 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
         XCTAssertEqual(payload["code"], "012345")
     }
 
+    func testResendRequestsFreshVerificationChallengeWithoutOldCode() async throws {
+        var requestBodies: [[String: String]] = []
+        let challengeIDs = [
+            "4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77",
+            "9c5c1a25-1de6-4ba3-91fb-1b708d336ee7",
+        ]
+        let client = try AccountSignupClient(baseURL: baseURL) { request in
+            let body = try XCTUnwrap(request.httpBody)
+            requestBodies.append(try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String]))
+            let challengeID = challengeIDs[requestBodies.count - 1]
+            return self.response(#"{"verificationRequired":true,"challengeId":"\#(challengeID)","expiresIn":600}"#, request: request, status: 202)
+        }
+
+        let initial = try await client.submit(name: "Ada", username: "ada", email: "ada@example.test", password: password)
+        guard case .verificationRequired = initial else { return XCTFail("Expected initial verification challenge") }
+
+        let resent = try await client.submit(name: "Ada", username: "ada", email: "ada@example.test", password: password)
+        guard case let .verificationRequired(replacementChallengeID) = resent else { return XCTFail("Expected replacement verification challenge") }
+
+        XCTAssertEqual(replacementChallengeID, challengeIDs[1])
+        XCTAssertEqual(requestBodies.count, 2)
+        XCTAssertNil(requestBodies[1]["challengeId"])
+        XCTAssertNil(requestBodies[1]["code"])
+        XCTAssertEqual(requestBodies[1]["id"], "ada")
+        XCTAssertEqual(requestBodies[1]["email"], "ada@example.test")
+    }
+
+    func testResendSurfacesServerRateLimitMessage() async throws {
+        var requestCount = 0
+        let client = try AccountSignupClient(baseURL: baseURL) { request in
+            requestCount += 1
+            if requestCount == 1 {
+                return self.response(#"{"verificationRequired":true,"challengeId":"4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77","expiresIn":600}"#, request: request, status: 202)
+            }
+            return self.response(#"{"error":"Please wait before requesting another code."}"#, request: request, status: 429)
+        }
+
+        let initial = try await client.submit(name: "Ada", username: "ada", email: "ada@example.test", password: password)
+        guard case .verificationRequired = initial else { return XCTFail("Expected initial verification challenge") }
+
+        do {
+            _ = try await client.submit(name: "Ada", username: "ada", email: "ada@example.test", password: password)
+            XCTFail("Expected resend rate limit response")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Please wait before requesting another code.")
+        }
+    }
+
     func testSignupEnforcesWebsiteInputAndVerificationRulesBeforeSending() async throws {
         var sent = false
         let client = try AccountSignupClient(baseURL: baseURL) { request in

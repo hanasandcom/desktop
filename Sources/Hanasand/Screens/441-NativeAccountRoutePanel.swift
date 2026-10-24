@@ -150,6 +150,7 @@ struct NativeAccountRoutePanel: View {
     @State private var signupChallengeID: String?
     @State private var signupCode = ""
     @State private var signupWaitingForCode = false
+    @State private var isResendingSignupCode = false
     @State private var savedProfiles: [NativeSavedAccountProfile] = []
     @State private var profilesError = ""
     @State private var addingProfile = false
@@ -299,14 +300,9 @@ struct NativeAccountRoutePanel: View {
                     Text("The code expires after 10 minutes. Keep the same signup details while you verify.")
                         .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 8) {
-                    ActionButton(title: isBusy ? "Working…" : signupWaitingForCode ? "Verify and create account" : "Send verification code", icon: "envelope.badge") { Task { await submitSignup() } }
-                        .disabled(isBusy || !canSubmitSignup)
-                    if signupWaitingForCode {
-                        ActionButton(title: "Start over", icon: "arrow.counterclockwise") {
-                            signupWaitingForCode = false; signupChallengeID = nil; signupCode = ""; message = ""
-                        }.disabled(isBusy)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    signupActionButtons(vertical: false)
+                    signupActionButtons(vertical: true)
                 }
                 ActionButton(title: "Back to sign in", icon: "arrow.left") { openRoute("/login", label: "Sign in", query: filteredReturnQuery) }
             }
@@ -459,6 +455,30 @@ struct NativeAccountRoutePanel: View {
         return !signupWaitingForCode || (signupChallengeID != nil && signupCode.count == 6)
     }
 
+    @ViewBuilder private func signupActionButtons(vertical: Bool) -> some View {
+        if vertical {
+            VStack(alignment: .leading, spacing: 8) {
+                signupActionButtonsContent
+            }
+        } else {
+            HStack(spacing: 8) {
+                signupActionButtonsContent
+            }
+        }
+    }
+
+    @ViewBuilder private var signupActionButtonsContent: some View {
+        ActionButton(title: isBusy && !signupWaitingForCode ? "Sending…" : signupWaitingForCode ? "Verify and create account" : "Send verification code", icon: "envelope.badge") { Task { await submitSignup() } }
+            .disabled(isBusy || !canSubmitSignup)
+        if signupWaitingForCode {
+            ActionButton(title: isBusy && isResendingSignupCode ? "Sending…" : "Send new code", icon: "envelope") { Task { await submitSignup(resendCode: true) } }
+                .disabled(isBusy)
+            ActionButton(title: "Start over", icon: "arrow.counterclockwise") {
+                signupWaitingForCode = false; signupChallengeID = nil; signupCode = ""; message = ""
+            }.disabled(isBusy)
+        }
+    }
+
     @MainActor private func prepareRoute() async {
         guard preparedTaskIdentity != taskIdentity else { return }
         preparedTaskIdentity = taskIdentity
@@ -516,19 +536,23 @@ struct NativeAccountRoutePanel: View {
         }
     }
 
-    @MainActor private func submitSignup() async {
-        guard canSubmitSignup, !isBusy else { return }
+    @MainActor private func submitSignup(resendCode: Bool = false) async {
+        guard !isBusy, (resendCode ? signupWaitingForCode : canSubmitSignup) else { return }
         isBusy = true
+        isResendingSignupCode = resendCode
         defer { isBusy = false }
+        defer { isResendingSignupCode = false }
         do {
             let result = try await model.submitAccountSignup(
                 name: signupName, username: signupUsername, email: signupEmail, password: signupPassword,
-                challengeID: signupChallengeID, code: signupWaitingForCode ? signupCode : nil)
+                challengeID: resendCode ? nil : signupChallengeID, code: resendCode || !signupWaitingForCode ? nil : signupCode)
             if case let .verificationRequired(challengeID) = result {
                 signupChallengeID = challengeID
                 signupWaitingForCode = true
                 signupCode = ""
-                message = "Verification code sent. Check your email and enter the six-digit code."
+                message = resendCode
+                    ? "New verification code sent. Check your email and use the latest code."
+                    : "Verification code sent. Check your email and enter the six-digit code."
             } else if model.hasHanasandAuth {
                 try? saveCurrentProfile()
                 message = "Account created and signed in as @\(model.userIDForRequests)."
