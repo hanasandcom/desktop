@@ -52,11 +52,29 @@ struct GalleryAlbumClient {
         try await decode([GalleryAlbum].self, path: "albums")
     }
 
-    func album(id: String, offset: Int = 0) async throws -> GalleryAlbumDetail {
+    func album(id: String, offset: Int = 0, search: String = "", imagesOnly: Bool = false) async throws -> GalleryAlbumDetail {
         guard (0...1_000_000).contains(offset) else { throw GalleryAlbumClientError.invalidPage }
-        let item = try await decode(GalleryAlbumDetail.self, path: "albums/\(segment(id))?limit=60&offset=\(offset)")
+        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard term.count <= 200, !term.contains("\0") else { throw GalleryAlbumClientError.invalidSearch }
+        var components = URLComponents()
+        components.percentEncodedPath = "/albums/\(try segment(id))"
+        components.queryItems = [
+            URLQueryItem(name: "limit", value: "60"),
+            URLQueryItem(name: "offset", value: String(offset))
+        ]
+        if imagesOnly {
+            components.queryItems?.append(URLQueryItem(name: "search", value: term))
+            components.queryItems?.append(URLQueryItem(name: "media", value: "images"))
+        } else if !term.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: "search", value: term))
+        }
+        guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
+        let item = try await decode(GalleryAlbumDetail.self, path: String(path.dropFirst()))
         guard item.id == id, ["owner", "viewer", "contributor"].contains(item.role),
               item.offset == offset, item.limit == 60, item.total >= 0 else { throw GalleryAlbumClientError.invalidResponse }
+        guard item.items.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 128 && !$0.type.isEmpty }) else {
+            throw GalleryAlbumClientError.invalidResponse
+        }
         return item
     }
 
@@ -148,7 +166,15 @@ struct GalleryAlbumClient {
     }
 
     func removeMember(_ memberId: String, from album: GalleryAlbumDetail) async throws {
-        guard GalleryAlbumAccess.canManage(album, currentUserId: userId) else { throw GalleryAlbumClientError.ownerRequired }
+        if memberId == userId {
+            guard GalleryAlbumAccess.canLeave(album, currentUserId: userId) else {
+                throw GalleryAlbumClientError.cannotLeaveOwnedAlbum
+            }
+        } else {
+            guard GalleryAlbumAccess.canManage(album, currentUserId: userId) else {
+                throw GalleryAlbumClientError.ownerRequired
+            }
+        }
         let receipt = try await sendJSON(GalleryAlbumMutationReceipt.self, path: "albums/\(segment(album.id))/members/\(segment(memberId))", method: "DELETE")
         guard receipt.removed == memberId else { throw GalleryAlbumClientError.unconfirmedMutation }
     }
@@ -157,7 +183,8 @@ struct GalleryAlbumClient {
         try await listLibraryPage(offset: offset).items
     }
 
-    func listLibraryPage(offset: Int = 0, search: String = "", favorites: Bool = false) async throws -> GalleryLibraryPage {
+    func listLibraryPage(offset: Int = 0, search: String = "", favorites: Bool = false,
+                         imagesOnly: Bool = false) async throws -> GalleryLibraryPage {
         guard (0...1_000_000).contains(offset) else { throw GalleryAlbumClientError.invalidPage }
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard term.count <= 200, !term.contains("\0") else { throw GalleryAlbumClientError.invalidSearch }
@@ -168,6 +195,7 @@ struct GalleryAlbumClient {
             URLQueryItem(name: "offset", value: String(offset)),
             URLQueryItem(name: "search", value: term)
         ]
+        if imagesOnly { components.queryItems?.append(URLQueryItem(name: "media", value: "images")) }
         if favorites { components.queryItems?.append(URLQueryItem(name: "favorites", value: "true")) }
         guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
         let rows = try await decode([GalleryLibraryItem].self, path: String(path.dropFirst()))
@@ -175,6 +203,22 @@ struct GalleryAlbumClient {
             throw GalleryAlbumClientError.invalidResponse
         }
         return GalleryLibraryPage(items: rows, nextOffset: offset + rows.count, hasMore: rows.count == 60)
+    }
+
+    func listAlbumLibraryPage(albumId: String, offset: Int = 0, search: String = "") async throws -> GalleryLibraryPage {
+        let album = try await self.album(id: albumId, offset: offset, search: search, imagesOnly: true)
+        let items = album.items.map { item in
+            GalleryLibraryItem(
+                id: item.id,
+                name: item.name,
+                type: item.type,
+                isFavorite: item.isFavorite,
+                uploadedAt: item.uploadedAt,
+                sizeBytes: item.sizeBytes
+            )
+        }
+        let nextOffset = offset + items.count
+        return GalleryLibraryPage(items: items, nextOffset: nextOffset, hasMore: nextOffset < album.total)
     }
 
     func setFavorite(_ favorite: Bool, for id: String) async throws -> GalleryFavoriteReceipt {
@@ -276,7 +320,7 @@ struct GalleryAlbumClient {
 enum GalleryAlbumClientError: LocalizedError {
     case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
-    case ownerRequired, contributorRequired, removeOwnItemsOnly, unconfirmedMutation
+    case ownerRequired, contributorRequired, removeOwnItemsOnly, cannotLeaveOwnedAlbum, unconfirmedMutation
     case requestFailed(Int, String)
 
     var errorDescription: String? {
@@ -299,6 +343,7 @@ enum GalleryAlbumClientError: LocalizedError {
         case .ownerRequired: return "Only the album owner can make this change."
         case .contributorRequired: return "This album is view only."
         case .removeOwnItemsOnly: return "Contributors can only remove items they added."
+        case .cannotLeaveOwnedAlbum: return "Album owners cannot leave their own album."
         case .unconfirmedMutation: return "The change could not be confirmed. Refresh before retrying."
         case .requestFailed(let status, let message): return "\(message) (HTTP \(status)). Refresh before retrying."
         }

@@ -5,7 +5,9 @@ struct GalleryLibraryNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var search = ""
-    @State private var favoritesOnly = false
+    @State private var collection = "all"
+    @State private var albums: [GalleryAlbum] = []
+    @State private var albumError = ""
     @State private var files: [GalleryLibraryItem] = []
     @State private var offset = 0
     @State private var hasMore = false
@@ -27,7 +29,24 @@ struct GalleryLibraryNativePanel: View {
         let value = model.settings
         return "\(value.cdnBaseURL)|\(value.userID)|\(value.authToken.hashValue)|\(value.impersonatingUserID)|\(value.impersonationToken.hashValue)"
     }
-    private var queryKey: String { "\(search)|\(favoritesOnly)|\(sessionFingerprint)" }
+    private var selectedAlbumID: String? {
+        guard collection.hasPrefix("album:") else { return nil }
+        return String(collection.dropFirst("album:".count))
+    }
+    private var favoritesOnly: Bool { collection == "favorites" }
+    private var queryKey: String { "\(search)|\(collection)|\(sessionFingerprint)" }
+    private var emptyTitle: String {
+        if selectedAlbumID != nil { return "No photos in this album" }
+        if favoritesOnly { return "No favorites yet" }
+        return search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No files yet" : "No matching files"
+    }
+    private var emptyMessage: String {
+        if selectedAlbumID != nil { return "This album has no photos matching your search." }
+        if favoritesOnly { return "Mark files as favorites to find them here." }
+        return search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Upload a file to start your private CDN library."
+            : "Try a different search or switch back to the full library."
+    }
 
     var body: some View {
         FeatureWorkspace(title: "Images", subtitle: status) {
@@ -41,9 +60,6 @@ struct GalleryLibraryNativePanel: View {
                         TextField("Search files", text: $search)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Search private files")
-                        Toggle("Favorites", isOn: $favoritesOnly)
-                            .toggleStyle(.checkbox)
-                            .fixedSize()
                         ActionButton(title: "Upload media", icon: "arrow.up.to.line") {
                             model.openNativeDashboard(path: "/upload", label: "Upload media")
                         }
@@ -53,6 +69,23 @@ struct GalleryLibraryNativePanel: View {
                             files = []; offset = 0; hasMore = false; error = ""
                             Task { await loadPage(offset: 0, reset: true, request: request) }
                         }.disabled(loading || loadingMore)
+                    }
+                    HStack(spacing: 8) {
+                        Picker("Collection", selection: $collection) {
+                            Text("All files").tag("all")
+                            Text("Favorites").tag("favorites")
+                            ForEach(albums) { album in
+                                Text("\(album.name) (\(album.photoCount ?? 0))").tag("album:\(album.id)")
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .disabled(loading || loadingMore)
+                        Spacer(minLength: 0)
+                        if !albumError.isEmpty {
+                            Text(albumError).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger)
+                                .lineLimit(2)
+                            ActionButton(title: "Retry albums", icon: "arrow.clockwise") { Task { await loadAlbums() } }
+                        }
                     }
                     if !error.isEmpty {
                         HStack(alignment: .top, spacing: 8) {
@@ -64,12 +97,7 @@ struct GalleryLibraryNativePanel: View {
                     if loading && files.isEmpty {
                         NativeEmptyState(title: "Loading files", message: "Searching the signed-in account’s private CDN library.")
                     } else if files.isEmpty && error.isEmpty {
-                        NativeEmptyState(
-                            title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !favoritesOnly ? "No files yet" : "No matching files",
-                            message: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !favoritesOnly
-                                ? "Upload a file to start your private CDN library."
-                                : "Try a different search or switch back to the full library."
-                        )
+                        NativeEmptyState(title: emptyTitle, message: emptyMessage)
                     } else if !files.isEmpty {
                         Text("\(files.count) file\(files.count == 1 ? "" : "s") loaded\(hasMore ? " · more available" : "")")
                             .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
@@ -85,6 +113,12 @@ struct GalleryLibraryNativePanel: View {
                     }
                 }
             }
+        }
+        .task(id: sessionFingerprint) { await loadAlbums() }
+        .onChange(of: sessionFingerprint) { _, _ in
+            collection = "all"
+            search = ""
+            preview = nil
         }
         .task(id: queryKey) {
             sessionRevision += 1
@@ -179,6 +213,22 @@ struct GalleryLibraryNativePanel: View {
         model.openNativeDashboard(path: "/cdn/files", label: file.name ?? "CDN file", detailID: file.id)
     }
 
+    @MainActor private func loadAlbums() async {
+        let settings = model.settings
+        let fingerprint = sessionFingerprint
+        albums = []
+        albumError = ""
+        guard !impersonating, model.hasHanasandAuth else { return }
+        do {
+            let loaded = try await GalleryAlbumClient(settings: settings).listAlbums()
+            guard fingerprint == sessionFingerprint else { return }
+            albums = loaded
+        } catch {
+            guard fingerprint == sessionFingerprint else { return }
+            albumError = error.localizedDescription
+        }
+    }
+
     private func copyFileURL(_ file: GalleryLibraryItem) {
         guard var components = URLComponents(url: model.settings.cdnBaseURL.normalizedBaseURL, resolvingAgainstBaseURL: false),
               let encodedID = file.id.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) else { return }
@@ -200,7 +250,12 @@ struct GalleryLibraryNativePanel: View {
         }
         do {
             let client = try GalleryAlbumClient(settings: model.settings)
-            let page = try await client.listLibraryPage(offset: requestedOffset, search: search, favorites: favoritesOnly)
+            let page: GalleryLibraryPage
+            if let selectedAlbumID {
+                page = try await client.listAlbumLibraryPage(albumId: selectedAlbumID, offset: requestedOffset, search: search)
+            } else {
+                page = try await client.listLibraryPage(offset: requestedOffset, search: search, favorites: favoritesOnly)
+            }
             guard request == activeRequest else { return }
             if reset { files = page.items }
             else {
@@ -211,7 +266,7 @@ struct GalleryLibraryNativePanel: View {
             offset = page.nextOffset
             hasMore = page.hasMore
             error = ""
-            status = "Loaded \(files.count) private images"
+            status = "Loaded \(files.count) private files"
         } catch {
             guard request == activeRequest else { return }
             self.error = error.localizedDescription
@@ -246,7 +301,10 @@ struct GalleryLibraryNativePanel: View {
             if favoritesOnly && !expected {
                 files.removeAll { $0.id == file.id }
             } else if let index = files.firstIndex(where: { $0.id == file.id }) {
-                files[index] = GalleryLibraryItem(id: file.id, name: file.name, type: file.type, isFavorite: expected)
+                files[index] = GalleryLibraryItem(
+                    id: file.id, name: file.name, type: file.type, isFavorite: expected,
+                    uploadedAt: file.uploadedAt, sizeBytes: file.sizeBytes
+                )
             }
             status = "Favorite saved"
         } catch {

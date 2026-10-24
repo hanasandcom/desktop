@@ -206,6 +206,39 @@ final class GalleryAlbumClientTests: XCTestCase {
         XCTAssertEqual(member.id, "someone")
     }
 
+    func testSharedAlbumMembersCanLeaveButOnlyOwnersCanRemoveOtherMembers() async throws {
+        let sharedAlbum = GalleryAlbumDetail(
+            id: "shared-album", name: "Shared trip", owner: "album-owner", isPublic: false,
+            role: "viewer", items: [], total: 0, limit: 60, offset: 0, members: nil
+        )
+        XCTAssertTrue(GalleryAlbumAccess.canLeave(sharedAlbum, currentUserId: "owner"))
+        XCTAssertFalse(GalleryAlbumAccess.canLeave(sharedAlbum, currentUserId: "album-owner"))
+
+        var request: URLRequest?
+        let client = try GalleryAlbumClient(settings: settings) { next in
+            request = next
+            return self.http(#"{"removed":"owner"}"#)
+        }
+        try await client.removeMember("owner", from: sharedAlbum)
+        XCTAssertEqual(request?.httpMethod, "DELETE")
+        XCTAssertEqual(request?.url?.absoluteString, "https://cdn.hanasand.test/api/albums/shared-album/members/owner")
+
+        do {
+            try await client.removeMember("guest", from: sharedAlbum)
+            XCTFail("A shared viewer must not revoke another member's invitation")
+        } catch GalleryAlbumClientError.ownerRequired {}
+        XCTAssertEqual(request?.url?.absoluteString, "https://cdn.hanasand.test/api/albums/shared-album/members/owner")
+
+        let ownedAlbum = GalleryAlbumDetail(
+            id: "owned-album", name: "Private trip", owner: "owner", isPublic: false,
+            role: "owner", items: [], total: 0, limit: 60, offset: 0, members: nil
+        )
+        do {
+            try await client.removeMember("owner", from: ownedAlbum)
+            XCTFail("An owner must not leave their own album")
+        } catch GalleryAlbumClientError.cannotLeaveOwnedAlbum {}
+    }
+
     func testThumbnailRequiresPrivateImageResponseAndValidatesActualBytes() async throws {
         var request: URLRequest?
         let client = try GalleryAlbumClient(settings: settings) { next in

@@ -18,6 +18,7 @@ struct GalleryAlbumsNativePanel: View {
     @State private var status = "Ready"
     @State private var error = ""
     @State private var confirmDelete = false
+    @State private var confirmLeaveAlbum = false
     @State private var confirmEnablePublicLink = false
     @State private var confirmDisablePublicLink = false
     @State private var publicShareURL: URL?
@@ -58,6 +59,12 @@ struct GalleryAlbumsNativePanel: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The album and its sharing access will be deleted. Original files stay in their owners’ libraries.")
+        }
+        .confirmationDialog("Leave shared album?", isPresented: $confirmLeaveAlbum, titleVisibility: .visible) {
+            Button("Leave album", role: .destructive) { Task { await leaveAlbum() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You will lose invited access. The owner can invite you again.")
         }
         .confirmationDialog("Enable public album link?", isPresented: $confirmEnablePublicLink, titleVisibility: .visible) {
             Button("Enable public link") { beginSharingChange(true) }
@@ -137,6 +144,12 @@ struct GalleryAlbumsNativePanel: View {
             HStack(spacing: 8) {
                 ActionButton(title: "All albums", icon: "chevron.left") { self.album = nil; showPicker = false; error = "" }
                 ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await open(album.id, offset: offset) } }
+                if GalleryAlbumAccess.canLeave(album, currentUserId: model.userIDForRequests) {
+                    ActionButton(title: "Leave shared album", icon: "rectangle.portrait.and.arrow.right", tone: .danger) {
+                        confirmLeaveAlbum = true
+                    }
+                    .disabled(busy)
+                }
                 if canAddItems {
                     ActionButton(title: showPicker ? "Close picker" : "Add library photos", icon: "photo.badge.plus") {
                         showPicker.toggle(); selectedFiles.removeAll()
@@ -358,9 +371,31 @@ struct GalleryAlbumsNativePanel: View {
         self.album = nil; showPicker = false; await refreshAlbums()
     }
 
+    private func leaveAlbum() async {
+        guard let album, GalleryAlbumAccess.canLeave(album, currentUserId: model.userIDForRequests) else { return }
+        let albumID = album.id
+        let result = await withClient({
+            try await $0.removeMember(model.userIDForRequests, from: album)
+            return true
+        }, success: "Left shared album")
+        confirmLeaveAlbum = false
+        if result != nil {
+            self.album = nil
+            showPicker = false
+            selectedFiles.removeAll()
+        }
+        await refreshAlbums()
+        if self.album?.id == albumID && !albums.contains(where: { $0.id == albumID }) {
+            self.album = nil
+            showPicker = false
+            selectedFiles.removeAll()
+        }
+    }
+
     private func loadLibrary(offset: Int) async {
-        guard let items = await withClient({ try await $0.listLibrary(offset: offset) }, success: "Library loaded") else { return }
-        library = items.filter { $0.type.hasPrefix("image/") }; libraryOffset = offset
+        guard let page = await withClient({ try await $0.listLibraryPage(offset: offset, imagesOnly: true) }, success: "Library loaded") else { return }
+        library = page.items
+        libraryOffset = offset
     }
 
     private func addSelected() async {

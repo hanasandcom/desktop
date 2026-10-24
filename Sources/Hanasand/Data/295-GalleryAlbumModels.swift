@@ -16,6 +16,38 @@ struct GalleryAlbumItem: Decodable, Identifiable, Hashable {
     let type: String
     let owner: String?
     let addedBy: String?
+    let isFavorite: Bool?
+    let uploadedAt: String?
+    let sizeBytes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, owner, addedBy, isFavorite, uploadedAt, sizeBytes
+    }
+
+    init(id: String, name: String?, type: String, owner: String?, addedBy: String?, isFavorite: Bool? = nil,
+         uploadedAt: String? = nil, sizeBytes: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.owner = owner
+        self.addedBy = addedBy
+        self.isFavorite = isFavorite
+        self.uploadedAt = uploadedAt
+        self.sizeBytes = sizeBytes
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        type = try values.decode(String.self, forKey: .type)
+        owner = try values.decodeIfPresent(String.self, forKey: .owner)
+        addedBy = try values.decodeIfPresent(String.self, forKey: .addedBy)
+        isFavorite = try values.decodeIfPresent(Bool.self, forKey: .isFavorite)
+        uploadedAt = try values.decodeIfPresent(String.self, forKey: .uploadedAt)
+        sizeBytes = (try? values.decodeIfPresent(Int.self, forKey: .sizeBytes))
+            ?? (try? values.decodeIfPresent(String.self, forKey: .sizeBytes).flatMap(Int.init))
+    }
 }
 
 struct GalleryAlbumMember: Decodable, Identifiable, Hashable {
@@ -123,6 +155,10 @@ enum GalleryAlbumAccess {
 
     static func canAddItems(_ album: GalleryAlbumDetail) -> Bool {
         album.role == "owner" || album.role == "contributor"
+    }
+
+    static func canLeave(_ album: GalleryAlbumDetail, currentUserId: String) -> Bool {
+        album.owner != currentUserId && ["viewer", "contributor"].contains(album.role)
     }
 
     static func canRemove(_ item: GalleryAlbumItem, album: GalleryAlbumDetail, currentUserId: String) -> Bool {

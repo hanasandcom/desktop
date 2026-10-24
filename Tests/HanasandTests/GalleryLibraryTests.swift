@@ -72,6 +72,46 @@ final class GalleryLibraryTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testAlbumPhotoPickerRequestsImagePagesFromTheCDN() async throws {
+        var request: URLRequest?
+        let client = try GalleryAlbumClient(settings: settings) { next in
+            request = next
+            return self.response(next, #"[{"id":"photo-1","name":"Beach","type":"image/jpeg"}]"#)
+        }
+
+        let page = try await client.listLibraryPage(offset: 60, imagesOnly: true)
+
+        XCTAssertEqual(page.items.map(\.id), ["photo-1"])
+        XCTAssertEqual(page.nextOffset, 61)
+        XCTAssertFalse(page.hasMore)
+        let query = URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first(where: { $0.name == "media" })?.value, "images")
+        XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "60")
+    }
+
+    func testAlbumCollectionPagePreservesSearchMetadataAndServerPagination() async throws {
+        var request: URLRequest?
+        let client = try GalleryAlbumClient(settings: settings) { next in
+            request = next
+            return self.response(next, #"{"id":"album/1","name":"Summer","owner":"owner","is_public":false,"role":"owner","items":[{"id":"photo-2","name":"Beach","type":"image/jpeg","is_favorite":true,"uploaded_at":"2026-10-01T12:00:00Z","size_bytes":"1024","added_by":"owner"}],"total":61,"limit":60,"offset":60,"members":[]}"#)
+        }
+
+        let page = try await client.listAlbumLibraryPage(albumId: "album/1", offset: 60, search: "  sea & sky ")
+
+        XCTAssertEqual(request?.url?.absoluteString, "https://cdn.hanasand.test/api/albums/album%2F1?limit=60&offset=60&search=sea%20%26%20sky&media=images")
+        let query = URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first(where: { $0.name == "limit" })?.value, "60")
+        XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "60")
+        XCTAssertEqual(query?.first(where: { $0.name == "search" })?.value, "sea & sky")
+        XCTAssertEqual(query?.first(where: { $0.name == "media" })?.value, "images")
+        XCTAssertEqual(page.items.first?.id, "photo-2")
+        XCTAssertEqual(page.items.first?.isFavorite, true)
+        XCTAssertEqual(page.items.first?.sizeBytes, 1024)
+        XCTAssertEqual(page.items.first?.uploadedAt, "2026-10-01T12:00:00Z")
+        XCTAssertEqual(page.nextOffset, 61)
+        XCTAssertFalse(page.hasMore)
+    }
+
     func testFavoriteMutationRequiresMatchingReceiptAndSendsExactPayload() async throws {
         var request: URLRequest?
         let client = try GalleryAlbumClient(settings: settings) { next in
