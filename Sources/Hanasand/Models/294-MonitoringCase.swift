@@ -70,7 +70,8 @@ struct MonitoringCase: Identifiable, Decodable {
         guard id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil,
               ["open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"].contains(status),
               ["low", "medium", "high", "critical"].contains(severity), source == "monitoring",
-              organizationId == nil, occurrences >= 0,
+              organizationId.map({ $0.range(of: "^[A-Za-z0-9._:@-]{1,200}$", options: .regularExpression) != nil }) ?? true,
+              occurrences >= 0,
               Int64(id.dropFirst(id.hasPrefix("MON-") ? 4 : 3)) != nil else {
             throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "Monitoring case fields are invalid")
         }
@@ -87,6 +88,12 @@ struct MonitoringCase: Identifiable, Decodable {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return true }
         return [id, title, summary, status, severity, assignedOwner].joined(separator: " ").localizedCaseInsensitiveContains(needle)
+    }
+
+    static func matchesOrganizationScope(organizationId: String?, selectedOrganizationID: String) -> Bool {
+        let selected = selectedOrganizationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expected = selected.isEmpty || selected == "personal" ? nil : selected
+        return organizationId == expected
     }
 
     var resolutionType: String {
@@ -131,6 +138,12 @@ enum MonitoringCaseResolutionPolicy {
 
 enum MonitoringCaseNativeRoute {
     static let healthCheckPath = "/automation/health"
+
+    static func organizationQuery(selectedOrganizationID: String) -> [URLQueryItem] {
+        let value = selectedOrganizationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value != "personal" else { return [] }
+        return [URLQueryItem(name: "organizationId", value: value)]
+    }
 
     static func healthCheckQuery(automationID: String) -> [String: String]? {
         let value = automationID.trimmingCharacters(in: .whitespacesAndNewlines)

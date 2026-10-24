@@ -20,7 +20,7 @@ private struct MonitoringCaseUpdate: Encodable {
 }
 private struct MonitoringCaseReceipt: Decodable { let ok: Bool }
 
-private enum MonitoringCaseClientError: LocalizedError {
+private enum MonitoringCaseClientError: LocalizedError, Equatable {
     case invalidResponse
     case accessChanged
     var errorDescription: String? {
@@ -90,9 +90,14 @@ extension DesktopAgentModel {
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading monitoring cases"
         defer { isLoadingNativeDashboard = false }
+        let organizationAtRequest = settings.selectedOrganizationID
         do {
             let url = monitoringCaseURL(path: "cases/monitoring", query: [URLQueryItem(name: "view", value: "summary")])
             let response: MonitoringCaseList = try await requestJSON(url, authenticated: true)
+            guard settings.selectedOrganizationID == organizationAtRequest,
+                  response.items.allSatisfy({ MonitoringCase.matchesOrganizationScope(organizationId: $0.organizationId, selectedOrganizationID: organizationAtRequest) }) else {
+                throw MonitoringCaseClientError.accessChanged
+            }
             monitoringCases = response.items
             if let current = selectedMonitoringCase, let refreshed = response.items.first(where: { $0.id == current.id }) {
                 selectedMonitoringCase = refreshed
@@ -107,6 +112,10 @@ extension DesktopAgentModel {
             }
             return nativeDashboardStatus.hasPrefix("Loaded") || nativeDashboardStatus == "No monitoring cases"
         } catch {
+            if error as? MonitoringCaseClientError == .accessChanged {
+                monitoringCases = []
+                selectedMonitoringCase = nil
+            }
             nativeDashboardStatus = "Could not load monitoring cases: \(error.localizedDescription)"
             return false
         }
@@ -144,15 +153,23 @@ extension DesktopAgentModel {
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading case details"
         defer { isLoadingNativeDashboard = false }
+        let organizationAtRequest = settings.selectedOrganizationID
         do {
             let url = monitoringCaseURL(path: "cases/monitoring/\(id)", query: [URLQueryItem(name: "eventsPage", value: "0")])
             let response: MonitoringCaseDetail = try await requestJSON(url, authenticated: true)
             guard response.case.id == id || response.case.id == id.replacingOccurrences(of: "MON-", with: "HA-") else {
                 throw MonitoringCaseClientError.invalidResponse
             }
+            guard settings.selectedOrganizationID == organizationAtRequest,
+                  MonitoringCase.matchesOrganizationScope(organizationId: response.case.organizationId, selectedOrganizationID: organizationAtRequest) else {
+                throw MonitoringCaseClientError.accessChanged
+            }
             selectedMonitoringCase = response.case
             nativeDashboardStatus = "Loaded case \(response.case.id)"
         } catch {
+            if error as? MonitoringCaseClientError == .accessChanged {
+                selectedMonitoringCase = nil
+            }
             nativeDashboardStatus = "Could not load case details: \(error.localizedDescription)"
         }
     }
@@ -167,19 +184,29 @@ extension DesktopAgentModel {
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading check run page"
         defer { isLoadingNativeDashboard = false }
+        let organizationAtRequest = settings.selectedOrganizationID
         do {
             let url = monitoringCaseURL(path: "cases/monitoring/\(selected.id)", query: [
                 URLQueryItem(name: "eventsPage", value: String(page)),
                 URLQueryItem(name: "eventsAt", value: selected.eventSnapshot),
             ])
             let response: MonitoringCaseDetail = try await requestJSON(url, authenticated: true)
-            guard response.case.id == selected.id, response.case.eventPage == page,
+            guard settings.selectedOrganizationID == organizationAtRequest,
+                  MonitoringCase.matchesOrganizationScope(organizationId: response.case.organizationId, selectedOrganizationID: organizationAtRequest) else {
+                throw MonitoringCaseClientError.accessChanged
+            }
+            guard response.case.id == selected.id,
+                  response.case.eventPage == page,
                   response.case.eventSnapshot == selected.eventSnapshot else {
                 throw MonitoringCaseClientError.invalidResponse
             }
             selectedMonitoringCase = response.case
             nativeDashboardStatus = "Loaded check run page \(page + 1)"
         } catch {
+            if error as? MonitoringCaseClientError == .accessChanged {
+                monitoringCases = []
+                selectedMonitoringCase = nil
+            }
             nativeDashboardStatus = "Could not load check run page: \(error.localizedDescription)"
         }
     }
@@ -207,11 +234,14 @@ extension DesktopAgentModel {
             nativeDashboardStatus = "Verifying current case access"
             let initialUserID = userIDForRequests
             let initialToken = authTokenForRequests
+            let initialOrganizationID = settings.selectedOrganizationID
             let currentURL = monitoringCaseURL(path: "cases/monitoring/\(item.id)", query: [URLQueryItem(name: "eventsPage", value: "0")])
             let current: MonitoringCaseDetail = try await requestJSON(currentURL, authenticated: true)
             guard current.case.id == item.id, current.case.canManage,
+                  MonitoringCase.matchesOrganizationScope(organizationId: current.case.organizationId, selectedOrganizationID: initialOrganizationID),
                   selectedMonitoringCase?.id == item.id,
                   initialUserID == userIDForRequests, initialToken == authTokenForRequests,
+                  initialOrganizationID == settings.selectedOrganizationID,
                   settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty,
                   confirmResolutionId.map({ current.case.needsHumanReview && MonitoringCase.stringValue(current.case.resolution, key: "id") == $0 }) ?? true else {
                 throw MonitoringCaseClientError.accessChanged
@@ -238,7 +268,8 @@ extension DesktopAgentModel {
 
     private func monitoringCaseURL(path: String, query: [URLQueryItem]) -> URL {
         var components = URLComponents(url: settings.apiBaseURL.normalizedBaseURL.appendingAPIPath(path), resolvingAgainstBaseURL: false)
-        components?.queryItems = query.isEmpty ? nil : query
+        let scopedQuery = query + MonitoringCaseNativeRoute.organizationQuery(selectedOrganizationID: settings.selectedOrganizationID)
+        components?.queryItems = scopedQuery.isEmpty ? nil : scopedQuery
         return components?.url ?? settings.apiBaseURL.normalizedBaseURL.appendingAPIPath(path)
     }
 }
