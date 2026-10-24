@@ -313,15 +313,13 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(storedResult?.path, "/sandbox/result")
         XCTAssertEqual(storedResult?.detailID, "123e4567-e89b-12d3-a456-426614174000")
         XCTAssertEqual(storedResult?.query["run"], "run-7")
-        let browserResult = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/sandbox/_browser/browser/123e4567-e89b-12d3-a456-426614174000?run=run-7")
-        XCTAssertEqual(browserResult?.path, "/sandbox/result")
-        XCTAssertEqual(browserResult?.detailID, "123e4567-e89b-12d3-a456-426614174000")
-        XCTAssertEqual(browserResult?.query["run"], "run-7")
-
         let sharedReport = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/sandbox/report?run=run-7&token=report-123")
         XCTAssertEqual(sharedReport?.path, "/sandbox/report")
         XCTAssertEqual(sharedReport?.detailID, "run-7")
         XCTAssertEqual(sharedReport?.query["token"], "report-123")
+
+        let reportWithoutRun = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/sandbox/report?token=report-123")
+        XCTAssertEqual(reportWithoutRun?.path, "/sandbox")
     }
 
     func testQueryAndIdentifierContextSurvivesNativeFeatureHandoffs() {

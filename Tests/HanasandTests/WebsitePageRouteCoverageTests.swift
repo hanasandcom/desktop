@@ -150,9 +150,6 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             "/s/[...id]",
             "/sandbox",
             "/sandbox/[id]",
-            "/sandbox/_browser/browser",
-            "/sandbox/_browser/browser/[id]",
-            "/sandbox/_browser/browser/report",
             "/sandbox/report",
             "/secure-account",
             "/signup",
@@ -290,9 +287,9 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/reserved-usernames", ["/reserved-usernames"])
         add("/reset-password", ["/reset-password"])
         add("/reset-password-again", ["/reset-password-again"])
-        add("/sandbox", ["/sandbox", "/sandbox/_browser/browser"])
-        add("/sandbox/result", ["/sandbox/[id]", "/sandbox/_browser/browser/[id]"])
-        add("/sandbox/report", ["/sandbox/_browser/browser/report", "/sandbox/report"])
+        add("/sandbox", ["/sandbox"])
+        add("/sandbox/result", ["/sandbox/[id]"])
+        add("/sandbox/report", ["/sandbox/report"])
         add("/secure-account", ["/secure-account"])
         add("/solutions/scanner", ["/solutions/scanner"])
         add("/solutions/security-monitoring", ["/solutions/security-monitoring"])
@@ -336,7 +333,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             .replacingOccurrences(of: "[query]", with: "search")
             .replacingOccurrences(of: "/organizations/[section]", with: "/organizations/alerts")
             .replacingOccurrences(of: "/dashboard/system/[section]", with: "/dashboard/system/containers")
-        if pattern == "/sandbox/report" || pattern == "/sandbox/_browser/browser/report" { return path + "?run=run-sample" }
+        if pattern == "/sandbox/report" { return path + "?run=run-sample&token=report-token" }
         return path
     }
 

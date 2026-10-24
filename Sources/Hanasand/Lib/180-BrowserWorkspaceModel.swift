@@ -315,8 +315,8 @@ final class BrowserWorkspaceModel: ObservableObject {
                 path = "/vms"
                 detailID = parts[2]
             }
-        } else if path == "/sandbox/_browser/browser" { path = "/sandbox" }
-        if path == "/sandbox/report" || path == "/_browser/browser/report" || path == "/sandbox/_browser/browser/report" {
+        }
+        if path == "/sandbox/report" {
             path = queryValue("run")?.isEmpty == false ? "/sandbox/report" : "/sandbox"
             detailID = queryValue("run")
         } else if path == "/ai/workspace" {
