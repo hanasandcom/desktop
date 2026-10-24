@@ -15,6 +15,28 @@ struct OrganizationDirectoryNativePanel: View {
     @Environment(\.desktopTheme) var theme
     @State private var searchText = ""
     @State private var createName = ""
+    @State private var createFirstWatchlistKind = OrganizationWatchlistKind.domain
+    @State private var createFirstWatchlistValue = ""
+    @State private var createFirstWatchlistNotes = ""
+    @State private var createInviteEmails = ""
+    @State private var createInviteRole = "reader"
+    @State private var createSetupStatus = ""
+
+    private var normalizedCreateName: String {
+        DashboardOrganizationCreationPolicy.normalizedName(createName)
+    }
+
+    private var normalizedCreateInviteEmails: [String] {
+        DashboardOrganizationCreationPolicy.inviteEmails(createInviteEmails)
+    }
+
+    private var invalidCreateInviteEmails: [String] {
+        DashboardOrganizationCreationPolicy.invalidInviteEmails(createInviteEmails)
+    }
+
+    private var createNameAlreadyUsed: Bool {
+        DashboardOrganizationCreationPolicy.nameIsInUse(normalizedCreateName, organizations: model.organizationDirectory)
+    }
 
     private var filteredOrganizations: [DashboardDirectoryOrganization] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +77,9 @@ struct OrganizationDirectoryNativePanel: View {
             if let error = model.organizationDirectoryError {
                 NativeNotice(message: error, title: "Organizations unavailable")
             }
+            if !createSetupStatus.isEmpty {
+                NativeNotice(message: createSetupStatus, title: "Organization setup")
+            }
             if model.isImpersonatingForOrganizationSwitch {
                 Label("Workspace selection is paused during impersonation", systemImage: "person.crop.circle.badge.exclam")
                     .font(.system(size: 12, weight: .semibold))
@@ -86,20 +111,67 @@ struct OrganizationDirectoryNativePanel: View {
             SearchFieldRow(placeholder: "Search organizations by name, slug, or status", text: $searchText)
 
             if model.hasHanasandAuth {
-                NativeGroupPanel(title: "Create an organization", subtitle: "Create a workspace for your team") {
-                    HStack(spacing: 10) {
+                NativeGroupPanel(title: "Create an organization", subtitle: "Create a workspace and optionally prepare its first shared term and team invitations") {
+                    VStack(alignment: .leading, spacing: 10) {
                         TextField("Organization name", text: $createName)
                             .textFieldStyle(.roundedBorder)
                             .disabled(model.isLoadingOrganizationDirectory || model.isImpersonatingForOrganizationSwitch)
-                        Button(model.isLoadingOrganizationDirectory ? "Working…" : "Create") {
-                            Task {
-                                await model.createOrganization(named: createName)
-                                if model.organizationDirectoryError == nil { createName = "" }
+                        if createNameAlreadyUsed {
+                            Text("An organization with this name or slug is already listed.")
+                                .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger)
+                        } else if !normalizedCreateName.isEmpty {
+                            Text("Slug · \(DashboardOrganizationCreationPolicy.slug(for: normalizedCreateName))")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary)
+                        }
+
+                        DisclosureGroup("First shared watchlist term (optional)") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Picker("Term type", selection: $createFirstWatchlistKind) {
+                                    ForEach(OrganizationWatchlistKind.allCases, id: \.self) { kind in Text(kind.rawValue.capitalized).tag(kind) }
+                                }
+                                .pickerStyle(.menu)
+                                TextField("company.com, supplier, or actor", text: $createFirstWatchlistValue)
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Monitoring notes (optional)", text: $createFirstWatchlistNotes)
+                                    .textFieldStyle(.roundedBorder)
+                                if createFirstWatchlistValue.count > 240 || createFirstWatchlistNotes.count > 2000 {
+                                    Text("Terms must be at most 240 characters and notes at most 2,000 characters.")
+                                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.danger)
+                                }
                             }
+                            .padding(.top, 7)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+
+                        DisclosureGroup("First team invitations (optional)") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextField("name@example.com, another@example.com", text: $createInviteEmails, axis: .vertical)
+                                    .lineLimit(2...4).textFieldStyle(.roundedBorder)
+                                Picker("Invitation role", selection: $createInviteRole) {
+                                    ForEach(["reader", "editor", "admin"], id: \.self) { role in Text(role.capitalized).tag(role) }
+                                }
+                                .pickerStyle(.menu)
+                                if let invalid = invalidCreateInviteEmails.first {
+                                    Text("Invalid email: \(invalid)").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.danger)
+                                } else if normalizedCreateInviteEmails.count > 25 {
+                                    Text("Invite up to 25 people at a time.").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.danger)
+                                } else if !normalizedCreateInviteEmails.isEmpty {
+                                    Text("\(normalizedCreateInviteEmails.count) unique recipient\(normalizedCreateInviteEmails.count == 1 ? "" : "s")")
+                                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                                }
+                            }
+                            .padding(.top, 7)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+
+                        Button(model.isLoadingOrganizationDirectory ? "Creating organization…" : "Create organization") {
+                            Task { await createOrganization() }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.isLoadingOrganizationDirectory || model.isImpersonatingForOrganizationSwitch
-                                  || createName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                  || normalizedCreateName.isEmpty || createNameAlreadyUsed
+                                  || !invalidCreateInviteEmails.isEmpty || normalizedCreateInviteEmails.count > 25
+                                  || createFirstWatchlistValue.count > 240 || createFirstWatchlistNotes.count > 2000)
                     }
                     if model.isImpersonatingForOrganizationSwitch {
                         Text("Return to your own account to create an organization.")
@@ -130,6 +202,83 @@ struct OrganizationDirectoryNativePanel: View {
         .task(id: model.selectedDashboardPath) {
             await model.loadOrganizationDirectory()
         }
+    }
+
+    @MainActor
+    private func createOrganization() async {
+        let previousOrganizationID = model.selectedOrganizationID
+        let accountID = model.userIDForRequests
+        let sessionToken = model.authTokenForRequests
+        let watchlistValue = createFirstWatchlistValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inviteEmails = normalizedCreateInviteEmails
+        createSetupStatus = ""
+
+        await model.createOrganization(named: normalizedCreateName)
+        guard model.organizationDirectoryError == nil else { return }
+        createName = ""
+
+        let organizationID = model.selectedOrganizationID
+        guard !organizationID.isEmpty, organizationID != previousOrganizationID else {
+            createSetupStatus = "Creation was not confirmed in the active directory. Refresh organizations before trying again."
+            return
+        }
+        guard accountID == model.userIDForRequests, sessionToken == model.authTokenForRequests,
+              !model.isImpersonatingForOrganizationSwitch else {
+            createSetupStatus = "Organization creation may have completed, but the account session changed before setup could be verified. Refresh the directory before retrying."
+            return
+        }
+
+        var setupMessages: [String] = ["Organization created."]
+        if !watchlistValue.isEmpty {
+            await model.loadOrganizationWatchlists()
+            guard model.selectedOrganizationID == organizationID, accountID == model.userIDForRequests,
+                  sessionToken == model.authTokenForRequests,
+                  !model.isImpersonatingForOrganizationSwitch else {
+                createSetupStatus = "Organization created. Setup stopped because the active organization or session changed."
+                return
+            }
+            if model.canWriteSelectedOrganizationWatchlists {
+                model.organizationWatchlistDraftKind = createFirstWatchlistKind
+                model.organizationWatchlistDraftValue = watchlistValue
+                let notes = createFirstWatchlistNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+                model.organizationWatchlistDraftNotes = notes.isEmpty ? "Initial shared watchlist term from organization setup." : notes
+                await model.saveOrganizationWatchlistDraft()
+                if !model.organizationWatchlistStatus.hasPrefix("Saved ") {
+                    setupMessages.append("First shared term was not added. Finish it from Organization Watchlists.")
+                } else {
+                    setupMessages.append("First shared term added.")
+                    createFirstWatchlistValue = ""
+                    createFirstWatchlistNotes = ""
+                }
+            } else {
+                setupMessages.append("First shared term could not be confirmed. Add it from Organization Watchlists.")
+            }
+        }
+
+        if !inviteEmails.isEmpty {
+            await model.loadOrganizationMembers()
+            guard model.selectedOrganizationID == organizationID, accountID == model.userIDForRequests,
+                  sessionToken == model.authTokenForRequests,
+                  !model.isImpersonatingForOrganizationSwitch else {
+                createSetupStatus = "Organization created. Setup stopped because the active organization or session changed."
+                return
+            }
+            if model.organizationMembersCanManage {
+                model.organizationInviteEmailDraft = inviteEmails.joined(separator: ", ")
+                model.organizationInviteRoleDraft = createInviteRole
+                await model.inviteOrganizationMembers()
+                if model.organizationMembersStatus.hasPrefix("Invited ") {
+                    setupMessages.append("Team invitations sent.")
+                    createInviteEmails = ""
+                    createInviteRole = "reader"
+                } else {
+                    setupMessages.append("Invitations were not confirmed. Finish them from Organization Members.")
+                }
+            } else {
+                setupMessages.append("Invitations could not be confirmed. Finish them from Organization Members.")
+            }
+        }
+        createSetupStatus = setupMessages.joined(separator: " ")
     }
 
     @ViewBuilder

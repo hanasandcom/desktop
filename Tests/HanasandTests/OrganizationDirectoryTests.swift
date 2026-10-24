@@ -54,4 +54,34 @@ final class OrganizationDirectoryTests: XCTestCase {
         XCTAssertEqual(settings.selectedOrganizationID, "")
         XCTAssertEqual(settings.selectedOrganizationUserID, "")
     }
+
+    func testCreationNormalizesNameAndRejectsListedNameOrSlugDuplicates() {
+        let organizations = [
+            DashboardDirectoryOrganization(id: "org-one", name: "Example Security", slug: "example-security", status: "active", memberCount: 1),
+            DashboardDirectoryOrganization(id: "other-slug", name: "Another Group", slug: "another-group", status: "archived", memberCount: 0),
+        ]
+
+        XCTAssertEqual(DashboardOrganizationCreationPolicy.normalizedName("  Example\n  Security  "), "Example Security")
+        XCTAssertEqual(DashboardOrganizationCreationPolicy.slug(for: " Example Security "), "example-security")
+        XCTAssertTrue(DashboardOrganizationCreationPolicy.nameIsInUse(" example   security ", organizations: organizations))
+        XCTAssertTrue(DashboardOrganizationCreationPolicy.nameIsInUse("another-group", organizations: organizations))
+        XCTAssertFalse(DashboardOrganizationCreationPolicy.nameIsInUse("New Team", organizations: organizations))
+        XCTAssertFalse(DashboardOrganizationCreationPolicy.nameIsInUse(" \n ", organizations: organizations))
+    }
+
+    func testCreationNormalizesUniqueInvitesAndReportsMalformedOrOversizedEmails() {
+        XCTAssertEqual(
+            DashboardOrganizationCreationPolicy.inviteEmails("First@Example.com, second@example.com\nfirst@example.com"),
+            ["first@example.com", "second@example.com"]
+        )
+        XCTAssertEqual(
+            DashboardOrganizationCreationPolicy.invalidInviteEmails("good@example.com, bad-address, ALSO@ok.test"),
+            ["bad-address"]
+        )
+        XCTAssertEqual(
+            DashboardOrganizationCreationPolicy.invalidInviteEmails("\(String(repeating: "a", count: 250))@example.com"),
+            ["\(String(repeating: "a", count: 250))@example.com"]
+        )
+        XCTAssertTrue(DashboardOrganizationCreationPolicy.invalidInviteEmails(" , \n ").isEmpty)
+    }
 }

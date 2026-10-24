@@ -136,3 +136,49 @@ enum DashboardOrganizationSwitchPolicy {
             && membershipStatus == "active"
     }
 }
+
+enum DashboardOrganizationCreationPolicy {
+    static func normalizedName(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    static func slug(for name: String) -> String {
+        normalizedName(name).lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    static func nameIsInUse(_ value: String, organizations: [DashboardDirectoryOrganization]) -> Bool {
+        let name = normalizedName(value).lowercased()
+        guard !name.isEmpty else { return false }
+        let slug = slug(for: value)
+        return organizations.contains { organization in
+            normalizedName(organization.name).lowercased() == name
+                || organization.slug.lowercased() == slug
+                || organization.id.lowercased() == slug
+        }
+    }
+
+    static func invalidInviteEmails(_ value: String) -> [String] {
+        let emails = value.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        let unique = emails.filter { seen.insert($0).inserted }
+        return unique.filter { email in
+            email.count > 254
+                || email.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) == nil
+        }
+    }
+
+    static func inviteEmails(_ value: String) -> [String] {
+        value.split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, email in
+                if !result.contains(email) { result.append(email) }
+            }
+    }
+}
