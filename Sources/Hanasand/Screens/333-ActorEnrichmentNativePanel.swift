@@ -24,7 +24,7 @@ struct ActorEnrichmentNativePanel: View {
 
     private var title: String { section == .activity ? "Actor activity" : "Automated enrichment" }
     private var updates: [ActorEnrichmentOverview.Update] {
-        (overview?.updates ?? []).sorted { $0.observedAt > $1.observedAt }
+        ActorEnrichmentOverview.newestFirst(overview?.updates ?? [])
     }
 
     var body: some View {
@@ -390,7 +390,12 @@ struct ActorEnrichmentNativePanel: View {
     }
 
     private func date(_ raw: String) -> String {
-        guard let parsed = ISO8601DateFormatter().date(from: raw) else { return raw.isEmpty ? "not recorded" : raw }
-        return DateFormatter.localizedString(from: parsed, dateStyle: .medium, timeStyle: .short)
+        guard let parsed = ActorEnrichmentOverview.date(from: raw) else { return "not recorded" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en")
+        formatter.timeZone = TimeZone(identifier: "Europe/Oslo") ?? .current
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: parsed)
     }
 }

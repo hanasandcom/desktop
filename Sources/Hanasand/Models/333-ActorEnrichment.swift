@@ -111,6 +111,35 @@ struct ActorEnrichmentOverview: Decodable, Equatable {
     let profiles: [Profile]
     let updates: [Update]
     let status: WorkerStatus
+
+    static func date(from value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) { return date }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    static func newestFirst(_ updates: [Update]) -> [Update] {
+        updates
+            .map { (update: $0, date: date(from: $0.observedAt)) }
+            .sorted { left, right in
+                switch (left.date, right.date) {
+                case let (leftDate?, rightDate?):
+                    if leftDate != rightDate { return leftDate > rightDate }
+                    return left.update.id > right.update.id
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    if left.update.observedAt != right.update.observedAt {
+                        return left.update.observedAt > right.update.observedAt
+                    }
+                    return left.update.id > right.update.id
+                }
+            }
+            .map(\.update)
+    }
 }
 
 struct ActorEnrichmentRunPage: Decodable, Equatable {
