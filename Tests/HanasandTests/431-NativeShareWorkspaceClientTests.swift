@@ -4,6 +4,23 @@ import XCTest
 @testable import Hanasand
 
 final class NativeShareWorkspaceClientTests: XCTestCase {
+    func testCreateNameRejectsEmptyAndExactSiblingButWarnsOnCaseOnlyCollision() throws {
+        XCTAssertEqual(
+            NativeShareWorkspaceError.requestFailed(409).errorDescription,
+            "A file or folder with that name now exists here. Change the name and try again."
+        )
+        XCTAssertThrowsError(try NativeShareWorkspaceCreationDecision.make(name: "  ", siblingNames: [])) {
+            XCTAssertEqual($0 as? NativeShareWorkspaceError, .invalidCreationName)
+        }
+        XCTAssertThrowsError(try NativeShareWorkspaceCreationDecision.make(name: "guide.md", siblingNames: ["guide.md"])) {
+            XCTAssertEqual($0 as? NativeShareWorkspaceError, .duplicateName("guide.md"))
+        }
+
+        let decision = try NativeShareWorkspaceCreationDecision.make(name: " Guide.md ", siblingNames: ["guide.md"])
+        XCTAssertEqual(decision.name, "Guide.md")
+        XCTAssertTrue(decision.hasCaseOnlyCollision)
+    }
+
     func testNestedShareRouteResolvesByPathAfterTreeLoadWithoutUsingIDsOrAliasesAsPaths() {
         let tree = [NativeShareWorkspaceTreeItem(
             id: "folder-1", name: "src", alias: "source-alias", parent: "root-1", type: "folder",

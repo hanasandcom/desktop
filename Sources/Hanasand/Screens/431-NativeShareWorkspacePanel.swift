@@ -25,6 +25,8 @@ struct NativeShareWorkspacePanel: View {
     @State private var baselineContent = ""
     @State private var saveConflict: NativeShareWorkspaceSaveConflict?
     @State private var isPreviewVisible = false
+    @State private var pendingCreateType: String?
+    @State private var newItemName = ""
 
     init(alias: String, fileID: String? = nil, initialPath: String? = nil, isProject: Bool = false,
          initialChatOpen: Bool = false, createIfMissing: Bool = false,
@@ -183,10 +185,30 @@ struct NativeShareWorkspacePanel: View {
     private var treePanel: some View {
         NativeGroupPanel(title: "Workspace tree", subtitle: "Select a file to view or edit") {
             HStack(spacing: 8) {
-                ActionButton(title: "New file", icon: "doc.badge.plus") { Task { await createItem(type: "file") } }
+                ActionButton(title: "New file", icon: "doc.badge.plus") { beginCreate(type: "file") }
                     .disabled(isSaving || pendingMutation != nil || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations)
-                ActionButton(title: "New folder", icon: "folder.badge.plus") { Task { await createItem(type: "folder") } }
+                ActionButton(title: "New folder", icon: "folder.badge.plus") { beginCreate(type: "folder") }
                     .disabled(isSaving || pendingMutation != nil || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations)
+            }
+            if let pendingCreateType {
+                VStack(alignment: .leading, spacing: 7) {
+                    TextField(pendingCreateType == "folder" ? "Folder name" : "File name", text: $newItemName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await createItem(type: pendingCreateType, name: newItemName) } }
+                    if creationHasCaseOnlyCollision {
+                        Text("A name with different capitalization already exists here; some tools treat names as case-sensitive.")
+                            .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    }
+                    HStack {
+                        ActionButton(title: "Create", icon: "plus") {
+                            Task { await createItem(type: pendingCreateType, name: newItemName) }
+                        }.disabled(newItemName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                        ActionButton(title: "Cancel", icon: "xmark") {
+                            self.pendingCreateType = nil
+                            newItemName = ""
+                        }.disabled(isSaving)
+                    }
+                }
             }
             if let workspace, workspace.tree.isEmpty {
                 NativeEmptyState(title: "No files yet", message: "Create a file or folder to add it to this workspace.")
@@ -641,19 +663,47 @@ struct NativeShareWorkspacePanel: View {
         tree.contains { $0.id == id || contains(id, in: $0.children ?? []) }
     }
 
-    @MainActor private func createItem(type: String) async {
+    private var creationHasCaseOnlyCollision: Bool {
+        return (try? NativeShareWorkspaceCreationDecision.make(
+            name: newItemName,
+            siblingNames: creationSiblings.map(\.name)
+        ).hasCaseOnlyCollision) ?? false
+    }
+
+    private var creationSiblings: [NativeShareWorkspaceTreeItem] {
+        guard let workspace else { return [] }
+        if selectedParentFolderID == workspace.root.id { return workspace.tree }
+        return findTreeItem(id: selectedParentFolderID, in: workspace.tree)?.children ?? []
+    }
+
+    private func findTreeItem(id: String, in items: [NativeShareWorkspaceTreeItem]) -> NativeShareWorkspaceTreeItem? {
+        for item in items {
+            if item.id == id { return item }
+            if let found = findTreeItem(id: id, in: item.children ?? []) { return found }
+        }
+        return nil
+    }
+
+    private func beginCreate(type: String) {
+        pendingCreateType = type
+        newItemName = type == "folder" ? "New Folder" : "New File.md"
+    }
+
+    @MainActor private func createItem(type: String, name: String) async {
         guard interactionPolicy.allowsNavigationAndTreeMutations,
               let root = workspace?.root else { return }
-        isSaving = true
-        defer { isSaving = false }
         do {
-            let name = type == "folder" ? "New Folder" : "New File.md"
+            let decision = try NativeShareWorkspaceCreationDecision.make(name: name, siblingNames: creationSiblings.map(\.name))
+            isSaving = true
+            defer { isSaving = false }
             let id = UUID().uuidString.lowercased()
             let parent = selectedParentFolderID.isEmpty ? root.id : selectedParentFolderID
-            let parentPath = findPath(for: parent) ?? root.path ?? root.displayName
-            let path = "\(parentPath)/\(name)"
-            let created = try await makeClient().createItem(id: id, name: name, path: path,
+            let parentPath = findPath(for: parent) ?? root.displayName
+            let path = "\(parentPath)/\(decision.name)"
+            let created = try await makeClient().createItem(id: id, name: decision.name, path: path,
                                                            content: type == "file" ? "" : "", parent: parent, type: type)
+            pendingCreateType = nil
+            newItemName = ""
             status = "Created \(created.displayName). Refresh the tree to view it."
             error = ""
             await load()

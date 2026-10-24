@@ -82,6 +82,25 @@ struct NativeShareWorkspaceInteractionPolicy: Equatable {
     }
 }
 
+struct NativeShareWorkspaceCreationDecision: Equatable {
+    let name: String
+    let hasCaseOnlyCollision: Bool
+
+    static func make(name: String, siblingNames: [String]) throws -> NativeShareWorkspaceCreationDecision {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.utf8.count <= NativeShareWorkspaceLimits.fieldBytes else {
+            throw NativeShareWorkspaceError.invalidCreationName
+        }
+        let exact = siblingNames.contains { $0 == trimmed }
+        guard !exact else { throw NativeShareWorkspaceError.duplicateName(trimmed) }
+        let folded = trimmed.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        let hasCaseOnlyCollision = siblingNames.contains {
+            $0.folding(options: [.caseInsensitive], locale: Locale(identifier: "en_US_POSIX")) == folded
+        }
+        return NativeShareWorkspaceCreationDecision(name: trimmed, hasCaseOnlyCollision: hasCaseOnlyCollision)
+    }
+}
+
 struct NativeShareWorkspaceDuplicateEntry: Equatable, Identifiable {
     let sourceID: String
     let id: String
@@ -181,6 +200,8 @@ enum NativeShareWorkspaceError: LocalizedError, Equatable {
     case invalidCredentials
     case invalidResponse
     case saveConflict(NativeShareWorkspaceFile)
+    case invalidCreationName
+    case duplicateName(String)
     case mutationUncertain(String)
     case requestFailed(Int)
 
@@ -193,9 +214,12 @@ enum NativeShareWorkspaceError: LocalizedError, Equatable {
         case .invalidCredentials: "The current account credentials are invalid. Sign in again."
         case .invalidResponse: "The workspace service returned an invalid response."
         case .saveConflict: "This file changed on the server since you opened it. Review the latest version before saving."
+        case .invalidCreationName: "Enter a name up to 4,096 bytes."
+        case .duplicateName(let name): "A file or folder named \(name) already exists here."
         case .mutationUncertain(let action): "The \(action) result could not be confirmed. Refresh the workspace before retrying."
         case .requestFailed(401): "Sign in again to open or edit this workspace."
         case .requestFailed(403): "The current account cannot edit this workspace."
+        case .requestFailed(409): "A file or folder with that name now exists here. Change the name and try again."
         case .requestFailed(404): "This workspace or file was not found."
         case .requestFailed: "The workspace is unavailable. Refresh to try again."
         }
