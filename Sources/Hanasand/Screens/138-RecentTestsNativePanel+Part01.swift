@@ -16,10 +16,18 @@ extension RecentTestsNativePanel {
     }
 
     var loadClient: LoadTestingClient? {
-        try? LoadTestingClient(
+        let userID = model.userIDForRequests
+        let token = model.authTokenForRequests
+        let anonymousClientID = userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && model.settings.impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && model.settings.impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? LoadTestingAnonymousIdentity.current() : nil
+        return try? LoadTestingClient(
             apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
-            userID: model.userIDForRequests,
-            token: model.authTokenForRequests,
+            userID: userID,
+            token: token,
+            anonymousClientID: anonymousClientID,
             impersonationToken: model.settings.impersonationToken,
             impersonatingUserID: model.settings.impersonatingUserID
         )
@@ -32,12 +40,12 @@ extension RecentTestsNativePanel {
 
     var canRerun: Bool {
         guard let loadClient, let remaining = quota?.remaining else { return false }
-        return loadClient.canWrite && permissionConfirmed && !loading && !busy && !submissionLocked && remaining > 0
+        return loadClient.canRerun && permissionConfirmed && !loading && !busy && !submissionLocked && remaining > 0
     }
 
     var canJoinLive: Bool {
         guard let loadClient else { return false }
-        return loadClient.canRead && loadClient.canWrite && !loading && !busy
+        return loadClient.isAuthenticated && loadClient.canRead && loadClient.canWrite && !loading && !busy
             && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
     }
 
@@ -106,7 +114,7 @@ extension RecentTestsNativePanel {
                     apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
                     id: selectedTest.id,
                     reviewed: true,
-                    hasAuth: client.canRead,
+                    hasAuth: client.isAuthenticated,
                     canWrite: client.canWrite,
                     isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty
                 )

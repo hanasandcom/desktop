@@ -130,6 +130,11 @@ extension HanasandLoginGate {
             .frame(maxWidth: .infinity)
             .disabled(model.isLoggingIn)
 
+            ActionButton(title: "Check a service without signing in", icon: "speedometer") {
+                model.openNativeDashboard(path: "/test", label: "Check a service", loadData: false)
+            }
+            .frame(maxWidth: .infinity)
+
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }

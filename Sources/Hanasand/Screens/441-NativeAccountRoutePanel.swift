@@ -69,6 +69,7 @@ private enum NativeAccountRouteKind: Equatable {
     case resetPassword
     case resetPasswordAgain
     case pendingDeletion
+    case loadTest(String?)
 
     init?(path: String) {
         switch path {
@@ -80,7 +81,10 @@ private enum NativeAccountRouteKind: Equatable {
         case "/reset-password": self = .resetPassword
         case "/reset-password-again": self = .resetPasswordAgain
         case "/account-pending-deletion": self = .pendingDeletion
-        default: return nil
+        case "/test": self = .loadTest(nil)
+        default:
+            guard let route = LoadTestingPublicRoute(path: path) else { return nil }
+            self = .loadTest(route.testID)
         }
     }
 
@@ -93,6 +97,7 @@ private enum NativeAccountRouteKind: Equatable {
         case .switchAccount: "Switch account"
         case .resetPassword, .resetPasswordAgain: "Reset your password"
         case .pendingDeletion: "Restore your account"
+        case .loadTest: "Check a service"
         }
     }
 }
@@ -205,6 +210,7 @@ struct NativeAccountRoutePanel: View {
         case .switchAccount: "Choose a Keychain-saved session or sign in to another account."
         case .resetPassword, .resetPasswordAgain: "Use the secure reset link to set a new password."
         case .pendingDeletion: "Restore an account scheduled for deletion."
+        case .loadTest: "Run a permission-reviewed service check or open a shared result."
         case nil: "Account route is unavailable."
         }
     }
@@ -219,6 +225,13 @@ struct NativeAccountRoutePanel: View {
         case .resetPassword: resetPasswordContent
         case .resetPasswordAgain: resetPasswordAgainContent
         case .pendingDeletion: pendingDeletionContent
+        case .loadTest(let routeTestID):
+            VStack(alignment: .leading, spacing: 12) {
+                ActionButton(title: model.hasHanasandAuth ? "Back to dashboard" : "Back to sign in", icon: "arrow.left") {
+                    model.closeNativeDashboardPage()
+                }
+                RecentTestsNativePanel(initialTestID: routeTestID ?? (model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID))
+            }
         case nil: NativeEmptyState(title: "Account route unavailable", message: "Return to the dashboard and open a supported account page.")
         }
     }
@@ -532,6 +545,8 @@ struct NativeAccountRoutePanel: View {
             removeSensitiveRouteValues(["restoreToken"])
         case .switchAccount:
             await loadProfiles()
+        case .loadTest:
+            break
         case nil:
             break
         }

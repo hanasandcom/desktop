@@ -18,6 +18,61 @@ struct LoadTestingQuota: Decodable, Equatable {
     let resetsAt: String?
 }
 
+enum LoadTestingAnonymousIdentity {
+    static let storageKey = "hanasand.desktop.load-testing-client-id"
+
+    static func current(defaults: UserDefaults = .standard) -> String {
+        if let existing = defaults.string(forKey: storageKey), isValid(existing) {
+            return existing.lowercased()
+        }
+        let value = UUID().uuidString.lowercased()
+        defaults.set(value, forKey: storageKey)
+        return value
+    }
+
+    static func isValid(_ value: String) -> Bool {
+        value.range(of: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$", options: .regularExpression) != nil
+    }
+}
+
+struct LoadTestingPublicRoute: Equatable {
+    let testID: String?
+
+    init?(path: String) {
+        if path == "/test" || path == "/test/stats" {
+            testID = nil
+            return
+        }
+        guard path.hasPrefix("/test/"),
+              let id = path.dropFirst("/test/".count).removingPercentEncoding,
+              LoadTestingClient.validTestID(id) else { return nil }
+        testID = id
+    }
+}
+
+private final class LoadTestingRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private enum LoadTestingSession {
+    private static let blocker = LoadTestingRedirectBlocker()
+    private static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration, delegate: blocker, delegateQueue: nil)
+    }()
+
+    static func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        try await shared.data(for: request)
+    }
+}
+
 enum LoadTestingLane: String, CaseIterable, Identifiable {
     case mine
     case recent
@@ -44,6 +99,7 @@ struct LoadTestingScenario: Identifiable {
 
 enum LoadTestingClientError: LocalizedError {
     case signIn
+    case accountRequiredForRerun
     case impersonation
     case invalidEndpoint
     case invalidTestID
@@ -68,6 +124,7 @@ enum LoadTestingClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .signIn: return "Sign in to review load tests."
+        case .accountRequiredForRerun: return "Sign in to rerun a saved load test."
         case .impersonation: return "Load generation is unavailable while impersonating. Switch back to your own account."
         case .invalidEndpoint: return "Use a secure API address without credentials, query parameters, or fragments."
         case .invalidTestID: return "Enter a valid test ID."
@@ -86,12 +143,15 @@ struct LoadTestingClient {
     private let baseURL: URL
     private let userID: String
     private let token: String
+    private let anonymousClientID: String?
     private let impersonationToken: String
+    let isAuthenticated: Bool
     let canRead: Bool
     let canWrite: Bool
+    let canRerun: Bool
     private let send: Sender
 
-    init(apiBaseURL: URL, userID: String, token: String, impersonationToken: String = "", impersonatingUserID: String = "", send: @escaping Sender = { try await URLSession.shared.data(for: $0) }) throws {
+    init(apiBaseURL: URL, userID: String, token: String, anonymousClientID: String? = nil, impersonationToken: String = "", impersonatingUserID: String = "", send: Sender? = nil) throws {
         guard let components = URLComponents(url: apiBaseURL, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https", components.host != nil,
               components.user == nil, components.password == nil,
@@ -99,10 +159,15 @@ struct LoadTestingClient {
         self.baseURL = apiBaseURL
         self.userID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suppliedClientID = anonymousClientID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.anonymousClientID = suppliedClientID.flatMap { LoadTestingAnonymousIdentity.isValid($0) ? $0.lowercased() : nil }
         self.impersonationToken = impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.canRead = !self.userID.isEmpty && !self.token.isEmpty
+        let isAuthenticated = !self.userID.isEmpty && !self.token.isEmpty
+        self.isAuthenticated = isAuthenticated
+        self.canRead = isAuthenticated || self.anonymousClientID != nil
         self.canWrite = self.canRead && self.impersonationToken.isEmpty && impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        self.send = send
+        self.canRerun = isAuthenticated && self.canWrite
+        self.send = send ?? LoadTestingSession.send
     }
 
     func history(_ lane: LoadTestingLane, limit: Int = 50) async throws -> [DashboardRecentTest] {
@@ -145,7 +210,7 @@ struct LoadTestingClient {
     }
 
     func rerun(id: String) async throws {
-        guard canWrite else { throw canRead ? LoadTestingClientError.impersonation : LoadTestingClientError.signIn }
+        guard canRerun else { throw isAuthenticated ? LoadTestingClientError.impersonation : LoadTestingClientError.accountRequiredForRerun }
         guard Self.validTestID(id) else { throw LoadTestingClientError.invalidTestID }
         let body = Data("{}".utf8)
         let value: RerunReceipt = try await request("test/\(id)/rerun", method: "POST", body: body)
@@ -212,15 +277,25 @@ struct LoadTestingClient {
         var request = URLRequest(url: url, timeoutInterval: 20)
         request.httpMethod = method
         request.httpBody = body
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(userID, forHTTPHeaderField: "id")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if isAuthenticated {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue(userID, forHTTPHeaderField: "id")
+            if !impersonationToken.isEmpty { request.setValue(impersonationToken, forHTTPHeaderField: "x-impersonation-token") }
+        } else if let anonymousClientID, (path == "test" || path == "tests/mine" || path == "tests/quota") {
+            request.setValue(anonymousClientID, forHTTPHeaderField: "x-load-test-client-id")
+        }
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if !impersonationToken.isEmpty { request.setValue(impersonationToken, forHTTPHeaderField: "x-impersonation-token") }
 
         do {
             let (data, response) = try await send(request)
-            guard let http = response as? HTTPURLResponse else { throw LoadTestingClientError.unavailable(uncertain: write) }
+            guard let http = response as? HTTPURLResponse,
+                  response.url?.scheme?.lowercased() == "https", response.url?.host == baseURL.host else {
+                throw LoadTestingClientError.unavailable(uncertain: write)
+            }
             guard data.count <= 2 * 1024 * 1024 else { throw LoadTestingClientError.malformed("The load-test response exceeded the 2 MiB limit.", uncertain: write) }
             guard (200..<300).contains(http.statusCode) else {
                 let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]

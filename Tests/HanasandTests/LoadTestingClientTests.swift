@@ -3,6 +3,128 @@ import XCTest
 @testable import Hanasand
 
 final class LoadTestingClientTests: XCTestCase {
+    func testAnonymousQuotaHistoryAndCreateUseOnlyPersistentClientIdentity() async throws {
+        let clientID = "4e57a3bf-41da-46d8-9d85-0a29d7e87d43"
+        var requests: [URLRequest] = []
+        let client = try makeAnonymousClient(id: clientID) { request in
+            requests.append(request)
+            let body: String
+            switch request.url?.path {
+            case "/api/tests/quota": body = #"{"plan":"free","limit":5,"used":1,"remaining":4,"resetsAt":null}"#
+            case "/api/tests/mine": body = "[]"
+            default: body = #"{"id":"run-guest-1","url":"https://example.com/health","status":"queued"}"#
+            }
+            return (Data(body.utf8), Self.response(status: 200))
+        }
+
+        XCTAssertTrue(client.canRead)
+        XCTAssertTrue(client.canWrite)
+        XCTAssertFalse(client.isAuthenticated)
+        XCTAssertFalse(client.canRerun)
+        let quota = try await client.quota()
+        let history = try await client.history(.mine)
+        XCTAssertEqual(quota.remaining, 4)
+        XCTAssertTrue(history.isEmpty)
+        _ = try await client.create(url: "https://example.com/health", scenario: LoadTestingScenario.all[0])
+
+        XCTAssertEqual(requests.map { $0.url?.path }, ["/api/tests/quota", "/api/tests/mine", "/api/test"])
+        for request in requests {
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "id"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "x-impersonation-token"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            XCTAssertFalse(request.httpShouldHandleCookies)
+        }
+        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "x-load-test-client-id"), clientID)
+        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "x-load-test-client-id"), clientID)
+        XCTAssertEqual(requests[2].value(forHTTPHeaderField: "x-load-test-client-id"), clientID)
+    }
+
+    func testAnonymousSharedResultIsPublicAndDoesNotSendClientOrAccountHeaders() async throws {
+        var captured: URLRequest?
+        let client = try makeAnonymousClient(id: "4e57a3bf-41da-46d8-9d85-0a29d7e87d43", send: { request in
+            captured = request
+            return (Data(#"{"id":"run-guest-2","url":"https://example.com","status":"completed"}"#.utf8), Self.response(status: 200))
+        })
+
+        let result = try await client.result(id: "run-guest-2")
+        XCTAssertEqual(result.id, "run-guest-2")
+        XCTAssertEqual(captured?.url?.path, "/api/test/run-guest-2")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "x-load-test-client-id"))
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "id"))
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+    }
+
+    func testAnonymousClientsCannotRerunAndRequireAStableUUID() async throws {
+        var requests = 0
+        let client = try makeAnonymousClient(id: "4e57a3bf-41da-46d8-9d85-0a29d7e87d43", send: { _ in
+            requests += 1
+            return (Data("{}".utf8), Self.response(status: 200))
+        })
+        do {
+            try await client.rerun(id: "run-guest-3")
+            XCTFail("Anonymous clients must not rerun saved tests")
+        } catch let error as LoadTestingClientError {
+            guard case .accountRequiredForRerun = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertEqual(requests, 0)
+
+        let suite = "LoadTestingAnonymousIdentityTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = LoadTestingAnonymousIdentity.current(defaults: defaults)
+        XCTAssertTrue(LoadTestingAnonymousIdentity.isValid(first))
+        XCTAssertEqual(LoadTestingAnonymousIdentity.current(defaults: defaults), first)
+        defaults.set("invalid", forKey: LoadTestingAnonymousIdentity.storageKey)
+        let replaced = LoadTestingAnonymousIdentity.current(defaults: defaults)
+        XCTAssertTrue(LoadTestingAnonymousIdentity.isValid(replaced))
+        XCTAssertNotEqual(replaced, "invalid")
+    }
+
+    func testPublicLoadTestRoutesAcceptRootAndValidSharedIDsOnly() {
+        let rootRoute = LoadTestingPublicRoute(path: "/test")
+        XCTAssertNotNil(rootRoute)
+        XCTAssertNil(rootRoute?.testID)
+        XCTAssertNil(LoadTestingPublicRoute(path: "/test/stats")?.testID)
+        XCTAssertEqual(LoadTestingPublicRoute(path: "/test/scan-42")?.testID, "scan-42")
+        XCTAssertEqual(LoadTestingPublicRoute(path: "/test/case%3A42")?.testID, "case:42")
+        XCTAssertTrue(NativeAccountRoutePanel.supports(path: "/test"))
+        XCTAssertTrue(NativeAccountRoutePanel.supports(path: "/test/scan-42"))
+        for path in ["/test/", "/test/../other", "/test/id/extra", "/dashboard", "/test/unsafe%2Fpath"] {
+            XCTAssertNil(LoadTestingPublicRoute(path: path), path)
+        }
+    }
+
+    func testGuestModeMustBeExplicitAndRequiresValidClientUUID() async throws {
+        var requests = 0
+        let noIdentity = try LoadTestingClient(
+            apiBaseURL: URL(string: "https://api.synthetic.invalid/api")!,
+            userID: "",
+            token: "",
+            send: { _ in requests += 1; return (Data("{}".utf8), Self.response(status: 200)) }
+        )
+        XCTAssertFalse(noIdentity.canRead)
+        XCTAssertFalse(noIdentity.canWrite)
+        do {
+            _ = try await noIdentity.quota()
+            XCTFail("An anonymous request without an explicit client UUID must be rejected")
+        } catch let error as LoadTestingClientError {
+            guard case .signIn = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+
+        let invalidIdentity = try LoadTestingClient(
+            apiBaseURL: URL(string: "https://api.synthetic.invalid/api")!,
+            userID: "",
+            token: "",
+            anonymousClientID: "not-a-uuid",
+            send: { _ in requests += 1; return (Data("{}".utf8), Self.response(status: 200)) }
+        )
+        XCTAssertFalse(invalidIdentity.canRead)
+        XCTAssertFalse(invalidIdentity.canWrite)
+        XCTAssertEqual(requests, 0)
+    }
+
     func testAuthenticatedHistoryCallsExpectedLaneAndLimit() async throws {
         var captured: URLRequest?
         let client = try makeClient(send: { request in
@@ -15,6 +137,9 @@ final class LoadTestingClientTests: XCTestCase {
         XCTAssertEqual(captured?.url?.absoluteString, "https://api.synthetic.invalid/api/tests/mine?limit=50")
         XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-token")
         XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "user-17")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "x-load-test-client-id"))
+        XCTAssertTrue(client.isAuthenticated)
+        XCTAssertTrue(client.canRerun)
     }
 
     func testRecentHistoryBoundsCallerLimitAndRejectsDuplicateIDs() async throws {
@@ -171,6 +296,16 @@ final class LoadTestingClientTests: XCTestCase {
             token: "synthetic-token",
             impersonationToken: impersonationToken,
             impersonatingUserID: impersonatingUserID,
+            send: send
+        )
+    }
+
+    private func makeAnonymousClient(id: String, send: @escaping LoadTestingClient.Sender) throws -> LoadTestingClient {
+        try LoadTestingClient(
+            apiBaseURL: URL(string: "https://api.synthetic.invalid/api")!,
+            userID: "",
+            token: "",
+            anonymousClientID: id,
             send: send
         )
     }
