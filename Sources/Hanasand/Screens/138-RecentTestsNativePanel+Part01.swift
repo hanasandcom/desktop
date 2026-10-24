@@ -109,29 +109,35 @@ extension RecentTestsNativePanel {
                 NativeNotice(message: model.hasHanasandAuth ? "The configured API address is invalid or insecure." : "Sign in to inspect your own checks, recent checks, and usage allowance.", title: model.hasHanasandAuth ? "API unavailable" : "Sign-in required")
             }
 
-            HStack(spacing: 10) {
-                testField("Endpoint URL", text: $targetURL, placeholder: "https://api.example.com/health")
-                Picker("Scenario", selection: Binding(get: { selectedScenarioID }, set: { selectScenario($0) })) {
-                    Text("Custom").tag(LoadTestingScenario.customID)
-                    ForEach(LoadTestingScenario.all) { scenario in Text(scenario.title).tag(scenario.id) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    testField("Endpoint URL", text: $targetURL, placeholder: "https://api.example.com/health")
+                    scenarioPicker
+                    startCheckButton
                 }
-                .pickerStyle(.menu)
-                .frame(width: 132)
-                ActionButton(title: busy ? "Starting…" : "Start check", icon: "play.circle") {
-                    guard canSubmit else { return }
-                    showStartConfirmation = true
+                VStack(alignment: .leading, spacing: 8) {
+                    testField("Endpoint URL", text: $targetURL, placeholder: "https://api.example.com/health")
+                    HStack(spacing: 10) {
+                        scenarioPicker
+                        startCheckButton
+                    }
                 }
-                .disabled(!canSubmit)
             }
             Text("\(selectedScenario.description) · \(selectedScenario.timeout)s timeout · \(selectedScenario.stages.map { "\($0.duration):\($0.target)" }.joined(separator: ", "))")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 10) {
-                testField("Timeout seconds", text: $timeoutDraft, placeholder: "30")
-                    .frame(maxWidth: 180)
-                testField("Stages · duration:users", text: $stagesDraft, placeholder: "30s:5, 1m:15")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    testField("Timeout seconds", text: $timeoutDraft, placeholder: "30")
+                        .frame(maxWidth: 180)
+                    testField("Stages · duration:users", text: $stagesDraft, placeholder: "30s:5, 1m:15")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    testField("Timeout seconds", text: $timeoutDraft, placeholder: "30")
+                    testField("Stages · duration:users", text: $stagesDraft, placeholder: "30s:5, 1m:15")
+                }
             }
             .disabled(selectedScenarioID != LoadTestingScenario.customID)
             if selectedScenarioID == LoadTestingScenario.customID && !isValidScenario {
@@ -178,14 +184,19 @@ extension RecentTestsNativePanel {
 
     var historyPanel: some View {
         NativeGroupPanel(title: "Run management", subtitle: "Stored results from your account or the public recent lane.") {
-            HStack(spacing: 8) {
-                Picker("History", selection: Binding(get: { selectedLane }, set: { selectedLane = $0; selectedStatus = "all" })) {
-                    ForEach(LoadTestingLane.allCases) { lane in Text(lane.title).tag(lane) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    historyLanePicker
+                    SearchFieldRow(placeholder: "Search URL, ID, or status", text: $searchText)
+                    refreshHistoryButton
                 }
-                .pickerStyle(.segmented)
-                SearchFieldRow(placeholder: "Search URL, ID, or status", text: $searchText)
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await refresh(manual: true) } }
-                    .disabled(loading || busy || loadClient?.canRead != true)
+                VStack(alignment: .leading, spacing: 8) {
+                    historyLanePicker
+                    HStack(spacing: 8) {
+                        SearchFieldRow(placeholder: "Search URL, ID, or status", text: $searchText)
+                        refreshHistoryButton
+                    }
+                }
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -219,6 +230,35 @@ extension RecentTestsNativePanel {
                 }
             }
         }
+    }
+
+    private var scenarioPicker: some View {
+        Picker("Scenario", selection: Binding(get: { selectedScenarioID }, set: { selectScenario($0) })) {
+            Text("Custom").tag(LoadTestingScenario.customID)
+            ForEach(LoadTestingScenario.all) { scenario in Text(scenario.title).tag(scenario.id) }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 132)
+    }
+
+    private var startCheckButton: some View {
+        ActionButton(title: busy ? "Starting…" : "Start check", icon: "play.circle") {
+            guard canSubmit else { return }
+            showStartConfirmation = true
+        }
+        .disabled(!canSubmit)
+    }
+
+    private var historyLanePicker: some View {
+        Picker("History", selection: Binding(get: { selectedLane }, set: { selectedLane = $0; selectedStatus = "all" })) {
+            ForEach(LoadTestingLane.allCases) { lane in Text(lane.title).tag(lane) }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    private var refreshHistoryButton: some View {
+        ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await refresh(manual: true) } }
+            .disabled(loading || busy || loadClient?.canRead != true)
     }
 
     func testField(_ label: String, text: Binding<String>, placeholder: String) -> some View {

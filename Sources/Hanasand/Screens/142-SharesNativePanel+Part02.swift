@@ -170,37 +170,42 @@ extension SharesNativePanel {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(theme.textSecondary)
                             .lineLimit(1)
-                            HStack(spacing: 12) {
+                            HStack(spacing: 8) {
                                 Button("Open") {
                                     model.openShare(share)
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(theme.accent)
-                                Button("Edit") {
-                                    model.loadShareIntoEditor(share)
+                                Menu {
+                                    Button("Edit") {
+                                        model.loadShareIntoEditor(share)
+                                    }
+                                    Button(share.locked == true ? "Unlock" : "Lock") {
+                                        Task { await model.toggleNativeShareLock(share) }
+                                    }
+                                    Button("Load tree") {
+                                        Task { await model.loadNativeShareTree(share) }
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        deletingShare = share
+                                    }
+                                } label: {
+                                    Label("More", systemImage: "ellipsis")
+                                        .labelStyle(.titleAndIcon)
                                 }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(theme.textSecondary)
-                                Button(share.locked == true ? "Unlock" : "Lock") {
-                                    Task { await model.toggleNativeShareLock(share) }
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(share.locked == true ? theme.danger : theme.textSecondary)
-                                Button("Tree") {
-                                    Task { await model.loadNativeShareTree(share) }
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(theme.textSecondary)
-                                Button("Delete") {
-                                    deletingShare = share
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(theme.danger)
-                                Spacer()
+                                .menuStyle(.borderlessButton)
+                                .accessibilityLabel("More actions for \(share.displayName)")
+                            }
+                            HStack(spacing: 5) {
+                                Text("ID")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(theme.textTertiary)
                                 Text(share.id)
                                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                     .foregroundStyle(theme.textTertiary)
                                     .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
                             }
                             if let tree = model.shareTrees[share.id], !tree.isEmpty {
                                 Text(treePreview(tree))

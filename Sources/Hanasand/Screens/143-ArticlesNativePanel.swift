@@ -181,30 +181,36 @@ struct ArticlesNativePanel: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(theme.textTertiary)
                             .lineLimit(1)
-                            HStack {
+                            HStack(spacing: 8) {
                                 Button("Open") {
                                     model.openArticle(article)
                                 }
                                 .buttonStyle(.plain)
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(theme.accent)
-                                Button("Edit") {
-                                    model.loadArticleIntoEditor(article)
+                                Menu {
+                                    Button("Edit") {
+                                        model.loadArticleIntoEditor(article)
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        deletingArticle = article
+                                    }
+                                } label: {
+                                    Label("More", systemImage: "ellipsis")
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.textSecondary)
-                                Button("Delete") {
-                                    deletingArticle = article
-                                }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.danger)
-                                Spacer()
+                                .menuStyle(.borderlessButton)
+                                .accessibilityLabel("More actions for \(article.title)")
+                            }
+                            HStack(spacing: 5) {
+                                Text("ID")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(theme.textTertiary)
                                 Text(article.id)
                                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                     .foregroundStyle(theme.textTertiary)
                                     .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
                             }
                         }
                         .padding(13)
