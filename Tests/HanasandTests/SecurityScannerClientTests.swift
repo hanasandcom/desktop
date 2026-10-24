@@ -159,6 +159,49 @@ final class SecurityScannerClientTests: XCTestCase {
         XCTAssertEqual(failedLatestRun.lastCompleteRunSummary, previousComplete.lastCompleteRunSummary)
     }
 
+    func testPausedScannerStillAllowsEditorToPauseExistingSchedule() async throws {
+        var requests: [URLRequest] = []
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: true, send: { request in
+            requests.append(request)
+            if request.url?.host == "identity.hanasand.com" {
+                return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
+            }
+            let asset = #"{"id":"asset-1","hostname":"example.com","verificationStatus":"verified","verificationRecordName":"","verificationRecordValue":"","verificationMethod":"dns_txt","verifiedAt":null,"scanAuthorizedAt":null,"authorizedAddresses":["203.0.113.1"],"scheduleEnabled":false,"schedulePlan":[{"engine":"nmap","profile":"tcp-top-1000"}],"scheduleEngine":"nmap","scheduleScanId":null,"scheduleProfile":"tcp-top-1000","zapApiDefinitionPath":null,"intervalMinutes":1440,"nextRunAt":null,"createdAt":"2026-10-23T10:00:00Z"}"#
+            return (Data("{\"asset\":\(asset)}".utf8), self.response(request, 200))
+        })
+        let updated = try await client.setSchedule(
+            asset: scannerAsset(scheduleEnabled: true), enabled: false, intervalMinutes: 1440, authorized: false,
+            engines: [.init(engine: "nmap", scanId: nil, profile: "tcp-top-1000")]
+        )
+
+        XCTAssertFalse(updated.scheduleEnabled)
+        XCTAssertEqual(requests.count, 2, "pausing a schedule must verify editor membership and send one schedule update")
+        XCTAssertEqual(requests.last?.httpMethod, "PUT")
+        XCTAssertEqual(requests.last?.url?.path, "/api/v1/uvm/assets/asset-1/schedule")
+        let body = try XCTUnwrap(requests.last?.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        XCTAssertEqual(body["enabled"] as? Bool, false)
+        XCTAssertEqual(body["authorized"] as? Bool, false)
+        XCTAssertEqual((body["engines"] as? [[String: String]])?.first?["engine"], "nmap")
+    }
+
+    func testPausedScannerStillRejectsEnablingScheduleBeforeTransport() async throws {
+        var sent = 0
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: true, send: { request in
+            sent += 1
+            return (Data(), self.response(request, 200))
+        })
+        do {
+            _ = try await client.setSchedule(
+                asset: scannerAsset(), enabled: true, intervalMinutes: 1440, authorized: true,
+                engines: [.init(engine: "nmap", scanId: nil, profile: "tcp-top-1000")]
+            )
+            XCTFail("a paused scanner must not enable recurring scans")
+        } catch {
+            XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.servicesPaused.localizedDescription)
+        }
+        XCTAssertEqual(sent, 0, "new schedules remain blocked before membership or scanner requests")
+    }
+
     func testHistoryFiltersAndLocalPagingMatchWebsiteSearchFields() throws {
         let runs = try (0..<23).map { index in
             try scannerRun(id: "run-\(index)", target: index == 4 ? "api.example.com" : "host-\(index).example.com",
@@ -387,10 +430,11 @@ final class SecurityScannerClientTests: XCTestCase {
         )
     }
 
-    private func scannerAsset() -> SecurityScannerAsset {
+    private func scannerAsset(scheduleEnabled: Bool = false) -> SecurityScannerAsset {
         SecurityScannerAsset(id: "asset-1", hostname: "example.com", verificationStatus: "verified", verificationRecordName: "",
                              verificationRecordValue: "", verificationMethod: "dns_txt", verifiedAt: nil, scanAuthorizedAt: nil,
-                             authorizedAddresses: ["203.0.113.1"], scheduleEnabled: false, schedulePlan: [], scheduleEngine: "nmap",
+                             authorizedAddresses: ["203.0.113.1"], scheduleEnabled: scheduleEnabled,
+                             schedulePlan: [.init(engine: "nmap", scanId: nil, profile: "tcp-top-1000")], scheduleEngine: "nmap",
                              scheduleScanId: nil, scheduleProfile: nil, zapApiDefinitionPath: nil, intervalMinutes: 60,
                              nextRunAt: nil, createdAt: "2026-10-23T10:00:00Z")
     }

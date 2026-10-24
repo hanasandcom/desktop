@@ -62,7 +62,8 @@ struct SecurityScannerNativePanel: View {
         do { _ = try SecurityScannerClient(settings: model.settings); return "Security Scanner is unavailable." }
         catch { return error.localizedDescription }
     }
-    private var writeDisabled: Bool { snapshot.servicesPaused || error != nil || !model.hasHanasandAuth || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty || busy.isEmpty == false }
+    private var accountWriteDisabled: Bool { !model.hasHanasandAuth || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty || !busy.isEmpty }
+    private var writeDisabled: Bool { snapshot.servicesPaused || error != nil || accountWriteDisabled }
     private var scannerNotice: String? {
         guard let message = dashboard?.scannerError?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else { return nil }
         return message
@@ -245,8 +246,15 @@ struct SecurityScannerNativePanel: View {
     }
 
     private func saveScheduleButton(_ asset: SecurityScannerAsset) -> some View {
-        ActionButton(title: busy == "\(asset.id):schedule" ? "Saving…" : "Save schedule", icon: "calendar.badge.clock") { Task { await saveSchedule(asset) } }
-            .disabled(writeDisabled || !authorization.contains(asset.id))
+        let enabled = scheduleEnabled[asset.id] ?? asset.scheduleEnabled
+        return ActionButton(title: busy == "\(asset.id):schedule" ? (enabled ? "Saving…" : "Pausing…") : (enabled ? "Save schedule" : "Pause schedule"), icon: "calendar.badge.clock") { Task { await saveSchedule(asset) } }
+            .disabled(scheduleSaveDisabled(asset))
+    }
+
+    private func scheduleSaveDisabled(_ asset: SecurityScannerAsset) -> Bool {
+        let enabled = scheduleEnabled[asset.id] ?? asset.scheduleEnabled
+        return accountWriteDisabled || (enabled && (snapshot.servicesPaused || !authorization.contains(asset.id)))
+            || (!enabled && !asset.scheduleEnabled)
     }
 
     private func assetCard(_ asset: SecurityScannerAsset) -> some View {
@@ -815,18 +823,24 @@ struct SecurityScannerNativePanel: View {
         }
     }
     @MainActor private func saveSchedule(_ asset: SecurityScannerAsset) async {
-        await perform("\(asset.id):schedule", success: "Scan schedule saved.") { client in
+        let enabled = scheduleEnabled[asset.id] ?? asset.scheduleEnabled
+        await perform("\(asset.id):schedule", success: enabled ? "Scan schedule saved." : "Recurring scans paused.") { client in
             let interval = Int(scheduleIntervals[asset.id] ?? String(asset.intervalMinutes)) ?? 0
             let plan = asset.schedulePlan?.isEmpty == false ? asset.schedulePlan! : [SecurityScannerEngineSelection(engine: "nmap", scanId: nil, profile: (nmapProfiles[asset.id] ?? .top1000).rawValue)]
-            let selected = scheduleEngines[asset.id] ?? plan.map(\.engine)
-            let configuredPlan = selected.compactMap { raw -> SecurityScannerEngineSelection? in
-                guard let engine = SecurityScannerEngineID(rawValue: raw), engineAvailable(engine) else { return nil }
-                if engine == .nmap { return .init(engine: raw, scanId: nil, profile: (nmapProfiles["schedule:\(asset.id)"] ?? .top1000).rawValue) }
-                if engine == .tenableVM { return .init(engine: raw, scanId: tenableScanIDs["schedule:\(asset.id)"] ?? snapshot.tenableScans.first(where: \.enabled)?.id, profile: nil) }
-                return .init(engine: raw, scanId: nil, profile: engine.defaultProfile)
+            let configuredPlan: [SecurityScannerEngineSelection]
+            if enabled {
+                let selected = scheduleEngines[asset.id] ?? plan.map(\.engine)
+                configuredPlan = selected.compactMap { raw -> SecurityScannerEngineSelection? in
+                    guard let engine = SecurityScannerEngineID(rawValue: raw), engineAvailable(engine) else { return nil }
+                    if engine == .nmap { return .init(engine: raw, scanId: nil, profile: (nmapProfiles["schedule:\(asset.id)"] ?? .top1000).rawValue) }
+                    if engine == .tenableVM { return .init(engine: raw, scanId: tenableScanIDs["schedule:\(asset.id)"] ?? snapshot.tenableScans.first(where: \.enabled)?.id, profile: nil) }
+                    return .init(engine: raw, scanId: nil, profile: engine.defaultProfile)
+                }
+            } else {
+                configuredPlan = plan
             }
             guard !configuredPlan.isEmpty else { error = "Choose at least one available scanner for the schedule."; return }
-            let updated = try await client.setSchedule(asset: asset, enabled: scheduleEnabled[asset.id] ?? asset.scheduleEnabled, intervalMinutes: interval, authorized: authorization.contains(asset.id), engines: configuredPlan)
+            let updated = try await client.setSchedule(asset: asset, enabled: enabled, intervalMinutes: interval, authorized: authorization.contains(asset.id), engines: configuredPlan)
             if var current = dashboard { current.assets = current.assets.map { $0.id == updated.id ? updated : $0 }; dashboard = current }
         }
     }

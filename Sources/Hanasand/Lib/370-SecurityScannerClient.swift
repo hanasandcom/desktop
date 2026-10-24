@@ -110,23 +110,23 @@ struct SecurityScannerClient {
     func setSchedule(asset: SecurityScannerAsset, enabled: Bool, intervalMinutes: Int, authorized: Bool,
                      engines: [SecurityScannerEngineSelection]) async throws -> SecurityScannerAsset {
         try requireCurrent(asset)
-        guard authorized else { throw SecurityScannerClientError.authorizationRequired }
+        guard !enabled || authorized else { throw SecurityScannerClientError.authorizationRequired }
         let engineIDs = engines.map(\.engine)
         guard (15...43_200).contains(intervalMinutes), !engines.isEmpty,
               engines.count <= SecurityScannerEngineID.allCases.count, Set(engineIDs).count == engineIDs.count,
               engines.allSatisfy({ SecurityScannerEngineID(rawValue: $0.engine) != nil }) else {
             throw SecurityScannerClientError.invalidInput("Choose a valid interval and at least one configured scanner.")
         }
-        try await requireEditorMembership()
+        try await requireEditorMembership(allowWhilePaused: !enabled)
         let receipt: AssetReceipt = try await request("v1/uvm/assets/\(segment(asset.id))/schedule", method: "PUT", body: [
-            "enabled": enabled, "intervalMinutes": intervalMinutes, "authorized": true,
+            "enabled": enabled, "intervalMinutes": intervalMinutes, "authorized": enabled && authorized,
             "engines": engines.map { selection in
                 var value: [String: String] = ["engine": selection.engine]
                 if let scanId = selection.scanId { value["scanId"] = scanId }
                 if let profile = selection.profile { value["profile"] = profile }
                 return value
             },
-        ])
+        ], allowWhilePaused: !enabled)
         guard receipt.asset.id == asset.id, receipt.asset.scheduleEnabled == enabled else { throw SecurityScannerClientError.unconfirmedMutation }
         return receipt.asset
     }
@@ -223,8 +223,9 @@ struct SecurityScannerClient {
         return "\(path)?\(parts.joined(separator: "&"))"
     }
 
-    private func request<T: Decodable>(_ path: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
-        guard !servicesPaused || method == "GET" else { throw SecurityScannerClientError.servicesPaused }
+    private func request<T: Decodable>(_ path: String, method: String = "GET", body: [String: Any]? = nil,
+                                       allowWhilePaused: Bool = false) async throws -> T {
+        guard !servicesPaused || method == "GET" || allowWhilePaused else { throw SecurityScannerClientError.servicesPaused }
         let pieces = path.split(separator: "?", maxSplits: 1).map(String.init)
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
               components.scheme == "https", let host = components.host else { throw SecurityScannerClientError.invalidBaseURL }
@@ -259,8 +260,8 @@ struct SecurityScannerClient {
         catch { throw SecurityScannerClientError.invalidResponse }
     }
 
-    private func requireEditorMembership() async throws {
-        guard !servicesPaused else { throw SecurityScannerClientError.servicesPaused }
+    private func requireEditorMembership(allowWhilePaused: Bool = false) async throws {
+        guard !servicesPaused || allowWhilePaused else { throw SecurityScannerClientError.servicesPaused }
         let base = apiBaseURL.host?.lowercased() == "api.hanasand.com" ? URL(string: "https://identity.hanasand.com/api")! : apiBaseURL
         let membership: OrganizationMembershipReceipt = try await requestIdentity("organizations", base: base)
         guard let current = membership.organizations.first(where: { $0.id == organizationID && $0.status == "active" }),
