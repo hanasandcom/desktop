@@ -16,6 +16,7 @@ struct IntegrationsNativePanel: View {
     @State private var warning = ""
     @State private var pendingAction: PendingAction?
     @State private var revision = 0
+    @State private var loadRequestID: UUID?
     @State private var refreshRequired = false
 
     private var scopeID: String { initialOrganizationID ?? model.selectedOrganizationID }
@@ -141,17 +142,28 @@ struct IntegrationsNativePanel: View {
         let requestScope = scopeID
         let requestUser = model.userIDForRequests
         let requestToken = model.authTokenForRequests
-        busy = true; error = ""; defer { busy = false }
+        let requestRevision = revision
+        let requestID = UUID()
+        loadRequestID = requestID
+        busy = true; error = ""
+        defer {
+            if loadRequestID == requestID {
+                loadRequestID = nil
+                busy = false
+            }
+        }
         do {
             let client = try makeClient()
             let loaded = try await client.load()
             guard scenePhase == .active, scopeID == requestScope,
-                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken else { return }
+                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken,
+                  revision == requestRevision, loadRequestID == requestID else { return }
             guard requestScope.isEmpty || loaded.destinations.allSatisfy({ $0.orgId == (requestScope == "personal" ? requestUser : requestScope) }) else { throw IntegrationClientError.invalidResponse }
             page = loaded; refreshRequired = false
         } catch {
             guard scenePhase == .active, scopeID == requestScope,
-                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken else { return }
+                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken,
+                  revision == requestRevision, loadRequestID == requestID else { return }
             page = nil; self.error = error.localizedDescription
         }
     }
