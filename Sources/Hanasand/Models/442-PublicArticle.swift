@@ -131,6 +131,7 @@ enum PublicArticleMarkdownBlock: Equatable {
     case heading(level: Int, text: String)
     case paragraph(String)
     case bullet(String)
+    case orderedList(start: Int, items: [String])
     case quote(String)
     case code(String)
     case divider
@@ -140,6 +141,8 @@ enum PublicArticleMarkdown {
     static func blocks(from markdown: String) -> [PublicArticleMarkdownBlock] {
         var blocks: [PublicArticleMarkdownBlock] = []
         var paragraph: [String] = []
+        var orderedItems: [String] = []
+        var orderedStart = 1
         var code: [String] = []
         var inCodeFence = false
 
@@ -149,10 +152,18 @@ enum PublicArticleMarkdown {
             paragraph.removeAll()
         }
 
+        func flushOrderedList() {
+            guard !orderedItems.isEmpty else { return }
+            blocks.append(.orderedList(start: orderedStart, items: orderedItems))
+            orderedItems.removeAll()
+            orderedStart = 1
+        }
+
         for rawLine in markdown.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") {
                 flushParagraph()
+                flushOrderedList()
                 if inCodeFence {
                     blocks.append(.code(code.joined(separator: "\n")))
                     code.removeAll()
@@ -166,24 +177,34 @@ enum PublicArticleMarkdown {
             }
             if line.isEmpty {
                 flushParagraph()
+            } else if let item = orderedItem(line) {
+                flushParagraph()
+                if orderedItems.isEmpty { orderedStart = item.number }
+                orderedItems.append(item.text)
             } else if let heading = heading(line) {
                 flushParagraph()
+                flushOrderedList()
                 blocks.append(.heading(level: heading.level, text: heading.text))
             } else if line.hasPrefix(">") {
                 flushParagraph()
+                flushOrderedList()
                 blocks.append(.quote(String(line.dropFirst()).trimmingCharacters(in: .whitespaces)))
             } else if let item = bullet(line) {
                 flushParagraph()
+                flushOrderedList()
                 blocks.append(.bullet(item))
             } else if ["---", "***", "___"].contains(line) {
                 flushParagraph()
+                flushOrderedList()
                 blocks.append(.divider)
             } else {
                 paragraph.append(line)
+                flushOrderedList()
             }
         }
 
         flushParagraph()
+        flushOrderedList()
         if inCodeFence { blocks.append(.code(code.joined(separator: "\n"))) }
         return blocks
     }
@@ -199,5 +220,17 @@ enum PublicArticleMarkdown {
         guard let first = line.first, ["-", "*", "+"].contains(first),
               line.dropFirst().first == " " else { return nil }
         return String(line.dropFirst(2))
+    }
+
+    private static func orderedItem(_ line: String) -> (number: Int, text: String)? {
+        let digits = line.prefix(while: { $0 >= "0" && $0 <= "9" })
+        guard !digits.isEmpty,
+              let number = Int(digits),
+              let separator = line.dropFirst(digits.count).first,
+              separator == "." || separator == ")",
+              line.dropFirst(digits.count + 1).first?.isWhitespace == true else {
+            return nil
+        }
+        return (number, String(line.dropFirst(digits.count + 2)))
     }
 }

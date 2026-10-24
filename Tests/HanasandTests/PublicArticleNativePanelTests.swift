@@ -116,4 +116,23 @@ final class PublicArticleNativePanelTests: XCTestCase {
             .divider,
         ])
     }
+
+    func testMarkdownParserPreservesOrderedListsAndTheirStartingNumber() {
+        let blocks = PublicArticleMarkdown.blocks(from: """
+        Follow these steps:
+
+        3. Review the saved version.
+
+        4) Confirm the changes.
+        5. Save the article.
+
+        Then return to the list.
+        """)
+
+        XCTAssertEqual(blocks, [
+            .paragraph("Follow these steps:"),
+            .orderedList(start: 3, items: ["Review the saved version.", "Confirm the changes.", "Save the article."]),
+            .paragraph("Then return to the list."),
+        ])
+    }
 }

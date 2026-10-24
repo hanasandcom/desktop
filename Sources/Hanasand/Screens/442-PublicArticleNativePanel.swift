@@ -211,6 +211,23 @@ struct PublicArticleNativePanel: View {
                     .textSelection(.enabled)
             }
             .padding(.leading, 8)
+        case let .orderedList(start, items):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Text("\(orderedListNumber(start: start, offset: index)).")
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(theme.accent)
+                            .frame(minWidth: 22, alignment: .trailing)
+                        Text(richText(item))
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .padding(.leading, 8)
         case let .quote(value):
             Text(richText(value))
                 .font(.system(size: 14, weight: .regular, design: .serif))
@@ -235,6 +252,11 @@ struct PublicArticleNativePanel: View {
 
     private func richText(_ markdown: String) -> AttributedString {
         (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
+    }
+
+    private func orderedListNumber(start: Int, offset: Int) -> Int {
+        let (number, overflow) = start.addingReportingOverflow(offset)
+        return overflow ? Int.max : number
     }
 
     private func headingSize(_ level: Int) -> CGFloat {
