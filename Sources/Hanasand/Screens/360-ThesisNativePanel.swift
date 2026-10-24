@@ -16,6 +16,7 @@ struct ThesisNativePanel: View {
     @State private var loadingHistory = false
     @State private var revision = 0
     @State private var loadedScope = ""
+    @State private var sourceReviewExpanded = false
 
     private var impersonating: Bool { !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty }
     private var canEdit: Bool { access?.member == true && access?.canEdit == true && !impersonating }
@@ -66,6 +67,16 @@ struct ThesisNativePanel: View {
 
                 historyPanel
                 if let preview { versionPreview(preview) }
+                if access?.member == true {
+                    NativeGroupPanel(title: "Source inventory and review", subtitle: "Browse indexed source, dependencies, and review history") {
+                        ActionButton(title: sourceReviewExpanded ? "Hide source inventory" : "Open source inventory", icon: sourceReviewExpanded ? "chevron.up" : "chevron.down") {
+                            sourceReviewExpanded.toggle()
+                        }
+                    }
+                    if sourceReviewExpanded {
+                        ThesisCodeReviewNativePanel(settings: codeReviewSettings, canReview: canEdit)
+                    }
+                }
             } else if busy {
                 NativeEmptyState(title: "Loading Thesis", message: "Checking organization access and loading the shared document.")
             } else {
@@ -115,6 +126,7 @@ struct ThesisNativePanel: View {
         if loadedScope != scope {
             loadedScope = scope; access = nil; document = nil; title = ""; bodyText = ""
             history = []; preview = nil; remoteConflict = nil
+            sourceReviewExpanded = false
         }
         if impersonating { access = nil; document = nil; error = "Return to your own account to open Thesis."; return }
         guard model.hasHanasandAuth else { access = nil; document = nil; error = "Sign in to open Thesis."; return }
@@ -171,5 +183,12 @@ struct ThesisNativePanel: View {
         settings.userID = model.userIDForRequests
         settings.authToken = model.authTokenForRequests
         return try ThesisClient(settings: settings)
+    }
+
+    private var codeReviewSettings: HanasandDesktopSettings {
+        var settings = model.settings
+        settings.userID = model.userIDForRequests
+        settings.authToken = model.authTokenForRequests
+        return settings
     }
 }
