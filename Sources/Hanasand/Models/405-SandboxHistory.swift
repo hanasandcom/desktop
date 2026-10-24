@@ -71,12 +71,13 @@ struct SandboxHistoryReportEntry: Equatable {
 
 struct SandboxHistoryReportClient {
     typealias Sender = (URLRequest) async throws -> (Data, URLResponse)
+    static let defaultAPIBaseURL = URL(string: "https://browsers.hanasand.com/api")!
     private let baseURL: URL
     private let userID: String
     private let token: String
     private let send: Sender
 
-    init(apiBaseURL: URL, userID: String, token: String,
+    init(apiBaseURL: URL = defaultAPIBaseURL, userID: String, token: String,
          impersonationToken: String = "", impersonatingUserID: String = "", send: Sender? = nil) throws {
         guard impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

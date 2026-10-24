@@ -244,7 +244,7 @@ final class DesktopAgentModel: ObservableObject {
 
     var quickAppActions: [DesktopAction] {
         [
-            .url("Hanasand", "Open the public website.", "safari", settings.websiteBaseURL),
+            .route("Hanasand", "Open the native public home screen.", "house", "/"),
             .route("Upload", "Native CDN file uploader.", "arrow.up.doc", "/upload"),
             .url("GitHub", "Open source repositories.", "chevron.left.forwardslash.chevron.right", "https://github.com/eirikhanasand"),
             .url("LinkedIn", "Open LinkedIn profile.", "person.text.rectangle", "https://linkedin.com/in/eirikhanasand"),

@@ -6,6 +6,11 @@ import XCTest
 final class SandboxHistoryTests: XCTestCase {
     private let api = URL(string: "https://api.example.test/api")!
 
+    func testDefaultHistoryAndReportClientsUseBrowserServiceAPI() {
+        XCTAssertEqual(SandboxHistoryClient.defaultAPIBaseURL.absoluteString, "https://browsers.hanasand.com/api")
+        XCTAssertEqual(SandboxHistoryReportClient.defaultAPIBaseURL.absoluteString, "https://browsers.hanasand.com/api")
+    }
+
     func testLoadsOwnerHistoryWithNarrowAuthenticatedRequest() async throws {
         var captured: URLRequest?
         let client = try makeClient { request in

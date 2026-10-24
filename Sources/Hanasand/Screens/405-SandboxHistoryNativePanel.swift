@@ -205,7 +205,6 @@ struct SandboxHistoryNativePanel: View {
 
     private func makeClient() throws -> SandboxHistoryClient {
         try SandboxHistoryClient(
-            apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
             userID: model.settings.userID,
             token: model.settings.authToken,
             impersonationToken: model.settings.impersonationToken,
@@ -215,7 +214,6 @@ struct SandboxHistoryNativePanel: View {
 
     private func makeReportClient() throws -> SandboxHistoryReportClient {
         try SandboxHistoryReportClient(
-            apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
             userID: model.settings.userID,
             token: model.settings.authToken,
             impersonationToken: model.settings.impersonationToken,
