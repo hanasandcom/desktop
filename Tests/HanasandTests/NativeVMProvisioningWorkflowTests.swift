@@ -9,6 +9,18 @@ final class NativeVMProvisioningWorkflowTests: XCTestCase {
         XCTAssertTrue(NativeVMProvisioningOptions.services.contains("website"))
     }
 
+    func testSelectingUbuntuDesktopUsesAndRequiresLargestResourcePlan() {
+        let plans = NativeVMProvisioningOptions.resourcePlans
+        XCTAssertEqual(
+            NativeVMProvisioningPolicy.resources(afterSelectingOperatingSystem: "ubuntu-24.04-desktop", current: plans[0]),
+            plans[2]
+        )
+        XCTAssertTrue(NativeVMProvisioningPolicy.canSelect(plans[2], forOperatingSystem: "ubuntu-24.04-desktop"))
+        XCTAssertFalse(NativeVMProvisioningPolicy.canSelect(plans[0], forOperatingSystem: "ubuntu-24.04-desktop"))
+        XCTAssertFalse(NativeVMProvisioningPolicy.canSelect(plans[1], forOperatingSystem: "ubuntu-24.04-desktop"))
+        XCTAssertTrue(NativeVMProvisioningPolicy.canSelect(plans[0], forOperatingSystem: "ubuntu-24.04"))
+    }
+
     func testCreateValidationEnforcesNameResourcesAndEULA() throws {
         let base = NativeVMCreateInput(name: "fixture-vm", os: "ubuntu-24.04", resources: NativeVMProvisioningOptions.resourcePlans[1], services: ["minecraft-java"], minecraft_eula_accepted: true, minecraft_server_type: "PAPER")
         XCTAssertEqual(try NativeVMProvisioningPolicy.validated(base), base)

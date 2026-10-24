@@ -56,13 +56,22 @@ struct VMProvisioningNativePanel: View {
             Text("Operating system").font(.caption.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(NativeVMProvisioningOptions.operatingSystems, id: \.self) { option in
-                    FilterChip(title: option, active: os == option) { if os != option { os = option; clearAppliedPlan() } }
+                    FilterChip(title: option, active: os == option) {
+                        if os != option {
+                            os = option
+                            resources = NativeVMProvisioningPolicy.resources(afterSelectingOperatingSystem: option, current: resources)
+                            clearAppliedPlan()
+                        }
+                    }
                 }
             }
             Text("Resource plan").font(.caption.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(NativeVMProvisioningOptions.resourcePlans, id: \.cpu) { plan in
-                    FilterChip(title: "\(plan.cpu) CPU · \(plan.memory) · \(plan.disk)", active: resources == plan) { resources = plan }
+                    FilterChip(title: "\(plan.cpu) CPU · \(plan.memory) · \(plan.disk)", active: resources == plan,
+                               disabled: !NativeVMProvisioningPolicy.canSelect(plan, forOperatingSystem: os)) {
+                        resources = plan
+                    }
                 }
             }
             Text("Services").font(.caption.bold())

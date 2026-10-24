@@ -14,6 +14,7 @@ struct FilterChip: View {
     @Environment(\.desktopTheme) var theme
     let title: String
     let active: Bool
+    var disabled = false
     let action: () -> Void
 
     var body: some View {
@@ -27,5 +28,7 @@ struct FilterChip: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 }

@@ -120,6 +120,14 @@ enum NativeVMProvisioningError: LocalizedError, Equatable {
 }
 
 enum NativeVMProvisioningPolicy {
+    static func resources(afterSelectingOperatingSystem os: String, current: NativeVMResources) -> NativeVMResources {
+        os == "ubuntu-24.04-desktop" ? NativeVMProvisioningOptions.resourcePlans[2] : current
+    }
+
+    static func canSelect(_ resources: NativeVMResources, forOperatingSystem os: String) -> Bool {
+        os != "ubuntu-24.04-desktop" || resources == NativeVMProvisioningOptions.resourcePlans[2]
+    }
+
     static func validated(_ input: NativeVMCreateInput) throws -> NativeVMCreateInput {
         guard input.name.range(of: #"^[a-z][a-z0-9-]{0,61}[a-z0-9]$"#, options: .regularExpression) != nil else {
             throw NativeVMProvisioningError.invalidInput("Use 2–63 lowercase letters, numbers or hyphens, starting with a letter.")
