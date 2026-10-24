@@ -12,6 +12,8 @@ struct GalleryLibraryNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @State private var search = ""
     @State private var collection = "all"
+    @State private var selectedMonth = ""
+    @State private var albumTimeline: [GalleryAlbumMonth] = []
     @State private var albums: [GalleryAlbum] = []
     @State private var albumError = ""
     @State private var files: [GalleryLibraryItem] = []
@@ -40,7 +42,7 @@ struct GalleryLibraryNativePanel: View {
         return String(collection.dropFirst("album:".count))
     }
     private var favoritesOnly: Bool { collection == "favorites" }
-    private var queryKey: String { "\(search)|\(collection)|\(sessionFingerprint)" }
+    private var queryKey: String { "\(search)|\(collection)|\(selectedAlbumID == nil ? "" : selectedMonth)|\(sessionFingerprint)" }
     private var emptyTitle: String {
         if selectedAlbumID != nil { return "No photos in this album" }
         if favoritesOnly { return "No favorites yet" }
@@ -93,6 +95,15 @@ struct GalleryLibraryNativePanel: View {
                             ActionButton(title: "Retry albums", icon: "arrow.clockwise") { Task { await loadAlbums() } }
                         }
                     }
+                    if selectedAlbumID != nil {
+                        HStack(spacing: 8) {
+                            Label("Capture month", systemImage: "calendar")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                            Spacer(minLength: 0)
+                            monthPicker
+                        }
+                    }
                     if !error.isEmpty {
                         HStack(alignment: .top, spacing: 8) {
                             Text(error).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled)
@@ -124,7 +135,13 @@ struct GalleryLibraryNativePanel: View {
         .onChange(of: sessionFingerprint) { _, _ in
             collection = "all"
             search = ""
+            selectedMonth = ""
+            albumTimeline = []
             preview = nil
+        }
+        .onChange(of: collection) { _, _ in
+            selectedMonth = ""
+            albumTimeline = []
         }
         .task(id: queryKey) {
             sessionRevision += 1
@@ -215,6 +232,20 @@ struct GalleryLibraryNativePanel: View {
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(theme.divider, lineWidth: 1))
     }
 
+    private var monthPicker: some View {
+        Picker("Capture month", selection: $selectedMonth) {
+            Text("All months").tag("")
+            ForEach(albumTimeline) { month in
+                Text("\(month.monthKey) · \(month.photoCount)").tag(month.monthKey)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: 220, alignment: .trailing)
+        .disabled(loading || loadingMore || albumTimeline.isEmpty)
+        .accessibilityLabel("Filter album by capture month")
+    }
+
     private func openFile(_ file: GalleryLibraryItem) {
         model.openNativeDashboard(path: "/cdn/files", label: file.name ?? "CDN file", detailID: file.id)
     }
@@ -258,11 +289,17 @@ struct GalleryLibraryNativePanel: View {
             let client = try GalleryAlbumClient(settings: model.settings)
             let page: GalleryLibraryPage
             if let selectedAlbumID {
-                page = try await client.listAlbumLibraryPage(albumId: selectedAlbumID, offset: requestedOffset, search: search)
+                page = try await client.listAlbumLibraryPage(
+                    albumId: selectedAlbumID,
+                    offset: requestedOffset,
+                    search: search,
+                    month: selectedMonth
+                )
             } else {
                 page = try await client.listLibraryPage(offset: requestedOffset, search: search, favorites: favoritesOnly, imagesOnly: imagesOnly)
             }
             guard request == activeRequest else { return }
+            albumTimeline = page.timeline
             if reset { files = page.items }
             else {
                 let loaded = Set(files.map(\.id))

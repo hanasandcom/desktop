@@ -56,6 +56,12 @@ struct GalleryAlbumMember: Decodable, Identifiable, Hashable {
     var id: String { userId }
 }
 
+struct GalleryAlbumMonth: Decodable, Identifiable, Hashable {
+    let monthKey: String
+    let photoCount: Int
+    var id: String { monthKey }
+}
+
 struct GalleryAlbumDetail: Decodable, Identifiable, Hashable {
     let id: String
     var name: String
@@ -67,6 +73,45 @@ struct GalleryAlbumDetail: Decodable, Identifiable, Hashable {
     let limit: Int
     let offset: Int
     let members: [GalleryAlbumMember]?
+    let timeline: [GalleryAlbumMonth]
+    let month: String
+
+    init(id: String, name: String, owner: String, isPublic: Bool, role: String, items: [GalleryAlbumItem],
+         total: Int, limit: Int, offset: Int, members: [GalleryAlbumMember]?,
+         timeline: [GalleryAlbumMonth] = [], month: String = "") {
+        self.id = id
+        self.name = name
+        self.owner = owner
+        self.isPublic = isPublic
+        self.role = role
+        self.items = items
+        self.total = total
+        self.limit = limit
+        self.offset = offset
+        self.members = members
+        self.timeline = timeline
+        self.month = month
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, owner, isPublic, role, items, total, limit, offset, members, timeline, month
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        owner = try values.decode(String.self, forKey: .owner)
+        isPublic = try values.decode(Bool.self, forKey: .isPublic)
+        role = try values.decode(String.self, forKey: .role)
+        items = try values.decode([GalleryAlbumItem].self, forKey: .items)
+        total = try values.decode(Int.self, forKey: .total)
+        limit = try values.decode(Int.self, forKey: .limit)
+        offset = try values.decode(Int.self, forKey: .offset)
+        members = try values.decodeIfPresent([GalleryAlbumMember].self, forKey: .members)
+        timeline = try values.decodeIfPresent([GalleryAlbumMonth].self, forKey: .timeline) ?? []
+        month = try values.decodeIfPresent(String.self, forKey: .month) ?? ""
+    }
 }
 
 struct GalleryAlbumSharingResult: Equatable {
@@ -111,6 +156,7 @@ struct GalleryLibraryPage: Equatable {
     let items: [GalleryLibraryItem]
     let nextOffset: Int
     let hasMore: Bool
+    var timeline: [GalleryAlbumMonth] = []
 }
 
 struct GalleryFavoriteReceipt: Decodable {

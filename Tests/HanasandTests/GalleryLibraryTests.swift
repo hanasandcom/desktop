@@ -114,7 +114,7 @@ final class GalleryLibraryTests: XCTestCase {
         var request: URLRequest?
         let client = try GalleryAlbumClient(settings: settings) { next in
             request = next
-            return self.response(next, #"{"id":"album/1","name":"Summer","owner":"owner","is_public":false,"role":"owner","items":[{"id":"photo-2","name":"Beach","type":"image/jpeg","is_favorite":true,"uploaded_at":"2026-10-01T12:00:00Z","size_bytes":"1024","added_by":"owner"}],"total":61,"limit":60,"offset":60,"members":[]}"#)
+            return self.response(next, #"{"id":"album/1","name":"Summer","owner":"owner","is_public":false,"role":"owner","items":[{"id":"photo-2","name":"Beach","type":"image/jpeg","is_favorite":true,"uploaded_at":"2026-10-01T12:00:00Z","size_bytes":"1024","added_by":"owner"}],"total":61,"limit":60,"offset":60,"members":[],"timeline":[{"month_key":"2026-10","photo_count":7}],"month":""}"#)
         }
 
         let page = try await client.listAlbumLibraryPage(albumId: "album/1", offset: 60, search: "  sea & sky ")
@@ -131,6 +131,31 @@ final class GalleryLibraryTests: XCTestCase {
         XCTAssertEqual(page.items.first?.uploadedAt, "2026-10-01T12:00:00Z")
         XCTAssertEqual(page.nextOffset, 61)
         XCTAssertFalse(page.hasMore)
+        XCTAssertEqual(page.timeline, [GalleryAlbumMonth(monthKey: "2026-10", photoCount: 7)])
+    }
+
+    func testPrivateAlbumMonthFilterAndTimelineContract() async throws {
+        var request: URLRequest?
+        var requestCount = 0
+        let client = try GalleryAlbumClient(settings: settings) { next in
+            request = next
+            requestCount += 1
+            return self.response(next, #"{"id":"album/1","name":"Summer","owner":"owner","is_public":false,"role":"owner","items":[{"id":"photo-2","name":"Beach","type":"image/jpeg"}],"total":1,"limit":60,"offset":0,"members":[],"timeline":[{"month_key":"2026-10","photo_count":1}],"month":"2026-10"}"#)
+        }
+
+        let page = try await client.listAlbumLibraryPage(albumId: "album/1", month: "2026-10")
+
+        XCTAssertEqual(URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "month" })?.value, "2026-10")
+        XCTAssertEqual(page.items.map(\.id), ["photo-2"])
+        XCTAssertEqual(page.timeline, [GalleryAlbumMonth(monthKey: "2026-10", photoCount: 1)])
+
+        do {
+            _ = try await client.listAlbumLibraryPage(albumId: "album/1", month: "2026-13")
+            XCTFail("Invalid month values must be rejected before a CDN request")
+        } catch GalleryAlbumClientError.invalidMonth {
+            // Invalid months never reach the authenticated album endpoint.
+        }
+        XCTAssertEqual(requestCount, 1)
     }
 
     func testFavoriteMutationRequiresMatchingReceiptAndSendsExactPayload() async throws {

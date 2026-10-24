@@ -52,10 +52,19 @@ struct GalleryAlbumClient {
         try await decode([GalleryAlbum].self, path: "albums")
     }
 
-    func album(id: String, offset: Int = 0, search: String = "", imagesOnly: Bool = false) async throws -> GalleryAlbumDetail {
+    func album(
+        id: String,
+        offset: Int = 0,
+        search: String = "",
+        imagesOnly: Bool = false,
+        month: String = ""
+    ) async throws -> GalleryAlbumDetail {
         guard (0...1_000_000).contains(offset) else { throw GalleryAlbumClientError.invalidPage }
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard term.count <= 200, !term.contains("\0") else { throw GalleryAlbumClientError.invalidSearch }
+        guard month.isEmpty || month.range(of: "^\\d{4}-(0[1-9]|1[0-2])$", options: .regularExpression) != nil else {
+            throw GalleryAlbumClientError.invalidMonth
+        }
         var components = URLComponents()
         components.percentEncodedPath = "/albums/\(try segment(id))"
         components.queryItems = [
@@ -68,10 +77,15 @@ struct GalleryAlbumClient {
         } else if !term.isEmpty {
             components.queryItems?.append(URLQueryItem(name: "search", value: term))
         }
+        if !month.isEmpty { components.queryItems?.append(URLQueryItem(name: "month", value: month)) }
         guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
         let item = try await decode(GalleryAlbumDetail.self, path: String(path.dropFirst()))
         guard item.id == id, ["owner", "viewer", "contributor"].contains(item.role),
-              item.offset == offset, item.limit == 60, item.total >= 0 else { throw GalleryAlbumClientError.invalidResponse }
+              item.offset == offset, item.limit == 60, item.total >= 0, item.month == month,
+              item.timeline.count <= 2_000,
+              item.timeline.allSatisfy({ $0.monthKey.range(of: "^\\d{4}-(0[1-9]|1[0-2])$", options: .regularExpression) != nil && $0.photoCount >= 0 }) else {
+            throw GalleryAlbumClientError.invalidResponse
+        }
         guard item.items.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 128 && !$0.type.isEmpty }) else {
             throw GalleryAlbumClientError.invalidResponse
         }
@@ -205,8 +219,8 @@ struct GalleryAlbumClient {
         return GalleryLibraryPage(items: rows, nextOffset: offset + rows.count, hasMore: rows.count == 60)
     }
 
-    func listAlbumLibraryPage(albumId: String, offset: Int = 0, search: String = "") async throws -> GalleryLibraryPage {
-        let album = try await self.album(id: albumId, offset: offset, search: search, imagesOnly: true)
+    func listAlbumLibraryPage(albumId: String, offset: Int = 0, search: String = "", month: String = "") async throws -> GalleryLibraryPage {
+        let album = try await self.album(id: albumId, offset: offset, search: search, imagesOnly: true, month: month)
         let items = album.items.map { item in
             GalleryLibraryItem(
                 id: item.id,
@@ -218,7 +232,7 @@ struct GalleryAlbumClient {
             )
         }
         let nextOffset = offset + items.count
-        return GalleryLibraryPage(items: items, nextOffset: nextOffset, hasMore: nextOffset < album.total)
+        return GalleryLibraryPage(items: items, nextOffset: nextOffset, hasMore: nextOffset < album.total, timeline: album.timeline)
     }
 
     func setFavorite(_ favorite: Bool, for id: String) async throws -> GalleryFavoriteReceipt {
@@ -318,7 +332,7 @@ struct GalleryAlbumClient {
 }
 
 enum GalleryAlbumClientError: LocalizedError {
-    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
+    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidMonth, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
     case ownerRequired, contributorRequired, removeOwnItemsOnly, cannotLeaveOwnedAlbum, unconfirmedMutation
     case requestFailed(Int, String)
@@ -331,6 +345,7 @@ enum GalleryAlbumClientError: LocalizedError {
         case .impersonationUnsupported: return "Switch back to your own account to manage albums."
         case .invalidPage: return "Invalid album page."
         case .invalidSearch: return "Image search must be 200 characters or fewer."
+        case .invalidMonth: return "Choose a valid album month."
         case .invalidResponse: return "The album service returned an unexpected response. Refresh before retrying."
         case .invalidPublicLink: return "The album service returned an unsafe public link. Refresh before sharing."
         case .scopeChanged: return "Your account, session, or selected album changed. Refresh before continuing."
