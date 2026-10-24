@@ -235,7 +235,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/rules/match", ["/dashboard/rules/match", "/dashboard/rules/match/[id]"])
         add("/rules/tuning", ["/dashboard/rules/tuning"])
         add("/scanner", ["/dashboard/scanner", "/dashboard/vulnerabilities"])
-        add("/s", ["/dashboard/shares"])
+        add("/repositories", ["/dashboard/shares"])
         add("/subscription", ["/dashboard/subscription"])
         add("/system", ["/dashboard/system"])
         add("/vms", ["/dashboard/system/[...id]"])
@@ -246,7 +246,8 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/profile", ["/dashboard/system/ssh-keys"])
         add("/system/updates", ["/dashboard/system/updates"])
         add("/thesis", ["/dashboard/thesis", "/thesis"])
-        add("/content/thoughts", ["/dashboard/thought", "/dashboard/thought/[...id]", "/dashboard/thought/create", "/dashboard/thoughts", "/dashboard/thoughts/[...id]", "/dashboard/thoughts/create", "/thought/[...id]", "/thoughts/[...id]"])
+        add("/content/thoughts", ["/dashboard/thought", "/dashboard/thought/[...id]", "/dashboard/thought/create", "/dashboard/thoughts", "/dashboard/thoughts/[...id]", "/dashboard/thoughts/create"])
+        add("/notes", ["/thought/[...id]", "/thoughts/[...id]"])
         add("/ti/overview", ["/dashboard/ti"])
         add("/ti/activity", ["/dashboard/ti/activity"])
         add("/ti/runs", ["/dashboard/ti/control", "/dashboard/ti/runs"])
@@ -304,7 +305,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/ti", ["/ti", "/ti/[query]"])
         add("/ti/darkweb/index", ["/ti/darkweb/index"])
         add("/upload", ["/upload"])
-        add("/users", ["/user", "/users"])
+        add("/dashboard", ["/user", "/users"])
         add("/profile", ["/user/[...id]", "/users/[...id]"])
         return routes
     }
@@ -376,7 +377,9 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             case "/profile/[...id]":
                 XCTAssertEqual(route.detailID, "user-sample", pattern)
                 XCTAssertEqual(route.section, "sessions", pattern)
-            case "/thought/[...id]", "/thoughts/[...id]": XCTAssertEqual(route.detailID, "thought-sample", pattern)
+            case "/thought/[...id]", "/thoughts/[...id]":
+                XCTAssertNil(route.detailID, "The website redirects public thought URLs to /notes without preserving the ID")
+                XCTAssertEqual(route.path, "/notes", pattern)
             case "/test/[...id]": XCTAssertEqual(route.detailID, "run-sample", pattern)
             case "/user/[...id]", "/users/[...id]": XCTAssertEqual(route.detailID, "user-sample", pattern)
             case "/organizations/[section]": XCTAssertEqual(route.path, "/organizations/events", pattern)
@@ -453,5 +456,36 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             "/ti/sources", "/ti/sources", "/api/openapi", "/cases", "/cases", "/findings", "/cases",
             "/cases", "/findings", "/browser", "/scanner",
         ])
+    }
+
+    func testCanonicalWebsiteRedirectsResolveToNativeDestinationsAndPreserveContext() {
+        let redirects: [(url: String, path: String, detailID: String?, query: [String: String])] = [
+            ("https://hanasand.com/thoughts/thought-42", "/notes", nil, [:]),
+            ("https://hanasand.com/thought/thought-42", "/notes", nil, [:]),
+            ("https://hanasand.com/dashboard/shares", "/repositories", nil, [:]),
+            ("https://hanasand.com/users", "/dashboard", nil, [:]),
+            ("https://hanasand.com/user", "/dashboard", nil, [:]),
+            ("https://hanasand.com/dashboard/findings?panel=actions&org=org-7", "/integrations", nil, ["panel": "actions", "org": "org-7"]),
+            ("https://hanasand.com/dashboard/findings?panel=alerts&organizationId=org-7", "/cases", nil, ["panel": "alerts", "organizationId": "org-7"]),
+        ]
+        let workspace = BrowserWorkspaceModel()
+        workspace.configure(settings: HanasandDesktopSettings())
+        let initialTabCount = workspace.groups.flatMap(\.tabs).count
+        workspace.onOpenNativeRoute = { BrowserWorkspaceModel.hasNativeDestination(for: $0.path) }
+
+        for redirect in redirects {
+            guard let route = BrowserWorkspaceModel.nativeRoute(for: redirect.url) else {
+                XCTFail("Website redirect did not resolve: \(redirect.url)")
+                continue
+            }
+            XCTAssertEqual(route.path, redirect.path, redirect.url)
+            XCTAssertEqual(route.detailID, redirect.detailID, redirect.url)
+            XCTAssertEqual(route.query, redirect.query, redirect.url)
+            XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: route.path), redirect.url)
+
+            workspace.open(label: "Canonical redirect", url: redirect.url)
+            XCTAssertEqual(workspace.groups.flatMap(\.tabs).count, initialTabCount, "\(redirect.url) opened a web tab")
+            XCTAssertEqual(workspace.selectedTab?.statusText, "Opened in native Desktop", redirect.url)
+        }
     }
 }

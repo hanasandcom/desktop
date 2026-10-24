@@ -139,6 +139,8 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/dashboard/articles/create": "/content/articles",
             "/dashboard/thought/create": "/content/thoughts",
             "/dashboard/thoughts/create": "/content/thoughts",
+            "/user": "/dashboard",
+            "/users": "/dashboard",
             "/api/openapi": "/api/openapi",
             "/article": "/public-articles",
             "/articles": "/public-articles",
@@ -193,7 +195,7 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/dashboard/rules/match": "/rules/match",
             "/dashboard/rules/tuning": "/rules/tuning",
             "/dashboard/scanner": "/scanner",
-            "/dashboard/shares": "/s",
+            "/dashboard/shares": "/repositories",
             "/dashboard/subscription": "/subscription",
             "/dashboard/system": "/system",
             "/dashboard/system/ai": "/system/ai",
@@ -241,7 +243,6 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/test/stats": "/test",
             "/thought": "/content/thoughts",
             "/thoughts": "/content/thoughts",
-            "/user": "/users",
         ]
         let websiteHost = host == "hanasand.com" || host == "www.hanasand.com"
         let websiteGalleryAlbumsRoute = websiteHost && path == "/gallery/albums"
@@ -328,7 +329,10 @@ final class BrowserWorkspaceModel: ObservableObject {
             case "sandbox": path = "/sandbox/result"; detailID = parts[1]
             case "cases": path = "/cases"; detailID = parts[1]
             case "articles", "article": path = "/public-article"; detailID = parts[1]
-            case "thoughts", "thought": path = "/content/thoughts"; detailID = parts[1]
+            case "thoughts", "thought":
+                // The website's public thought reader redirects to /notes and
+                // discards the path ID. Keep that canonicalization native.
+                path = "/notes"
             case "s", "p", "project":
                 path = "/s"
                 detailID = parts[1]
@@ -363,14 +367,15 @@ final class BrowserWorkspaceModel: ObservableObject {
         } else if parts.count == 4, parts[0] == "sandbox", parts[1] == "_browser", parts[2] == "browser" {
             path = "/sandbox/result"; detailID = parts[3]
         } else if parts.count > 2, ["article", "articles", "thought", "thoughts", "test", "user", "users"].contains(parts[0]) {
+            let websiteDropsThoughtID = parts[0] == "thought" || parts[0] == "thoughts"
             switch parts[0] {
             case "article", "articles": path = "/public-article"
-            case "thought", "thoughts": path = "/content/thoughts"
+            case "thought", "thoughts": path = "/notes"
             case "test": path = "/test"
             case "user", "users": path = "/profile"
             default: path = "/users"
             }
-            detailID = parts[1]
+            detailID = websiteDropsThoughtID ? nil : parts[1]
         } else if parts.count > 3, parts[0] == "dashboard", ["article", "articles", "thought", "thoughts"].contains(parts[1]) {
             path = parts[1] == "article" || parts[1] == "articles" ? "/content/articles" : "/content/thoughts"
             detailID = parts[2]
