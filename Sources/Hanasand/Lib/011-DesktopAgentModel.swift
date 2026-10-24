@@ -104,6 +104,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var mailComposerExpanded = false; @Published var mailDraftAttachments: [MailDraftAttachment] = []; @Published var selectedMailMessageIDs: Set<String> = []; @Published var mailMoveTargetMailboxName = ""
 
     @Published var mailNewMailboxName = ""; @Published var mailFilterName = ""; @Published var mailFilterContains = ""; @Published var mailFilterTargetMailbox = ""
+    @Published var mailFilterField = MailFilterPayload.CriteriaField.subject; @Published var mailFilterMarkRead = false
 
     @Published var mailLastSuccessAt: Date?; @Published var mailBackgroundIssue = ""; @Published var mailAutoRefreshEnabled = true; @Published var shares: [DashboardShare] = []
     @Published var mailSearchResults: [MailOverviewEnvelope.Message] = []

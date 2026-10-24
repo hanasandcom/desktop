@@ -33,8 +33,8 @@ extension DesktopAgentModel {
                 mailboxUser: mailOverview?.mailboxUser,
                 name: name,
                 enabled: true,
-                criteria: .init(field: "from", contains: contains),
-                action: .init(type: "move", mailboxName: target, markRead: false)
+                criteria: .init(field: mailFilterField, contains: contains),
+                action: .init(type: "move", mailboxName: target, markRead: mailFilterMarkRead)
             )
             let text = try await requestPrettyText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("mail/filters"),
@@ -45,6 +45,8 @@ extension DesktopAgentModel {
             mailFilterName = ""
             mailFilterContains = ""
             mailFilterTargetMailbox = ""
+            mailFilterField = .subject
+            mailFilterMarkRead = false
             mailSummary = "Created filter \(name)"
             append(meta: "Mail filter created", body: String(text.prefix(240)), kind: .change)
             await loadMailOverview()

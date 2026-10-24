@@ -11,8 +11,26 @@ import UniformTypeIdentifiers
 import WebKit
 
 struct MailFilterPayload: Encodable {
+    enum CriteriaField: String, CaseIterable, Encodable, Identifiable {
+        case from
+        case subject
+        case body
+        case senderDomain
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .from: "From"
+            case .subject: "Subject"
+            case .body: "Body"
+            case .senderDomain: "Sender domain"
+            }
+        }
+    }
+
     struct Criteria: Encodable {
-        let field: String
+        let field: CriteriaField
         let contains: String
     }
 
