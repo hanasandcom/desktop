@@ -30,6 +30,80 @@ final class ThoughtsClientTests: XCTestCase {
         XCTAssertNil(captured?.value(forHTTPHeaderField: "x-organization-id"))
     }
 
+    func testExactTitleLookupUsesAuthenticatedReadOnlyRequestAndFiltersOrganizationScope() async throws {
+        let markdown = "# Exact title\n\nBody"
+        let lookupResponse = try JSONSerialization.data(withJSONObject: [
+            ["id": 42, "title": markdown, "organization_id": "org-7"],
+            ["id": 43, "title": markdown, "organization_id": "org-8"],
+            ["id": 44, "title": markdown, "organization_id": NSNull()],
+            ["id": 45, "title": "different title", "organization_id": "org-7"],
+            ["id": 46, "title": markdown], // An absent scope is not safe to display.
+        ] as [[String: Any]])
+        var captured: URLRequest?
+        let orgClient = try client(organizationID: "org-7") { request in
+            captured = request
+            return (lookupResponse, Self.response(request.url!, status: 200))
+        }
+
+        let orgMatches = try await orgClient.findExactTitle(markdown)
+        XCTAssertEqual(captured?.url?.path, "/api/thought/title")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "x-organization-id"), "org-7")
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+        XCTAssertEqual(try payload(captured!), ["title": markdown])
+        XCTAssertEqual(orgMatches.map(\.id), ["42"])
+
+        let personalClient = try client { request in
+            captured = request
+            return (lookupResponse, Self.response(request.url!, status: 200))
+        }
+        let personalMatches = try await personalClient.findExactTitle(markdown)
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "x-organization-id"))
+        XCTAssertEqual(personalMatches.map(\.id), ["44"])
+    }
+
+    func testExactTitleLookupTreatsNotFoundAsNoMatchAndNeverWrites() async throws {
+        var methods: [String] = []
+        let client = try client { request in
+            methods.append(request.httpMethod ?? "")
+            return (Data(#"{"error":"No thoughts found."}"#.utf8), Self.response(request.url!, status: 404))
+        }
+        let matches = try await client.findExactTitle("# New thought")
+        XCTAssertTrue(matches.isEmpty)
+        XCTAssertEqual(methods, ["POST"], "The title endpoint is a read-only lookup despite using POST.")
+    }
+
+    func testExactTitleLookupTransportFailureIsNotReportedAsNoMatch() async throws {
+        let client = try client { _ in throw URLError(.timedOut) }
+        do {
+            _ = try await client.findExactTitle("# Keep draft")
+            XCTFail("Expected lookup failure")
+        } catch let error as ThoughtsClientError {
+            XCTAssertEqual(error, .lookupUnavailable)
+            XCTAssertFalse(error.isUncertain, "A failed read did not submit a mutation.")
+        }
+    }
+
+    func testThoughtCreateReviewMustMatchCurrentDraftAndScopeAndCancelNeverConfirms() {
+        var gate = ThoughtCreateReviewGate()
+        let draft = "# Keep this draft"
+        gate.recordLookup(markdown: draft, scope: "api|user-1|org-7")
+        XCTAssertFalse(gate.beginReview(markdown: draft, scope: "api|user-1|org-8"))
+        XCTAssertFalse(gate.beginReview(markdown: "changed", scope: "api|user-1|org-7"))
+        XCTAssertTrue(gate.beginReview(markdown: draft, scope: "api|user-1|org-7"))
+        XCTAssertTrue(gate.mayConfirm(markdown: draft, scope: "api|user-1|org-7"))
+
+        gate.cancelReview()
+        var createCalls = 0
+        if gate.mayConfirm(markdown: draft, scope: "api|user-1|org-7") { createCalls += 1 }
+        XCTAssertEqual(createCalls, 0)
+        XCTAssertEqual(draft, "# Keep this draft")
+
+        XCTAssertTrue(gate.beginReview(markdown: draft, scope: "api|user-1|org-7"))
+        gate.invalidate() // A title, account, API host, or workspace change clears the old review.
+        XCTAssertFalse(gate.mayConfirm(markdown: draft, scope: "api|user-1|org-7"))
+    }
+
     func testCreateAndUpdateSendMarkdownOnlyAsTitleAndRequireMatchingReceipts() async throws {
         let markdown = "## Thought\n\n**important**"
         var requests: [URLRequest] = []
@@ -122,6 +196,21 @@ final class ThoughtsClientTests: XCTestCase {
         XCTAssertEqual(state.intent, ThoughtMutationIntent(action: "update", id: nil, markdown: nil))
     }
 
+    func testUncertainThoughtCreateRemainsLockedUntilFreshReviewIsAcknowledged() {
+        var state = ThoughtMutationSafety()
+        let markdown = "# Keep this draft"
+        state.recordFailure(ThoughtsClientError.uncertainMutation, action: "create", markdown: markdown)
+        XCTAssertEqual(state.intent, ThoughtMutationIntent(action: "create", id: nil, markdown: markdown))
+        XCTAssertFalse(state.mayRetry)
+
+        let ticket = state.beginRefresh(userID: "user-1", organizationID: "org-7", loadID: UUID())
+        state.recordSuccessfulRefresh(ticket, userID: "user-1", organizationID: "org-7", loadID: ticket.loadID, isThoughtsPath: true)
+        XCTAssertTrue(state.mayAcknowledgeReview)
+        XCTAssertFalse(state.mayRetry, "Refreshing is not a receipt; explicit review is still required.")
+        state.acknowledgeReviewedRefresh()
+        XCTAssertTrue(state.mayRetry)
+    }
+
     func testUncertainDeleteRetainsIntentUntilFreshReviewIsAcknowledged() {
         var state = ThoughtMutationSafety()
         state.recordFailure(ThoughtsClientError.uncertainMutation, action: "delete", id: "42")
@@ -203,13 +292,15 @@ final class ThoughtsClientTests: XCTestCase {
         } catch let error as ThoughtsClientError {
             XCTAssertEqual(error, .invalidMarkdown)
         }
+        let draft = "duplicate"
         do {
-            _ = try await client.create(markdown: "duplicate")
+            _ = try await client.create(markdown: draft)
             XCTFail("Expected conflict")
         } catch let error as ThoughtsClientError {
             XCTAssertEqual(error, .requestFailed(409))
             XCTAssertFalse(error.isUncertain)
         }
+        XCTAssertEqual(draft, "duplicate", "A known duplicate must leave the caller's draft intact.")
     }
 
     private func client(organizationID: String = "", send: @escaping ThoughtsClient.Sender) throws -> ThoughtsClient {

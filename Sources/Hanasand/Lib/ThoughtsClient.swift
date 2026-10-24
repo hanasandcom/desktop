@@ -72,6 +72,38 @@ struct ThoughtsClient {
         catch { throw ThoughtsClientError.unconfirmedMutation }
     }
 
+    /// Looks for an exact-title match without changing saved content. The legacy
+    /// endpoint returns matches from all workspaces, so only the configured scope
+    /// is exposed to the caller.
+    func findExactTitle(_ markdown: String) async throws -> [DashboardThought] {
+        let content = try Self.validatedMarkdown(markdown)
+        let body = try JSONEncoder().encode(ThoughtMutation(title: content))
+        let request = makeRequest(url: apiBaseURL.appendingAPIPath("thought/title"), method: "POST", body: body)
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await send(request) }
+        catch { throw ThoughtsClientError.lookupUnavailable }
+
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == apiBaseURL.host else {
+            throw ThoughtsClientError.invalidResponse
+        }
+        if http.statusCode == 404 { return [] }
+        guard http.statusCode == 200 else { throw ThoughtsClientError.requestFailed(http.statusCode) }
+        guard data.count <= 2_000_000 else { throw ThoughtsClientError.invalidResponse }
+        let rows: [ThoughtLookupRow]
+        do { rows = try JSONDecoder().decode([ThoughtLookupRow].self, from: data) }
+        catch { throw ThoughtsClientError.invalidResponse }
+
+        return rows.compactMap { row in
+            guard row.organizationIDWasPresent,
+                  row.organizationID == (organizationID.isEmpty ? nil : organizationID),
+                  row.title == content else { return nil }
+            return DashboardThought(id: row.id, title: row.title, createdAt: row.createdAt,
+                                    createdBy: row.createdBy, updatedAt: row.updatedAt)
+        }
+    }
+
     func update(id: String, markdown: String) async throws -> DashboardThought {
         guard id.range(of: "^[A-Za-z0-9._-]{1,128}$", options: .regularExpression) != nil else { throw ThoughtsClientError.invalidRequest }
         let content = try Self.validatedMarkdown(markdown)
@@ -179,6 +211,7 @@ enum ThoughtsClientError: LocalizedError, Equatable {
     case invalidRequest
     case invalidMarkdown
     case invalidResponse
+    case lookupUnavailable
     case requestFailed(Int)
     case uncertainMutation
     case unconfirmedMutation
@@ -197,12 +230,89 @@ enum ThoughtsClientError: LocalizedError, Equatable {
         case .invalidRequest: "The Thoughts request is invalid."
         case .invalidMarkdown: "Write some Markdown before saving."
         case .invalidResponse: "The Thoughts service returned an invalid response."
+        case .lookupUnavailable: "Existing thoughts could not be checked. No thought was created."
         case .requestFailed(409): "A thought with this text already exists."
         case .requestFailed(401): "Sign in again to manage thoughts."
         case .requestFailed(403): "Your account cannot edit thoughts in this workspace."
         case .requestFailed(let status): "The Thoughts request failed (HTTP \(status))."
         case .uncertainMutation, .unconfirmedMutation: "The save could not be confirmed. Refresh Thoughts before trying again."
         }
+    }
+}
+
+/// Small view-independent gate so the create action requires a current lookup
+/// and an explicit review for the same draft and account/workspace context.
+struct ThoughtCreateReviewGate: Equatable {
+    private(set) var checkedMarkdown: String?
+    private(set) var checkedScope: String?
+    private(set) var reviewedMarkdown: String?
+    private(set) var reviewedScope: String?
+
+    mutating func recordLookup(markdown: String, scope: String) {
+        checkedMarkdown = markdown
+        checkedScope = scope
+        reviewedMarkdown = nil
+        reviewedScope = nil
+    }
+
+    mutating func beginReview(markdown: String, scope: String) -> Bool {
+        guard hasCurrentLookup(markdown: markdown, scope: scope) else { return false }
+        reviewedMarkdown = markdown
+        reviewedScope = scope
+        return true
+    }
+
+    func hasCurrentLookup(markdown: String, scope: String) -> Bool {
+        checkedMarkdown == markdown && checkedScope == scope
+    }
+
+    func mayConfirm(markdown: String, scope: String) -> Bool {
+        reviewedMarkdown == markdown && reviewedScope == scope &&
+            checkedMarkdown == markdown && checkedScope == scope
+    }
+
+    mutating func cancelReview() {
+        reviewedMarkdown = nil
+        reviewedScope = nil
+    }
+
+    mutating func invalidate() {
+        checkedMarkdown = nil
+        checkedScope = nil
+        cancelReview()
+    }
+}
+
+private struct ThoughtLookupRow: Decodable {
+    let id: String
+    let title: String
+    let createdAt: String?
+    let createdBy: String?
+    let updatedAt: String?
+    let organizationID: String?
+    let organizationIDWasPresent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, title
+        case createdAt = "created_at"
+        case createdBy = "created_by"
+        case updatedAt = "updated_at"
+        case organizationID = "organization_id"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        if let stringID = try? values.decode(String.self, forKey: .id) {
+            id = stringID
+        } else {
+            id = String(try values.decode(Int64.self, forKey: .id))
+        }
+        title = try values.decode(String.self, forKey: .title)
+        createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt)
+        createdBy = try values.decodeIfPresent(String.self, forKey: .createdBy)
+        updatedAt = try values.decodeIfPresent(String.self, forKey: .updatedAt)
+        organizationIDWasPresent = values.contains(.organizationID)
+        organizationID = try values.decodeIfPresent(String.self, forKey: .organizationID)
     }
 }
 

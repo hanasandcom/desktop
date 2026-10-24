@@ -17,6 +17,16 @@ struct ThoughtsNativePanel: View {
     @State private var search = ""
     @State private var sortByTitle = false
     @State private var page = 0
+    @State private var thoughtCreateGate = ThoughtCreateReviewGate()
+    @State private var thoughtLookupMatches: [DashboardThought] = []
+    @State private var thoughtLookupError: String?
+    @State private var isCheckingThoughts = false
+    @State private var isSubmittingThought = false
+    @State private var thoughtLookupAttempt = UUID()
+
+    private var thoughtCreateScopeKey: String {
+        [model.settings.apiBaseURL, model.userIDForRequests, model.selectedOrganizationID].joined(separator: "\u{1f}")
+    }
 
     private var filteredThoughts: [DashboardThought] {
         PublishingList.thoughts(model.thoughts, matching: search, order: sortByTitle ? .title : .newest)
@@ -38,7 +48,7 @@ struct ThoughtsNativePanel: View {
                 }
             }
 
-            NativeGroupPanel(title: "Create thought", subtitle: "Small idea, saved directly") {
+            NativeGroupPanel(title: "Create thought", subtitle: "Markdown · saved publicly after review") {
                 VStack(alignment: .leading, spacing: 10) {
                     TextEditor(text: $model.thoughtDraftTitle)
                         .font(.system(size: 14))
@@ -48,12 +58,61 @@ struct ThoughtsNativePanel: View {
                         .frame(minHeight: 130, maxHeight: 200)
                         .background(theme.field)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .disabled(model.thoughtMutationNeedsRefresh)
+                        .disabled(model.thoughtMutationNeedsRefresh || model.isLoadingNativeDashboard || isSubmittingThought)
                     MarkdownPreviewView(markdown: model.thoughtDraftTitle, theme: theme)
-                    ActionButton(title: "Create", icon: "plus") {
-                        Task { await model.createNativeThought() }
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            checkThoughtButton
+                            reviewThoughtButton
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            checkThoughtButton
+                            reviewThoughtButton
+                        }
                     }
-                    .disabled(model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh)
+
+                    if let thoughtLookupError {
+                        NativeNotice(message: thoughtLookupError, title: "Could not check existing thoughts", tone: .error)
+                    } else if thoughtCreateGate.hasCurrentLookup(markdown: model.thoughtDraftTitle, scope: thoughtCreateScopeKey) {
+                        NativeNotice(
+                            message: thoughtLookupMatches.isEmpty
+                                ? "No exact match was found in this workspace. Another workspace may still reserve the same thought. No thought was created."
+                                : "\(thoughtLookupMatches.count) exact match\(thoughtLookupMatches.count == 1 ? "" : "es") found in this workspace. No thought was created.",
+                            title: "Existing-content check complete",
+                            tone: .info
+                        )
+                        ForEach(thoughtLookupMatches.prefix(3)) { match in
+                            Text("\(match.displayTitle) · \(match.id)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textSecondary)
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    if thoughtCreateGate.mayConfirm(markdown: model.thoughtDraftTitle, scope: thoughtCreateScopeKey) {
+                        NativeGroupPanel(title: "Review public thought", subtitle: "This saves immediately; there is no draft or publish stage.") {
+                            ScrollView {
+                                MarkdownPreviewView(markdown: model.thoughtDraftTitle, theme: theme)
+                            }
+                            .frame(maxHeight: 180)
+                            .background(theme.card.opacity(0.65))
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            ViewThatFits(in: .horizontal) {
+                                HStack {
+                                    ActionButton(title: "Cancel", icon: "xmark") { thoughtCreateGate.cancelReview() }
+                                    ActionButton(title: "Create now", icon: "plus") { confirmThoughtCreation() }
+                                }
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ActionButton(title: "Cancel", icon: "xmark") { thoughtCreateGate.cancelReview() }
+                                    ActionButton(title: "Create now", icon: "plus") { confirmThoughtCreation() }
+                                }
+                            }
+                            .disabled(model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh)
+                        }
+                    }
                 }
             }
 
@@ -211,6 +270,70 @@ struct ThoughtsNativePanel: View {
         } message: {
             Text(deletingThought?.displayTitle ?? "This thought will be removed.")
         }
+        .onChange(of: model.thoughtDraftTitle) { _, _ in invalidateThoughtPreflight() }
+        .onChange(of: thoughtCreateScopeKey) { _, _ in invalidateThoughtPreflight() }
+        .onChange(of: model.authTokenForRequests) { _, _ in invalidateThoughtPreflight() }
+    }
+
+    private var checkThoughtButton: some View {
+        ActionButton(title: isCheckingThoughts ? "Checking…" : "Check existing", icon: "magnifyingglass") {
+            checkExistingThoughts()
+        }
+        .disabled(isCheckingThoughts || isSubmittingThought || model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh || model.thoughtDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private var reviewThoughtButton: some View {
+        ActionButton(title: "Review create", icon: "checkmark") {
+            guard thoughtCreateGate.beginReview(markdown: model.thoughtDraftTitle, scope: thoughtCreateScopeKey) else {
+                thoughtLookupError = "Check for existing content again before reviewing this thought."
+                return
+            }
+            thoughtLookupError = nil
+        }
+        .disabled(isCheckingThoughts || isSubmittingThought || model.isLoadingNativeDashboard || model.thoughtMutationNeedsRefresh || !thoughtCreateGate.hasCurrentLookup(markdown: model.thoughtDraftTitle, scope: thoughtCreateScopeKey))
+    }
+
+    private func checkExistingThoughts() {
+        let markdown = model.thoughtDraftTitle
+        let scope = thoughtCreateScopeKey
+        let attempt = UUID()
+        thoughtLookupAttempt = attempt
+        thoughtCreateGate.invalidate()
+        thoughtLookupMatches = []
+        thoughtLookupError = nil
+        isCheckingThoughts = true
+
+        Task {
+            do {
+                let matches = try await model.thoughtsClient(organizationID: model.selectedOrganizationID).findExactTitle(markdown)
+                guard thoughtLookupAttempt == attempt, thoughtCreateScopeKey == scope, model.thoughtDraftTitle == markdown else { return }
+                thoughtLookupMatches = matches
+                thoughtCreateGate.recordLookup(markdown: markdown, scope: scope)
+            } catch {
+                guard thoughtLookupAttempt == attempt else { return }
+                thoughtLookupError = error.localizedDescription
+            }
+            if thoughtLookupAttempt == attempt { isCheckingThoughts = false }
+        }
+    }
+
+    private func confirmThoughtCreation() {
+        guard !isSubmittingThought,
+              thoughtCreateGate.mayConfirm(markdown: model.thoughtDraftTitle, scope: thoughtCreateScopeKey) else { return }
+        invalidateThoughtPreflight()
+        isSubmittingThought = true
+        Task {
+            await model.createNativeThought()
+            isSubmittingThought = false
+        }
+    }
+
+    private func invalidateThoughtPreflight() {
+        thoughtLookupAttempt = UUID()
+        thoughtCreateGate.invalidate()
+        thoughtLookupMatches = []
+        thoughtLookupError = nil
+        isCheckingThoughts = false
     }
 }
 
