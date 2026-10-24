@@ -16,6 +16,9 @@ struct UploadNativePanel: View {
     @State var isDropTargeted = false
     @State private var remoteMediaURL = ""
     @State private var isImportingRemoteMedia = false
+    @State private var localPreviewData: Data?
+    @State private var isLoadingLocalPreview = false
+    @State private var localPreviewError = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -71,6 +74,7 @@ struct UploadNativePanel: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(theme.textTertiary)
                             .textSelection(.enabled)
+                        localPreview(fileURL)
                     }
                     field("Name", text: $model.uploadName, placeholder: "Filename shown on the CDN")
                     field("Path", text: $model.uploadPath, placeholder: "optional-short-path")
@@ -121,6 +125,9 @@ struct UploadNativePanel: View {
                 model.selectUploadProviders(providers)
             }
         }
+        .task(id: model.uploadFileURL) {
+            await loadLocalPreview(for: model.uploadFileURL)
+        }
     }
 
     @MainActor
@@ -147,6 +154,107 @@ struct UploadNativePanel: View {
         } catch {
             model.uploadStatus = error.localizedDescription
         }
+    }
+
+    @ViewBuilder
+    private func localPreview(_ fileURL: URL) -> some View {
+        let kind = NativeUploadPreviewKind(fileExtension: fileURL.pathExtension)
+
+        if kind == .other {
+            NativeEmptyState(title: "Preview after upload", message: "This file type can still be uploaded, but Desktop does not render a local preview for it.")
+                .frame(maxWidth: .infinity, minHeight: 170)
+                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else if let data = localPreviewData {
+            if kind == .image, let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 300)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel("Selected image preview")
+            } else if kind == .video {
+                NativeVideoPreview(id: fileURL.absoluteString, data: data, fileExtension: fileURL.pathExtension)
+                    .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 320)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else {
+                NativeEmptyState(title: "Preview unavailable", message: "This image could not be decoded. You can still upload the selected file.")
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        } else if isLoadingLocalPreview {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Preparing local preview…")
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 170)
+            .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityElement(children: .combine)
+        } else {
+            NativeEmptyState(title: "Preview unavailable", message: localPreviewError.isEmpty ? "This file could not be previewed. You can still upload it." : localPreviewError)
+                .frame(maxWidth: .infinity, minHeight: 170)
+                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    @MainActor
+    private func loadLocalPreview(for fileURL: URL?) async {
+        localPreviewData = nil
+        localPreviewError = ""
+        guard let fileURL else {
+            isLoadingLocalPreview = false
+            return
+        }
+
+        let kind = NativeUploadPreviewKind(fileExtension: fileURL.pathExtension)
+        guard kind != .other else {
+            isLoadingLocalPreview = false
+            return
+        }
+
+        isLoadingLocalPreview = true
+        defer { isLoadingLocalPreview = false }
+        do {
+            let data = try await Self.readLocalPreviewData(from: fileURL)
+            guard !Task.isCancelled, model.uploadFileURL == fileURL else { return }
+            guard kind.canPreview(fileSize: data.count) else {
+                localPreviewError = NativePublicMediaImportError.tooLarge.localizedDescription
+                return
+            }
+            localPreviewData = data
+        } catch {
+            guard !Task.isCancelled, model.uploadFileURL == fileURL else { return }
+            localPreviewError = error.localizedDescription
+        }
+    }
+
+    private nonisolated static func readLocalPreviewData(from fileURL: URL) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            let hasSecurityScope = fileURL.startAccessingSecurityScopedResource()
+            defer {
+                if hasSecurityScope { fileURL.stopAccessingSecurityScopedResource() }
+            }
+
+            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+            guard let fileSize = values.fileSize, fileSize > 0 else {
+                throw NativeUploadPreviewReadError.emptyFile
+            }
+            guard fileSize <= NativePublicMediaImportLimits.maxBytes else {
+                throw NativePublicMediaImportError.tooLarge
+            }
+
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? handle.close() }
+            var data = Data()
+            while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                guard chunk.count <= NativePublicMediaImportLimits.maxBytes - data.count else {
+                    throw NativePublicMediaImportError.tooLarge
+                }
+                data.append(chunk)
+            }
+            guard !data.isEmpty else { throw NativeUploadPreviewReadError.emptyFile }
+            return data
+        }.value
     }
 
     private func fileSizeDescription(_ url: URL) -> String {
@@ -191,5 +299,13 @@ struct UploadNativePanel: View {
                 .background(theme.field)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+    }
+}
+
+private enum NativeUploadPreviewReadError: LocalizedError {
+    case emptyFile
+
+    var errorDescription: String? {
+        "This file is empty or could not be read for preview. You can still select another file."
     }
 }
