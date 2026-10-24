@@ -24,6 +24,7 @@ struct NativeShareWorkspacePanel: View {
     @State private var pendingMutation: NativeShareWorkspacePendingMutation?
     @State private var baselineContent = ""
     @State private var saveConflict: NativeShareWorkspaceSaveConflict?
+    @State private var isPreviewVisible = false
 
     init(alias: String, fileID: String? = nil, initialPath: String? = nil, isProject: Bool = false,
          initialChatOpen: Bool = false, createIfMissing: Bool = false,
@@ -36,6 +37,11 @@ struct NativeShareWorkspacePanel: View {
     }
 
     private var selectedFile: NativeShareWorkspaceFile? { workspace?.selectedFile }
+    private var previewURL: URL? {
+        guard let workspace else { return nil }
+        return NativeSharePreview.target(alias: workspace.root.alias, tree: workspace.tree,
+                                         rootContent: workspace.root.content, activeContent: selectedFile?.content)
+    }
     private var interactionPolicy: NativeShareWorkspaceInteractionPolicy {
         .make(hasUnresolvedSaveConflict: saveConflict != nil || (!context.isProject &&
             (collaboration.session?.conflict != nil
@@ -72,6 +78,11 @@ struct NativeShareWorkspacePanel: View {
                         ActionButton(title: "Open chat", icon: "bubble.left.and.bubble.right") { onOpenChat() }
                             .disabled(!interactionPolicy.allowsNavigationAndTreeMutations)
                     }
+                    if let previewURL {
+                        ActionButton(title: isPreviewVisible ? "Hide preview" : "Show preview", icon: "rectangle.on.rectangle") {
+                            isPreviewVisible.toggle()
+                        }
+                    }
                     ActionButton(title: isLoading ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load() } }
                         .disabled(isLoading || !interactionPolicy.allowsNavigationAndTreeMutations)
                 }
@@ -93,6 +104,11 @@ struct NativeShareWorkspacePanel: View {
                 VStack(alignment: .leading, spacing: 14) {
                     treePanel.frame(maxWidth: .infinity)
                     editorPanel.frame(maxWidth: .infinity)
+                }
+            }
+            if isPreviewVisible, let previewURL {
+                NativeGroupPanel(title: "Live preview", subtitle: previewURL.host ?? "Share preview") {
+                    NativeSharePreviewView(target: previewURL)
                 }
             }
         }
