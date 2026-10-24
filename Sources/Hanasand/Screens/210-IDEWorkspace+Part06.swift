@@ -45,8 +45,13 @@ extension IDEWorkspace {
             BrowserAgentButton(title: "Save", icon: "square.and.arrow.down") {
                 model.saveCurrent()
             }
-            BrowserAgentButton(title: "Save disk", icon: "internaldrive") {
-                if let path = model.selectedFile?.diskPath {
+            BrowserAgentButton(
+                title: model.selectedDiskFileChangedExternally ? "Overwrite disk" : "Save disk",
+                icon: model.selectedDiskFileChangedExternally ? "exclamationmark.triangle" : "internaldrive"
+            ) {
+                if model.selectedDiskFileChangedExternally {
+                    confirmingDiskOverwrite = true
+                } else if let path = model.selectedFile?.diskPath {
                     model.exportCurrent(to: URL(fileURLWithPath: path))
                 } else {
                     exportCurrentFile()

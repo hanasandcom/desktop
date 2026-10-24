@@ -73,8 +73,9 @@ extension IDEWorkspaceModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self else { return }
-                self.saveCurrent()
-                self.status = "Autosaved \(self.selectedFile?.title ?? "draft")"
+                if self.saveCurrent() {
+                    self.status = "Autosaved \(self.selectedFile?.title ?? "draft")"
+                }
             }
         }
     }

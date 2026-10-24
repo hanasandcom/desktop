@@ -16,4 +16,5 @@ struct IDEWorkspace: View {
     @Environment(\.desktopTheme) var theme
 
     @StateObject var model = IDEWorkspaceModel(); @State var terminalAutoScroll = true; @State var toolsExpanded = false
+    @State var confirmingDiskOverwrite = false
 }

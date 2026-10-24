@@ -37,6 +37,7 @@ extension IDEWorkspaceModel {
 
     var selectedDiskFileChangedExternally: Bool {
         guard let selectedFile, let diskPath = selectedFile.diskPath else { return false }
+        guard FileManager.default.fileExists(atPath: diskPath) else { return true }
         guard let currentDate = try? FileManager.default.attributesOfItem(atPath: diskPath)[.modificationDate] as? Date else { return false }
         guard let storedDate = selectedFile.diskModifiedAt else { return false }
         return currentDate > storedDate.addingTimeInterval(0.5)

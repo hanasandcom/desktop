@@ -99,6 +99,14 @@ extension IDEWorkspace {
         .onDisappear {
             model.saveCurrent()
         }
+        .confirmationDialog("Overwrite external disk changes?", isPresented: $confirmingDiskOverwrite, titleVisibility: .visible) {
+            Button("Overwrite disk file", role: .destructive) {
+                model.overwriteCurrentDiskFile()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the newer disk contents with your current IDE draft.")
+        }
     }
 
     func consumeIDEOpenRequest() {

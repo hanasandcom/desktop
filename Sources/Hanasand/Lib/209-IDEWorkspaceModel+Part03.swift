@@ -35,7 +35,17 @@ extension IDEWorkspaceModel {
         persistSession()
     }
 
-    func saveCurrent() {
+    @discardableResult
+    func saveCurrent(overwriteExternalChanges: Bool = false) -> Bool {
+        persistCurrentInMemory()
+        if selectedFile?.diskPath != nil, selectedDiskFileChangedExternally, !overwriteExternalChanges {
+            if let encoded = try? JSONEncoder().encode(drafts) {
+                UserDefaults.standard.set(encoded, forKey: draftKey)
+            }
+            autosaveState = "Disk changed externally"
+            status = "Disk file changed externally. Reload it or choose Overwrite disk to keep your draft."
+            return false
+        }
         if autoformatEnabled {
             formatCurrent()
         }
@@ -53,7 +63,7 @@ extension IDEWorkspaceModel {
             } catch {
                 status = error.localizedDescription
                 autosaveState = "Disk save failed"
-                return
+                return false
             }
         }
         savedSnapshots[selectedFileID] = editorText
@@ -61,9 +71,19 @@ extension IDEWorkspaceModel {
         autosaveState = "Saved just now"
         status = "\(selectedFile?.title ?? "File") saved locally"
         runDiagnostics()
+        return true
+    }
+
+    func overwriteCurrentDiskFile() {
+        guard selectedFile?.diskPath != nil else { return }
+        _ = saveCurrent(overwriteExternalChanges: true)
     }
 
     func exportCurrent(to url: URL) {
+        if selectedFile?.diskPath == url.path {
+            _ = saveCurrent()
+            return
+        }
         do {
             if autoformatEnabled {
                 formatCurrent()
