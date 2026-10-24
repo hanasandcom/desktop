@@ -34,6 +34,8 @@ struct VMsNativePanel: View {
     @State private var selectedMetrics: [NativeVMMetric] = []
     @State private var selectedManagement: NativeVMManagementAccess?
     @State private var detailStatus = ""
+    @State private var showProvisioning = false
+    @State private var provisioningResumeName: String?
 
     init(initialVMID: String? = nil) {
         _selectedVMName = State(initialValue: initialVMID)
@@ -47,6 +49,8 @@ struct VMsNativePanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 SearchFieldRow(placeholder: "Search VM names", text: $inventoryFilter.query)
+                ActionButton(title: "Create VM", icon: "plus.circle") { showProvisioning = true; provisioningResumeName = nil }
+                    .disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
                 ActionButton(title: isRefreshingInventory ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") {
                     inventoryRefreshToken += 1
                 }
@@ -79,6 +83,12 @@ struct VMsNativePanel: View {
 
             if !inventoryError.isEmpty {
                 Text(inventoryError).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled)
+            }
+            if showProvisioning || provisioningResumeName != nil {
+                VMProvisioningNativePanel(resumeName: provisioningResumeName) {
+                    inventoryRefreshToken += 1
+                }
+                ActionButton(title: "Close setup", icon: "xmark") { showProvisioning = false; provisioningResumeName = nil }
             }
             if let inventorySnapshot {
                 let filtered = nativeVMFilterInventory(inventorySnapshot.items, filter: inventoryFilter)
@@ -245,6 +255,14 @@ struct VMsNativePanel: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textTertiary)
                 }
+            }
+            if detailStatus == "No stored host details were returned." && !vm.isScheduledForDeletion {
+                ActionButton(title: "Resume setup", icon: "arrow.clockwise.circle") {
+                    provisioningResumeName = vm.name
+                    showProvisioning = false
+                }.disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
+                Text("Resume is available only when a fresh VM details read confirms no stored setup details and your account owns the VM or has platform edit access.")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
             }
             VMAdministrationControls(vm: vm) {
                 inventoryRefreshToken += 1
