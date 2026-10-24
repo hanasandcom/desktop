@@ -181,3 +181,14 @@ struct ThreatRuleReprocessState: Decodable, Equatable {
     let jobs: [ThreatRuleReprocessJob]
     let existing: Existing?
 }
+
+struct ThreatRuleImportReceipt: Decodable, Equatable {
+    struct Pack: Decodable, Equatable {
+        let name: String
+        let version: String
+        let sourceReference: String
+    }
+
+    let imported: Int
+    let pack: Pack
+}

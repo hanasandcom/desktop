@@ -22,6 +22,17 @@ struct ThreatRulesNativePanel: View {
     @State private var pageNumber = 0
     @State private var preview: ThreatRulePreview?
     @State private var previewFrom = Calendar.current.date(byAdding: .hour, value: -24, to: .now) ?? .now
+    @State private var showingImports = false
+    @State private var showJSONImport = false
+    @State private var showSigmaImport = false
+    @State private var importPackName = ""
+    @State private var importPackVersion = ""
+    @State private var importPackReference = ""
+    @State private var importPackJSON = #"{"rules":[{"id":"example-login","name":"Example login rule","description":"Example imported rule for review.","level":"medium","conditions":[{"path":"event_type","operator":"equals","value":"authentication"}]}]}"#
+    @State private var sigmaPackName = ""
+    @State private var sigmaPackVersion = ""
+    @State private var sigmaPackReference = ""
+    @State private var sigmaYAML = "title: Suspicious authentication event\nstatus: experimental\nlogsource:\n  product: identity\ndetection:\n  selection:\n    event_type: authentication\n    outcome: failure\n  condition: selection\nlevel: high\n"
     @State private var status = ""
     @State private var error = ""
     @State private var busy = false
@@ -47,6 +58,9 @@ struct ThreatRulesNativePanel: View {
                 HStack(spacing: 8) {
                     ActionButton(title: busy ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load() } }.disabled(busy)
                     ActionButton(title: "Create rule", icon: "plus") { beginNewRule() }.disabled(busy || !canEditDraft)
+                    if category == "detection", selected == nil, !showingEditor {
+                        ActionButton(title: showingImports ? "Close imports" : "Import rules", icon: "square.and.arrow.down") { showingImports.toggle() }.disabled(busy || !canImportRules)
+                    }
                 }
                 TextField("Search name, ID, or description", text: $search).textFieldStyle(.roundedBorder)
                 if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
@@ -56,6 +70,7 @@ struct ThreatRulesNativePanel: View {
                 if !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty { NativeNotice(message: "Read-only while impersonating. Return to your own account before changing rules.") }
             }
 
+            if showingImports { importEditor }
             if showingEditor { editor }
             else if let selected { detail(selected) }
             else if page != nil {
@@ -90,7 +105,34 @@ struct ThreatRulesNativePanel: View {
     private var title: String {
         switch category { case "match": "Match rules"; case "analysis": "Analysis rules"; default: "Detection rules" }
     }
+    private var canImportRules: Bool { ["owner", "admin"].contains(page?.organization.role.lowercased() ?? "") }
     private var draftAction: String { (try? decodeDefinition()["action"]?.stringValue) ?? "keep" }
+
+    @ViewBuilder private var importEditor: some View {
+        NativeGroupPanel(title: "Import detection rules", subtitle: "Imported rules apply to new events and are recorded in the organization audit history.") {
+            DisclosureGroup("Import JSON pack", isExpanded: $showJSONImport) {
+                TextField("Pack name", text: $importPackName).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                TextField("Version", text: $importPackVersion).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                TextField("HTTPS source reference", text: $importPackReference).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                Text("Provide the bounded pack shape. Each imported rule needs an ID, name, description, and 1–8 field conditions.")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                TextEditor(text: $importPackJSON).font(.system(size: 11, design: .monospaced)).frame(minHeight: 140)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.divider, lineWidth: 1)).disabled(busy || !canImportRules)
+                ActionButton(title: busy ? "Importing…" : "Import JSON pack", icon: "square.and.arrow.down") { Task { await importJSONPack() } }.disabled(busy || !canImportRules)
+            }
+            DisclosureGroup("Import Sigma YAML", isExpanded: $showSigmaImport) {
+                TextField("Pack name", text: $sigmaPackName).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                TextField("Version", text: $sigmaPackVersion).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                TextField("HTTPS source reference", text: $sigmaPackReference).textFieldStyle(.roundedBorder).disabled(busy || !canImportRules)
+                Text("Supports bounded selection, OR, and 1-of selection* rules. Transforms and unsupported conditions are rejected by the API.")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                TextEditor(text: $sigmaYAML).font(.system(size: 11, design: .monospaced)).frame(minHeight: 170)
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.divider, lineWidth: 1)).disabled(busy || !canImportRules)
+                ActionButton(title: busy ? "Importing…" : "Import Sigma", icon: "square.and.arrow.down") { Task { await importSigmaPack() } }.disabled(busy || !canImportRules)
+            }
+            if !canImportRules { NativeNotice(message: "Only organization owners and administrators can import rule packs.") }
+        }
+    }
 
     @ViewBuilder private var editor: some View {
         NativeGroupPanel(title: selected?.name ?? "New \(title.dropLast())", subtitle: selected.map { "Version \($0.version) · \($0.source)" } ?? "New rules apply to future events") {
@@ -383,6 +425,57 @@ struct ThreatRulesNativePanel: View {
             await load()
             await loadRuleDetail(id: saved.id.replacingOccurrences(of: #"\.v\d+$"#, with: "", options: .regularExpression))
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func importJSONPack() async {
+        guard !busy, canImportRules else { error = ThreatRulesError.permissionDenied.localizedDescription; return }
+        busy = true; error = ""; status = "Importing JSON rule pack"; defer { busy = false }
+        do {
+            let receipt = try await ThreatRulesClient(settings: model.settings).importRulePack(
+                organizationID: organizationID, packName: importPackName, packVersion: importPackVersion,
+                sourceReference: importPackReference, json: importPackJSON
+            )
+            guard organizationID == model.selectedOrganizationID else { throw ThreatRulesError.organizationScopeChanged }
+            await load()
+            status = "Imported \(receipt.imported) rules from \(receipt.pack.name) \(receipt.pack.version). New events only."
+            importPackName = ""; importPackVersion = ""; importPackReference = ""; showingImports = false
+        } catch {
+            let message = error.localizedDescription
+            self.error = message
+            if isUnconfirmedImport(error) {
+                await load()
+                self.error = message
+                status = "Import result is uncertain. Rules were refreshed; review the list before retrying."
+            }
+        }
+    }
+
+    private func importSigmaPack() async {
+        guard !busy, canImportRules else { error = ThreatRulesError.permissionDenied.localizedDescription; return }
+        busy = true; error = ""; status = "Importing Sigma rules"; defer { busy = false }
+        do {
+            let receipt = try await ThreatRulesClient(settings: model.settings).importSigmaPack(
+                organizationID: organizationID, packName: sigmaPackName, packVersion: sigmaPackVersion,
+                sourceReference: sigmaPackReference, yaml: sigmaYAML
+            )
+            guard organizationID == model.selectedOrganizationID else { throw ThreatRulesError.organizationScopeChanged }
+            await load()
+            status = "Imported \(receipt.imported) Sigma rules from \(receipt.pack.name) \(receipt.pack.version). New events only."
+            sigmaPackName = ""; sigmaPackVersion = ""; sigmaPackReference = ""; showingImports = false
+        } catch {
+            let message = error.localizedDescription
+            self.error = message
+            if isUnconfirmedImport(error) {
+                await load()
+                self.error = message
+                status = "Import result is uncertain. Rules were refreshed; review the list before retrying."
+            }
+        }
+    }
+
+    private func isUnconfirmedImport(_ error: Error) -> Bool {
+        guard let ruleError = error as? ThreatRulesError, case .unconfirmedMutation = ruleError else { return false }
+        return true
     }
 
     private func checkMatches() async {

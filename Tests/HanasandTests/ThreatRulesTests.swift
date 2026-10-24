@@ -170,6 +170,115 @@ final class ThreatRulesTests: XCTestCase {
         XCTAssertEqual(requests.map { $0.url?.path }, ["/api/rules/custom.example/hits", "/api/rules/custom.example/storage-estimate"])
         XCTAssertTrue(requests.allSatisfy { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "organizationId" && $0.value == "org-1" }) == true })
     }
+
+    func testImportsJSONRulePackWithVerifiedOwnerScopeAndReceipt() async throws {
+        var requests: [URLRequest] = []
+        let client = ThreatRulesClient(settings: settings) { request in
+            requests.append(request)
+            if request.url?.path == "/api/organizations" {
+                return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"owner","lifecycleStatus":"active"}]}"#, for: request)
+            }
+            return self.response(#"{"imported":1,"pack":{"name":"Example pack","version":"1","sourceReference":"https://example.com/rules"}}"#, for: request)
+        }
+        let json = #"{"rules":[{"id":"login-failure","name":"Login failure","description":"Detects an unsuccessful login event.","conditions":[{"path":"event_type","operator":"equals","value":"authentication.failure"}]}]}"#
+
+        let receipt = try await client.importRulePack(organizationID: "org-1", packName: "Example pack", packVersion: "1", sourceReference: "https://example.com/rules", json: json)
+
+        XCTAssertEqual(receipt.imported, 1)
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET", "POST"])
+        let post = try XCTUnwrap(requests.last)
+        XCTAssertEqual(post.url?.path, "/api/rules/packs")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(post.url), resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org-1")
+        XCTAssertEqual(post.value(forHTTPHeaderField: "Authorization"), "Bearer token-abc")
+        let body = try XCTUnwrap(post.httpBody?.jsonObject as? [String: Any])
+        XCTAssertEqual(body["packName"] as? String, "Example pack")
+        XCTAssertEqual(body["packVersion"] as? String, "1")
+        XCTAssertEqual(body["sourceReference"] as? String, "https://example.com/rules")
+        XCTAssertEqual((body["rules"] as? [[String: Any]])?.count, 1)
+    }
+
+    func testImportsSigmaPackAndPreservesYaml() async throws {
+        var requests: [URLRequest] = []
+        let client = ThreatRulesClient(settings: settings) { request in
+            requests.append(request)
+            if request.url?.path == "/api/organizations" {
+                return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"admin","lifecycleStatus":"active"}]}"#, for: request)
+            }
+            return self.response(#"{"imported":2,"pack":{"name":"Sigma pack","version":"2026.1","sourceReference":"https://example.com/sigma"}}"#, for: request)
+        }
+        let yaml = "title: Suspicious authentication event\ndetection:\n  selection:\n    event_type: authentication\n  condition: selection\n"
+
+        let receipt = try await client.importSigmaPack(organizationID: "org-1", packName: "Sigma pack", packVersion: "2026.1", sourceReference: "https://example.com/sigma", yaml: yaml)
+
+        XCTAssertEqual(receipt.imported, 2)
+        let post = try XCTUnwrap(requests.last)
+        XCTAssertEqual(post.url?.path, "/api/rules/sigma")
+        XCTAssertEqual((post.httpBody?.jsonObject as? [String: Any])?["yaml"] as? String, yaml)
+    }
+
+    func testRulePackImportRejectsInvalidInputAndNonAdminBeforePost() async {
+        var requests: [URLRequest] = []
+        let client = ThreatRulesClient(settings: settings) { request in
+            requests.append(request)
+            return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"editor","lifecycleStatus":"active"}]}"#, for: request)
+        }
+
+        do {
+            _ = try await client.importRulePack(organizationID: "org-1", packName: "Example", packVersion: "1", sourceReference: "http://example.com/rules", json: "not-json")
+            XCTFail("Expected role denial before import")
+        } catch ThreatRulesError.permissionDenied {
+        } catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(requests.map(\.httpMethod), ["GET"])
+
+        var ownerRequests: [URLRequest] = []
+        let ownerClient = ThreatRulesClient(settings: settings) { request in
+            ownerRequests.append(request)
+            if request.url?.path == "/api/organizations" {
+                return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"owner","lifecycleStatus":"active"}]}"#, for: request)
+            }
+            XCTFail("Invalid source URL must be rejected locally")
+            return self.response("{}", for: request)
+        }
+        do {
+            _ = try await ownerClient.importRulePack(organizationID: "org-1", packName: "Example", packVersion: "1", sourceReference: "http://example.com/rules", json: #"{"rules":[]}"#)
+            XCTFail("Expected invalid source URL")
+        } catch ThreatRulesError.invalidInput {
+        } catch { XCTFail("Unexpected error: \(error)") }
+        XCTAssertEqual(ownerRequests.map(\.httpMethod), ["GET"])
+    }
+
+    func testRulePackImportSurfacesOrganizationPermissionErrorFromAPI() async {
+        let client = ThreatRulesClient(settings: settings) { request in
+            if request.url?.path == "/api/organizations" {
+                return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"owner","lifecycleStatus":"active"}]}"#, for: request)
+            }
+            return self.response(#"{"error":"Import is not allowed for this organization."}"#, for: request, status: 403)
+        }
+        let json = #"{"rules":[{"id":"login-failure","name":"Login failure","description":"Detects an unsuccessful login event.","conditions":[{"path":"event_type","operator":"equals","value":"authentication.failure"}]}]}"#
+
+        do {
+            _ = try await client.importRulePack(organizationID: "org-1", packName: "Example pack", packVersion: "1", sourceReference: "https://example.com/rules", json: json)
+            XCTFail("Expected API permission denial")
+        } catch let ThreatRulesError.requestFailed(status, message) {
+            XCTAssertEqual(status, 403)
+            XCTAssertEqual(message, "Import is not allowed for this organization.")
+        } catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func testMalformedImportReceiptRequiresRefreshBeforeRetry() async {
+        let client = ThreatRulesClient(settings: settings) { request in
+            if request.url?.path == "/api/organizations" {
+                return self.response(#"{"organizations":[{"id":"org-1","name":"Example","role":"owner","lifecycleStatus":"active"}]}"#, for: request)
+            }
+            return self.response(#"{"imported":1,"pack":{"name":"Different pack","version":"1","sourceReference":"https://example.com/rules"}}"#, for: request)
+        }
+        let json = #"{"rules":[{"id":"login-failure","name":"Login failure","description":"Detects an unsuccessful login event.","conditions":[{"path":"event_type","operator":"equals","value":"authentication.failure"}]}]}"#
+        do {
+            _ = try await client.importRulePack(organizationID: "org-1", packName: "Example pack", packVersion: "1", sourceReference: "https://example.com/rules", json: json)
+            XCTFail("Expected an unconfirmed mutation")
+        } catch ThreatRulesError.unconfirmedMutation {
+        } catch { XCTFail("Unexpected error: \(error)") }
+    }
 }
 
 private extension Data {

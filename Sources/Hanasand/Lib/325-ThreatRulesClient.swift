@@ -124,6 +124,100 @@ struct ThreatRulesClient {
         return TuningAccess(canWrite: response.canEdit && !isImpersonating)
     }
 
+    func importRulePack(organizationID: String, packName: String, packVersion: String, sourceReference: String, json: String) async throws -> ThreatRuleImportReceipt {
+        try await requireRuleImportAccess(organizationID)
+        let metadata = try validatedPackMetadata(name: packName, version: packVersion, sourceReference: sourceReference)
+        guard let data = json.data(using: .utf8), let document = try? JSONDecoder().decode(ThreatRuleJSON.self, from: data),
+              let rules = document["rules"]?.arrayValue, (1...100).contains(rules.count), rules.allSatisfy(validImportedRule) else {
+            throw ThreatRulesError.invalidInput("Enter a JSON pack with 1–100 valid rules.")
+        }
+        let body: [String: Any] = [
+            "packName": metadata.name,
+            "packVersion": metadata.version,
+            "sourceReference": metadata.sourceReference,
+            "rules": try jsonValue(rules),
+        ]
+        let receipt: ThreatRuleImportReceipt
+        do {
+            receipt = try await request(
+                path: "rules/packs", method: "POST",
+                query: [URLQueryItem(name: "organizationId", value: organizationID)], body: body, mutation: true
+            )
+        } catch ThreatRulesError.invalidResponse {
+            throw ThreatRulesError.unconfirmedMutation
+        }
+        guard receipt.imported == rules.count, receipt.pack.name == metadata.name,
+              receipt.pack.version == metadata.version, receipt.pack.sourceReference == metadata.sourceReference else {
+            throw ThreatRulesError.unconfirmedMutation
+        }
+        return receipt
+    }
+
+    func importSigmaPack(organizationID: String, packName: String, packVersion: String, sourceReference: String, yaml: String) async throws -> ThreatRuleImportReceipt {
+        try await requireRuleImportAccess(organizationID)
+        let metadata = try validatedPackMetadata(name: packName, version: packVersion, sourceReference: sourceReference)
+        guard !yaml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, yaml.utf16.count <= 200_000 else {
+            throw ThreatRulesError.invalidInput("Provide one Sigma YAML document up to 200,000 characters.")
+        }
+        let body: [String: Any] = [
+            "packName": metadata.name,
+            "packVersion": metadata.version,
+            "sourceReference": metadata.sourceReference,
+            "yaml": yaml,
+        ]
+        let receipt: ThreatRuleImportReceipt
+        do {
+            receipt = try await request(
+                path: "rules/sigma", method: "POST",
+                query: [URLQueryItem(name: "organizationId", value: organizationID)], body: body, mutation: true
+            )
+        } catch ThreatRulesError.invalidResponse {
+            throw ThreatRulesError.unconfirmedMutation
+        }
+        guard receipt.imported > 0, receipt.pack.name == metadata.name,
+              receipt.pack.version == metadata.version, receipt.pack.sourceReference == metadata.sourceReference else {
+            throw ThreatRulesError.unconfirmedMutation
+        }
+        return receipt
+    }
+
+    private func requireRuleImportAccess(_ organizationID: String) async throws {
+        try requireCurrentOrganization(organizationID)
+        guard !isImpersonating,
+              let member = try await organizations().first(where: { $0.id == organizationID && $0.status == "active" }),
+              ["owner", "admin"].contains(member.role.lowercased()) else {
+            throw ThreatRulesError.permissionDenied
+        }
+        guard try requireOrganizationScope() == organizationID else { throw ThreatRulesError.organizationScopeChanged }
+    }
+
+    private func validatedPackMetadata(name: String, version: String, sourceReference: String) throws -> (name: String, version: String, sourceReference: String) {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanReference = sourceReference.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (2...100).contains(cleanName.utf16.count), (1...40).contains(cleanVersion.utf16.count),
+              cleanReference.utf16.count <= 300,
+              let reference = URLComponents(string: cleanReference), reference.scheme?.lowercased() == "https", reference.host != nil,
+              reference.user == nil, reference.password == nil else {
+            throw ThreatRulesError.invalidInput("Use a pack name of 2–100 characters, a version of 1–40 characters, and an HTTPS source reference up to 300 characters.")
+        }
+        return (cleanName, cleanVersion, cleanReference)
+    }
+
+    private func validImportedRule(_ value: ThreatRuleJSON) -> Bool {
+        guard let object = value.objectValue,
+              let rawID = object["id"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              rawID.range(of: #"^[A-Za-z0-9_.-]{1,80}$"#, options: .regularExpression) != nil,
+              let name = (object["name"]?.stringValue ?? object["title"]?.stringValue)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (2...120).contains(name.utf16.count),
+              let explanation = (object["explanation"]?.stringValue ?? object["description"]?.stringValue)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (10...500).contains(explanation.utf16.count),
+              let conditions = object["conditions"]?.arrayValue, (1...8).contains(conditions.count), conditions.allSatisfy(validCondition) else {
+            return false
+        }
+        return true
+    }
+
     func loadTuningSnapshot(access: TuningAccess) async throws -> ThreatRuleTuningSnapshot {
         try requireTuningAccess(access, write: false)
         let snapshot: ThreatRuleTuningSnapshot = try await request(path: "logs/tuning")
@@ -341,7 +435,22 @@ struct RuleReceiptEnvelope: Decodable { let rule: ThreatRuleRecord }
 private struct OrganizationListEnvelope: Decodable { let organizations: [ThreatRuleOrganization] }
 private struct TuningAccessEnvelope: Decodable { let allowed: Bool; let canEdit: Bool }
 private struct TuningRefreshReceipt: Decodable { let refreshing: Bool }
-private struct ErrorEnvelope: Decodable { struct Detail: Decodable { let message: String }; let error: Detail }
+private struct ErrorEnvelope: Decodable {
+    struct Detail: Decodable { let message: String }
+    let error: Detail
+
+    private enum CodingKeys: String, CodingKey { case error }
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let message = try? container.decode(String.self, forKey: .error) {
+            error = Detail(message: message)
+        } else if let detail = try? container.decode(Detail.self, forKey: .error) {
+            error = detail
+        } else {
+            error = Detail(message: "Threat rules request failed")
+        }
+    }
+}
 struct StoredRulePreview: Decodable { let count: Int; let scanned: Int; let bytes: Int; let events: [ThreatRulePreview.Event]; let cursor: ThreatRulePreview.Cursor? }
 private struct ReprocessJobEnvelope: Decodable { let job: ThreatRuleReprocessJob }
 
