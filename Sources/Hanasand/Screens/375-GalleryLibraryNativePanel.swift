@@ -172,7 +172,7 @@ struct GalleryLibraryNativePanel: View {
     private func libraryTile(_ file: GalleryLibraryItem) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Button {
-                if file.type.hasPrefix("image/") { preview = file }
+                if file.type.hasPrefix("image/") || file.type.hasPrefix("video/") { preview = file }
                 else { openFile(file) }
             } label: {
                 Group {
@@ -191,7 +191,9 @@ struct GalleryLibraryNativePanel: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(file.type.hasPrefix("image/") ? "Preview \(file.name ?? "image")" : "Open \(file.name ?? "file")")
+            .accessibilityLabel(file.type.hasPrefix("image/") || file.type.hasPrefix("video/")
+                                ? "Preview \(file.name ?? "media")"
+                                : "Open \(file.name ?? "file")")
             Text(file.name ?? "Untitled file")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
                 .lineLimit(1).help(file.name ?? "Untitled file")
@@ -429,6 +431,7 @@ private struct GalleryLibraryPreview: View {
     let file: GalleryLibraryItem
     @Environment(\.desktopTheme) private var theme
     @State private var image: NSImage?
+    @State private var video: NativeCDNFilePreview?
     @State private var error = ""
     @State private var loading = true
     @State private var attempt = 0
@@ -436,18 +439,23 @@ private struct GalleryLibraryPreview: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text(file.name ?? "Image preview").font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.text).lineLimit(1)
+                Text(file.name ?? "Media preview").font(.system(size: 14, weight: .semibold)).foregroundStyle(theme.text).lineLimit(1)
                 Spacer()
                 Button("Close") { dismiss() }.keyboardShortcut(.escape)
             }
             Group {
-                if let image {
+                if file.type.hasPrefix("video/"), let video {
+                    NativeVideoPreview(id: video.id, data: video.data,
+                                       fileExtension: URL(fileURLWithPath: video.fileName).pathExtension)
+                        .frame(maxWidth: .infinity, minHeight: 260, maxHeight: 640)
+                } else if let image {
                     Image(nsImage: image).resizable().scaledToFit()
                 } else if loading {
-                    NativeEmptyState(title: "Loading image", message: "Fetching the original through your authenticated CDN session.")
+                    NativeEmptyState(title: file.type.hasPrefix("video/") ? "Loading video" : "Loading image",
+                                     message: "Fetching the original through your authenticated CDN session.")
                 } else {
                     VStack(spacing: 10) {
-                        NativeEmptyState(title: "Preview unavailable", message: error.isEmpty ? "The CDN did not return a supported image." : error)
+                        NativeEmptyState(title: "Preview unavailable", message: error.isEmpty ? "The CDN did not return supported media." : error)
                         Button("Retry") { attempt += 1 }
                     }
                 }
@@ -463,16 +471,26 @@ private struct GalleryLibraryPreview: View {
     @Environment(\.dismiss) private var dismiss
 
     @MainActor private func load() async {
-        loading = true; image = nil; error = ""
+        loading = true; image = nil; video = nil; error = ""
         defer { loading = false }
         do {
-            let bytes = try await GalleryAlbumClient(settings: settings).originalImage(for: file.id)
-            guard !Task.isCancelled else { return }
-            guard let decoded = NSImage(data: bytes) else { throw GalleryAlbumClientError.invalidImage }
-            image = decoded
+            if file.type.hasPrefix("video/") {
+                let client = try NativeCDNFilePreviewClient(baseURL: settings.cdnBaseURL.normalizedBaseURL,
+                                                           userID: settings.userID,
+                                                           token: settings.authToken)
+                let loaded = try await client.load(id: file.id)
+                guard !Task.isCancelled else { return }
+                guard loaded.isVideo else { throw NativeCDNFilePreviewError.invalidResponse }
+                video = loaded
+            } else {
+                let bytes = try await GalleryAlbumClient(settings: settings).originalImage(for: file.id)
+                guard !Task.isCancelled else { return }
+                guard let decoded = NSImage(data: bytes) else { throw GalleryAlbumClientError.invalidImage }
+                image = decoded
+            }
         } catch {
             guard !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 }
