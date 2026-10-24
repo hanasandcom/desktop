@@ -101,8 +101,8 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/dashboard/thought/create": "/content/thoughts",
             "/dashboard/thoughts/create": "/content/thoughts",
             "/api/openapi": "/api/openapi",
-            "/article": "/content/articles",
-            "/articles": "/content/articles",
+            "/article": "/public-articles",
+            "/articles": "/public-articles",
             "/dashboard/api-docs": "/api",
             "/dashboard/article": "/content/articles",
             "/dashboard/articles": "/content/articles",
@@ -273,7 +273,7 @@ final class BrowserWorkspaceModel: ObservableObject {
             case "test": path = "/test"; detailID = parts[1]
             case "sandbox": path = "/sandbox/result"; detailID = parts[1]
             case "cases": path = "/cases"; detailID = parts[1]
-            case "articles", "article": path = "/content/articles"; detailID = parts[1]
+            case "articles", "article": path = "/public-article"; detailID = parts[1]
             case "thoughts", "thought": path = "/content/thoughts"; detailID = parts[1]
             case "s", "p", "project":
                 path = "/s"
@@ -310,7 +310,7 @@ final class BrowserWorkspaceModel: ObservableObject {
             path = "/sandbox/result"; detailID = parts[3]
         } else if parts.count > 2, ["article", "articles", "thought", "thoughts", "test", "user", "users"].contains(parts[0]) {
             switch parts[0] {
-            case "article", "articles": path = "/content/articles"
+            case "article", "articles": path = "/public-article"
             case "thought", "thoughts": path = "/content/thoughts"
             case "test": path = "/test"
             case "user", "users": path = "/profile"
