@@ -28,12 +28,23 @@ struct AutomationsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     let scope: AutomationPanelScope
+    private let initialAutomationID: String?
+    private let startsInCreate: Bool
 
-    init(scope: AutomationPanelScope = .all) { self.scope = scope }
+    init(scope: AutomationPanelScope = .all, initialAutomationID: String? = nil, startsInCreate: Bool = false) {
+        self.scope = scope
+        self.initialAutomationID = initialAutomationID
+        self.startsInCreate = startsInCreate
+        _selectedID = State(initialValue: startsInCreate ? "" : initialAutomationID ?? "")
+        _isEditing = State(initialValue: startsInCreate)
+        _draftPrompt = State(initialValue: startsInCreate ? "Check that the page is available." : "")
+    }
     @State private var automations: [DesktopAutomation] = []
     @State private var runs: [DesktopAutomationRun] = []
     @State private var selectedID = ""
     @State private var searchText = ""
+    @State private var sortKey = "name"
+    @State private var sortAscending = true
     @State private var isLoading = false
     @State private var hasLoadedAutomationList = false
     @State private var createOutcomeUncertain = false
@@ -67,6 +78,19 @@ struct AutomationsNativePanel: View {
     @State private var draftJSONValue = "80"
     @State private var nextPage: Int?
     @State private var issues: [DesktopAutomationIssue] = []
+    @State private var historyTotal = 0
+    @State private var historyLoading = false
+    @State private var historyFiltersVisible = false
+    @State private var historyFromEnabled = false
+    @State private var historyToEnabled = false
+    @State private var historyFromDraft = Date().addingTimeInterval(-86_400)
+    @State private var historyToDraft = Date()
+    @State private var appliedHistoryFrom: Date?
+    @State private var appliedHistoryTo: Date?
+    @State private var loadedHistoryFrom: Date?
+    @State private var loadedHistoryTo: Date?
+    @State private var senderCredential: DesktopAutomationSenderKeyEnvelope?
+    @State private var confirmsSenderKeyReplacement = false
 
     private var selected: DesktopAutomation? { automations.first { $0.id == selectedID } }
     private var canMutate: Bool { model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty }
@@ -88,8 +112,17 @@ struct AutomationsNativePanel: View {
     }
     private var filtered: [DesktopAutomation] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return automations }
-        return automations.filter { "\($0.name) \($0.targetUrl ?? "") \($0.status)".lowercased().contains(query) }
+        return automations.filter { automation in
+            query.isEmpty || "\(automation.name) \(automation.targetUrl ?? "") \(automation.status) \(automation.caseNumbers.joined(separator: " "))".lowercased().contains(query)
+        }.sorted { left, right in
+            let a = sortValue(left)
+            let b = sortValue(right)
+            if a == nil && b != nil { return false }
+            if b == nil && a != nil { return true }
+            let comparison = (a ?? "").localizedStandardCompare(b ?? "")
+            if comparison == .orderedSame { return left.name.localizedStandardCompare(right.name) == .orderedAscending }
+            return sortAscending ? comparison == .orderedAscending : comparison == .orderedDescending
+        }
     }
 
     var body: some View {
@@ -97,6 +130,29 @@ struct AutomationsNativePanel: View {
             HStack(spacing: 8) {
                 SearchFieldRow(placeholder: "Search \(scope.heading.lowercased())", text: $searchText)
                     .layoutPriority(1)
+                if scope != .personalCron {
+                    Picker("Sort health checks", selection: $sortKey) {
+                        Text("Name").tag("name")
+                        Text("Status").tag("status")
+                        Text("Certificate").tag("cert")
+                        Text("Recent issues").tag("history")
+                        Text("Uptime").tag("uptime")
+                        Text("Type").tag("tags")
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                    Button {
+                        sortAscending.toggle()
+                    } label: {
+                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(width: 30, height: 30)
+                            .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(sortAscending ? "Sort ascending" : "Sort descending")
+                }
                 if scope == .personalCron {
                     compactControl(title: "System", icon: "server.rack", label: "Open system cron jobs") {
                         model.openNativeDashboard(path: "/system/cron", label: "Cron Jobs")
@@ -159,6 +215,12 @@ struct AutomationsNativePanel: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This removes the scheduled automation and its check history.")
+        }
+        .confirmationDialog("Replace external sender key?", isPresented: $confirmsSenderKeyReplacement, titleVisibility: .visible) {
+            Button("Create or replace key", role: .destructive) { Task { await createSenderKey() } }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("The previous sender key will stop working. The new key is shown once, so save it before leaving this page.")
         }
     }
 
@@ -336,6 +398,9 @@ struct AutomationsNativePanel: View {
                     .foregroundStyle(automation.lastError == nil ? theme.textSecondary : theme.danger)
                     .textSelection(.enabled)
             }
+            if automation.monitoringType == "push" {
+                externalSender(automation)
+            }
             HStack(spacing: 8) {
                 ActionButton(title: automation.status == "active" ? "Pause" : "Resume", icon: automation.status == "active" ? "pause.fill" : "play.fill") {
                     Task { await setStatus(automation, status: automation.status == "active" ? "paused" : "active") }
@@ -368,9 +433,44 @@ struct AutomationsNativePanel: View {
                 }
                 Divider().overlay(theme.divider)
             }
-            Text("Recent checks").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+            HStack {
+                Text("Recent checks (\(runs.count)/\(historyTotal))").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                Spacer()
+                compactControl(title: historyFiltersVisible ? "Hide filters" : "Filter", icon: "line.3.horizontal.decrease.circle", label: "Filter checks by time") {
+                    historyFiltersVisible.toggle()
+                }
+                compactControl(title: "Refresh", icon: "arrow.clockwise", label: "Refresh checks", isDisabled: historyLoading) {
+                    Task { await loadDetail(automation, from: appliedHistoryFrom, to: appliedHistoryTo) }
+                }
+            }
+            if historyFiltersVisible {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("From", isOn: $historyFromEnabled)
+                    if historyFromEnabled {
+                        DatePicker("Start", selection: $historyFromDraft, displayedComponents: [.date, .hourAndMinute])
+                    }
+                    Toggle("To", isOn: $historyToEnabled)
+                    if historyToEnabled {
+                        DatePicker("End", selection: $historyToDraft, displayedComponents: [.date, .hourAndMinute])
+                    }
+                    ActionButton(title: "Apply filters", icon: "line.3.horizontal.decrease.circle") {
+                        guard !historyFromEnabled || !historyToEnabled || historyFromDraft <= historyToDraft else {
+                            message = "The start time must be before the end time."
+                            return
+                        }
+                        appliedHistoryFrom = historyFromEnabled ? historyFromDraft : nil
+                        appliedHistoryTo = historyToEnabled ? historyToDraft : nil
+                        Task { await loadDetail(automation, from: appliedHistoryFrom, to: appliedHistoryTo) }
+                    }.disabled(historyLoading)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .padding(9)
+                .background(theme.cardRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
             if runs.isEmpty {
-                Text("No check history is available yet.").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+                Text(message.isEmpty ? "No check history is available for this time range." : message).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
             } else {
                 ForEach(runs) { run in
                     VStack(alignment: .leading, spacing: 4) {
@@ -384,10 +484,47 @@ struct AutomationsNativePanel: View {
                 }
             }
             if let nextPage {
-                ActionButton(title: "Load more checks", icon: "arrow.down") { Task { await loadMore(automation, page: nextPage) } }.disabled(isLoading)
+                ActionButton(title: "Load more checks", icon: "arrow.down") { Task { await loadMore(automation, page: nextPage) } }.disabled(historyLoading)
             }
         }
         .frame(minWidth: 320, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func externalSender(_ automation: DesktopAutomation) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("External sender").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+            Text("Event API path").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            Text("/api/automations/\(automation.id)/events")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.textSecondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+            ActionButton(title: "Create or replace sender key", icon: "key.fill", tone: .danger) {
+                confirmsSenderKeyReplacement = true
+            }
+            .disabled(!canMutate || busyAction == "sender-key")
+            Text("Replacing the key disconnects the previous sender. Send the key in X-API-Key.")
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+            if let senderCredential, selectedID == automation.id {
+                Text("Sender key (shown once)").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                Text(senderCredential.secret)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.text)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+                HStack(spacing: 8) {
+                    ActionButton(title: "Copy key", icon: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(senderCredential.secret, forType: .string)
+                        message = "Sender key copied."
+                    }
+                    Text(senderCredential.endpoint).font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).lineLimit(2)
+                }
+            }
+        }
+        .padding(9)
+        .background(theme.cardRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func field(_ title: String, text: Binding<String>, placeholder: String) -> some View {
@@ -445,6 +582,45 @@ struct AutomationsNativePanel: View {
         return automation.status == "active" ? theme.green : theme.textTertiary
     }
 
+    private func sortValue(_ automation: DesktopAutomation) -> String? {
+        switch sortKey {
+        case "status":
+            if automation.monitoringType == "push" && automation.lastStatus == nil { return automation.status == "active" ? "Awaiting reading" : "Paused" }
+            if automation.actionType == "agent_prompt" && (automation.targetUrl ?? "").isEmpty { return "Missing URL" }
+            if automation.consecutiveFailures > 0 || automation.lastStatus == "failed" { return "Unhealthy" }
+            if automation.lastStatus == "warning" { return "Warning" }
+            if automation.expectedDown || automation.upsideDown { return "Maintenance" }
+            return automation.status == "active" ? "Healthy" : "Paused"
+        case "cert":
+            let target = automation.targetUrl ?? ""
+            let applies = target.lowercased().hasPrefix("http://") || target.lowercased().hasPrefix("https://")
+                || automation.monitoringType == "tcp" && target.hasSuffix(":443")
+            guard applies else { return "N/A" }
+            switch automation.certificateStatus ?? "" {
+            case "valid": return "Valid"
+            case "invalid": return "Invalid"
+            case "expiring": return "Expiring"
+            case "not_applicable": return "N/A"
+            default: return "Pending"
+            }
+        case "history":
+            guard !automation.history.isEmpty else { return nil }
+            return String(format: "%08d", automation.history.filter { $0.status == "failed" || $0.warning }.count)
+        case "uptime":
+            return automation.uptime.map { String(format: "%012.4f", $0) }
+        case "tags":
+            switch automation.actionType {
+            case "mail_health_check": return "Mail health"
+            case "system_alert": return "System alert"
+            case "organization_report": return "Organization report"
+            case "echo": return "Delivery test"
+            default: return nil
+            }
+        default:
+            return automation.name
+        }
+    }
+
     private func load() async {
         isLoading = true
         canManageSystemAutomations = false
@@ -457,46 +633,97 @@ struct AutomationsNativePanel: View {
             createOutcomeUncertain = false
             if wasReconcilingCreate { isEditing = false }
             canManageSystemAutomations = overview.canManageSystem == true
-            if selectedID.isEmpty || !automations.contains(where: { $0.id == selectedID }) { selectedID = automations.first?.id ?? "" }
-            if let selected { await loadDetail(selected) }
+            if !startsInCreate && (selectedID.isEmpty || !automations.contains(where: { $0.id == selectedID })) {
+                selectedID = automations.first(where: { $0.id == initialAutomationID })?.id ?? automations.first?.id ?? ""
+            }
+            if let selected { await loadDetail(selected, from: appliedHistoryFrom, to: appliedHistoryTo) }
             message = wasReconcilingCreate ? "Automation list refreshed to check the previous create request." : ""
         } catch { message = error.localizedDescription }
     }
 
     private func select(_ automation: DesktopAutomation) async {
         selectedID = automation.id
+        appliedHistoryFrom = nil
+        appliedHistoryTo = nil
+        loadedHistoryFrom = nil
+        loadedHistoryTo = nil
+        runs = []
+        issues = []
+        historyTotal = 0
+        nextPage = nil
+        historyFromEnabled = false
+        historyToEnabled = false
+        historyFiltersVisible = false
+        senderCredential = nil
         await loadDetail(automation)
     }
 
-    private func loadDetail(_ automation: DesktopAutomation) async {
+    private func loadDetail(_ automation: DesktopAutomation, page: Int = 1, from: Date? = nil, to: Date? = nil) async {
         let requestID = UUID()
         detailRequestID = requestID
+        let preserveOlderPages = page == 1 && from == loadedHistoryFrom && to == loadedHistoryTo && !runs.isEmpty
+        historyLoading = true
+        defer {
+            if detailRequestID == requestID { historyLoading = false }
+        }
         do {
-            let detail = try await model.fetchDesktopAutomationDetail(automation.id)
+            let detail = try await model.fetchDesktopAutomationDetail(automation.id, page: page, from: from, to: to)
             guard !Task.isCancelled, detailRequestID == requestID, selectedID == automation.id else { return }
-            runs = detail.runs
+            if preserveOlderPages {
+                var merged = Dictionary(uniqueKeysWithValues: runs.map { ($0.id, $0) })
+                detail.runs.forEach { merged[$0.id] = $0 }
+                runs = merged.values.sorted { $0.startedAt > $1.startedAt }
+            } else {
+                runs = detail.runs
+            }
+            loadedHistoryFrom = from
+            loadedHistoryTo = to
+            historyTotal = detail.total ?? runs.count
             issues = detail.issues
-            nextPage = detail.nextPage
+            nextPage = detail.nextPage ?? detail.nextCursor.flatMap(Int.init)
             message = ""
         } catch {
             guard !Task.isCancelled, detailRequestID == requestID, selectedID == automation.id else { return }
             runs = []
             issues = []
             nextPage = nil
+            historyTotal = 0
+            loadedHistoryFrom = from
+            loadedHistoryTo = to
             message = error.localizedDescription
         }
     }
 
     private func loadMore(_ automation: DesktopAutomation, page: Int) async {
-        isLoading = true
-        defer { isLoading = false }
+        let requestID = UUID()
+        detailRequestID = requestID
+        historyLoading = true
+        defer {
+            if detailRequestID == requestID { historyLoading = false }
+        }
         do {
-            let detail = try await model.fetchDesktopAutomationDetail(automation.id, page: page)
-            guard selectedID == automation.id else { return }
+            let detail = try await model.fetchDesktopAutomationDetail(automation.id, page: page, from: appliedHistoryFrom, to: appliedHistoryTo)
+            guard !Task.isCancelled, detailRequestID == requestID, selectedID == automation.id else { return }
             runs.append(contentsOf: detail.runs)
+            historyTotal = detail.total ?? runs.count
             issues = detail.issues
             nextPage = detail.nextPage
-        } catch { message = error.localizedDescription }
+        } catch {
+            guard detailRequestID == requestID, selectedID == automation.id else { return }
+            message = error.localizedDescription
+        }
+    }
+
+    private func createSenderKey() async {
+        guard let selected, selected.monitoringType == "push", canMutate else { return }
+        busyAction = "sender-key"
+        defer { busyAction = "" }
+        do {
+            senderCredential = try await model.createDesktopAutomationSenderKey(selected.id)
+            message = "Sender key created. Save it now; it will not be shown again."
+        } catch {
+            message = error.localizedDescription
+        }
     }
 
     private func beginCreate() {
@@ -571,10 +798,19 @@ struct AutomationsNativePanel: View {
             return
         }
         let wasCreate = selected == nil
-        let interval = Int(draftInterval) ?? selected?.intervalMinutes ?? 15
-        guard draftScheduleKind != "interval" || interval > 0 else { message = "Enter a repeat interval in minutes."; return }
-        let timeoutSeconds = Int(draftTimeout) ?? selected?.timeoutSeconds ?? 5
-        let retryCount = draftMonitoringType == "push" ? 0 : Int(draftRetries) ?? selected?.retryCount ?? 0
+        let interval: Int
+        if let parsed = Int(draftInterval) { interval = parsed }
+        else if draftScheduleKind == "interval" { message = "Enter a valid repeat interval in minutes."; return }
+        else { interval = selected?.intervalMinutes ?? 15 }
+        guard draftScheduleKind != "interval" || (1...43_200).contains(interval) else {
+            message = "Choose a repeat interval between 1 and 43200 minutes."
+            return
+        }
+        guard let timeoutSeconds = Int(draftTimeout) else { message = "Enter a valid response timeout."; return }
+        let retryCount: Int
+        if draftMonitoringType == "push" { retryCount = 0 }
+        else if let parsed = Int(draftRetries) { retryCount = parsed }
+        else { message = "Enter a valid retry count."; return }
         let url = draftURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "Name is required."; return }
         guard !draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { message = "A description is required."; return }
@@ -593,7 +829,7 @@ struct AutomationsNativePanel: View {
         if let error = DesktopAutomationEditorRules.validate(
             actionType: draftActionType, monitoringType: draftMonitoringType, targetURL: url,
             jsonRule: jsonRule, canManageSystem: canManageSystemAutomations,
-            scheduleKind: draftScheduleKind, intervalMinutes: interval, timeoutSeconds: timeoutSeconds,
+            scheduleKind: draftScheduleKind, intervalMinutes: interval, timeoutSeconds: timeoutSeconds, retryCount: retryCount, runAt: draftRunAt,
             expectedDown: draftExpectedDown, upsideDown: draftUpsideDown
         ) {
             message = error

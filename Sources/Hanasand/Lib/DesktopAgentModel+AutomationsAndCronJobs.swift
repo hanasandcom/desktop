@@ -26,8 +26,8 @@ extension DesktopAgentModel {
         try await desktopAutomationClient().list(scope: scope)
     }
 
-    func fetchDesktopAutomationDetail(_ id: String, page: Int = 1) async throws -> DesktopAutomationDetailEnvelope {
-        try await desktopAutomationClient().detail(id: id, page: page)
+    func fetchDesktopAutomationDetail(_ id: String, page: Int = 1, from: Date? = nil, to: Date? = nil) async throws -> DesktopAutomationDetailEnvelope {
+        try await desktopAutomationClient().detail(id: id, page: page, from: from, to: to)
     }
 
     func saveDesktopAutomation(_ payload: DesktopAutomationPayload, id: String? = nil) async throws -> DesktopAutomation {
@@ -46,6 +46,10 @@ extension DesktopAgentModel {
     func runDesktopAutomation(_ id: String) async throws -> String {
         let envelope = try await desktopAutomationClient().run(id)
         return envelope.message ?? "Run started."
+    }
+
+    func createDesktopAutomationSenderKey(_ id: String) async throws -> DesktopAutomationSenderKeyEnvelope {
+        try await desktopAutomationClient().createSenderKey(id)
     }
 
     func fetchDesktopCronJobs() async throws -> DesktopCronJobsEnvelope {
@@ -78,6 +82,11 @@ struct DesktopAutomationStatusPayload: Encodable {
 
 struct DesktopAutomationRunNowEnvelope: Decodable {
     let message: String?
+}
+
+struct DesktopAutomationSenderKeyEnvelope: Decodable {
+    let secret: String
+    let endpoint: String
 }
 
 struct DesktopCronUpdateEnvelope: Decodable {

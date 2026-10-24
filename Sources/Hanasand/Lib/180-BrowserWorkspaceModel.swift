@@ -93,6 +93,7 @@ final class BrowserWorkspaceModel: ObservableObject {
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
 
         let websiteAliases: [String: String] = [
+            "/automation": "/dashboard/automation",
             "/ai": "/ai",
             "/dashboard/ai": "/ai",
             "/ai/window": "/ai/workspace",

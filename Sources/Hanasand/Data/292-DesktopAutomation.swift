@@ -37,12 +37,13 @@ struct DesktopAutomation: Decodable, Identifiable {
     let lastError: String?
     let runCount: Int
     let consecutiveFailures: Int
+    let caseNumbers: [String]
 
     var resultSummary: String? { lastError ?? lastResult }
 
     enum CodingKeys: String, CodingKey {
         case id, name, prompt, actionType, targetUrl, monitoringType, scheduleKind, intervalMinutes, status
-        case lastStatus, lastRunAt, nextRunAt, lastResult, lastError, runCount, consecutiveFailures
+        case lastStatus, lastRunAt, nextRunAt, lastResult, lastError, runCount, consecutiveFailures, caseNumbers
         case organizationId, timezone, runAt, modelName, notificationDestinations, notifyOn, notifyWarnings
         case timeoutSeconds, retryCount, expectedDown, upsideDown, followRedirects, userAgent, jsonRule
         case certificateStatus, certificateSubject, certificateIssuer, certificateExpiresAt, uptime, history
@@ -86,6 +87,7 @@ struct DesktopAutomation: Decodable, Identifiable {
         lastError = try values.decodeIfPresent(String.self, forKey: .lastError)
         runCount = try values.decodeIfPresent(Int.self, forKey: .runCount) ?? 0
         consecutiveFailures = try values.decodeIfPresent(Int.self, forKey: .consecutiveFailures) ?? 0
+        caseNumbers = try values.decodeIfPresent([String].self, forKey: .caseNumbers) ?? []
     }
 }
 
@@ -208,6 +210,9 @@ enum DesktopAutomationEditorRules {
         scheduleKind: String = "interval",
         intervalMinutes: Int? = nil,
         timeoutSeconds: Int? = nil,
+        retryCount: Int? = nil,
+        runAt: String? = nil,
+        now: Date = Date(),
         expectedDown: Bool = false,
         upsideDown: Bool = false
     ) -> String? {
@@ -219,6 +224,17 @@ enum DesktopAutomationEditorRules {
         }
         if monitoringType == "push" && actionType != "agent_prompt" {
             return "External events require a monitoring check."
+        }
+        if scheduleKind == "once" {
+            let formatter = ISO8601DateFormatter()
+            let fractionalFormatter = ISO8601DateFormatter()
+            fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let runAt, let date = formatter.date(from: runAt) ?? fractionalFormatter.date(from: runAt) else {
+                return "Choose a valid run time."
+            }
+            guard date > now else { return "Choose a future run time." }
+        } else if let intervalMinutes, !(1...43_200).contains(intervalMinutes) {
+            return "Choose a repeat interval between 1 and 43200 minutes."
         }
         guard actionType == "agent_prompt" else { return nil }
 
@@ -235,6 +251,12 @@ enum DesktopAutomationEditorRules {
                 return "Enter an offline timeout between 1 and 86400 seconds."
             }
             return nil
+        }
+        if let timeoutSeconds, !(1...120).contains(timeoutSeconds) {
+            return "Enter a response timeout between 1 and 120 seconds."
+        }
+        if let retryCount, !(0...5).contains(retryCount) {
+            return "Choose between 0 and 5 retries."
         }
         if target.hasPrefix("system:") {
             guard canManageSystem, monitoringType == "json" else {

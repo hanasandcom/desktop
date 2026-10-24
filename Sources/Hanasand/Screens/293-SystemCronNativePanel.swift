@@ -21,8 +21,17 @@ struct SystemCronNativePanel: View {
     @State private var isLoading = false
     @State private var busyID = ""
     @State private var message = ""
+    @State private var readinessRetry: Task<Void, Never>?
+    @State private var pendingUpdate: (job: DesktopCronJob, payload: DesktopCronUpdatePayload)?
+    @State private var confirmsUpdate = false
 
     private var selected: DesktopCronJob? { jobs.first { $0.id == selectedID } }
+    private var attentionJobs: [DesktopCronJob] { jobs.filter { $0.failureCount > 0 || ["failed", "blocked"].contains($0.status.lowercased()) } }
+    private var runnableJob: DesktopCronJob? {
+        jobs.first { job in
+            job.controls.contains("run_now") && !attentionJobs.contains(where: { $0.id == job.id }) && !job.running
+        }
+    }
     private var filtered: [DesktopCronJob] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return jobs.filter { job in
@@ -50,27 +59,40 @@ struct SystemCronNativePanel: View {
                 NativeEmptyState(title: "Loading system jobs", message: "Reading the managed schedule inventory.")
             } else if jobs.isEmpty {
                 NativeEmptyState(
-                    title: message.isEmpty ? "No system jobs" : "Couldn’t load system jobs",
+                    title: message.isEmpty ? "No system jobs" : (message.hasPrefix("Showing the job registry") ? "Loading system jobs" : "Couldn’t load system jobs"),
                     message: message.isEmpty ? "No scheduled jobs were returned." : message
                 )
             } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 14) {
-                        schedulePanel.frame(minWidth: 270, maxWidth: 340)
-                        if let selected {
-                            detail(selected).frame(minWidth: 380, maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 12) {
+                    operationsSummary
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: 14) {
+                            schedulePanel.frame(minWidth: 270, maxWidth: 340)
+                            if let selected {
+                                detail(selected).frame(minWidth: 380, maxWidth: .infinity, alignment: .leading)
+                            }
                         }
-                    }
-                    VStack(alignment: .leading, spacing: 14) {
-                        schedulePanel.frame(maxWidth: .infinity)
-                        if let selected {
-                            detail(selected).frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 14) {
+                            schedulePanel.frame(maxWidth: .infinity)
+                            if let selected {
+                                detail(selected).frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                 }
             }
         }
         .task { await load() }
+        .onDisappear { readinessRetry?.cancel() }
+        .confirmationDialog("Confirm scheduled job change?", isPresented: $confirmsUpdate, titleVisibility: .visible) {
+            Button("Confirm", role: .destructive) {
+                guard let pendingUpdate else { return }
+                Task { await update(pendingUpdate.job, payload: pendingUpdate.payload) }
+            }
+            Button("Cancel", role: .cancel) { pendingUpdate = nil }
+        } message: {
+            Text(confirmationMessage)
+        }
     }
 
     private var schedulePanel: some View {
@@ -94,6 +116,83 @@ struct SystemCronNativePanel: View {
                 }
             }
         }
+    }
+
+    private var operationsSummary: some View {
+        let enabled = jobs.filter(\.enabled).count
+        let running = jobs.filter { $0.running || $0.status == "running" }.count
+        let estimatedDailyCosts = jobs.compactMap { $0.costEstimate?.dailyUsd }
+        let dailyCost = estimatedDailyCosts.isEmpty ? "Metering" : "$\(String(format: "%.2f", estimatedDailyCosts.reduce(0, +)))/day estimated"
+        let failed = jobs.filter { $0.failureCount > 0 || ["failed", "blocked"].contains($0.status.lowercased()) }.count
+        let pending = jobs.filter { $0.status == "unknown" }.count
+        let headline: String
+        if jobs.isEmpty { headline = "No scheduled jobs available" }
+        else if pending > 0 { headline = "Live job state is loading" }
+        else if failed == 1 { headline = "1 job needs review" }
+        else if failed > 1 { headline = "\(failed) jobs need review" }
+        else if running > 0 { headline = "\(running) job\(running == 1 ? "" : "s") running now" }
+        else { headline = "All scheduled jobs operating normally" }
+        return NativeGroupPanel(title: headline, subtitle: "\(enabled)/\(jobs.count) enabled · \(running) running · \(dailyCost)") {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    attentionSummary.frame(maxWidth: .infinity, alignment: .leading)
+                    nextSafeAction.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    attentionSummary
+                    nextSafeAction
+                }
+            }
+        }
+    }
+
+    private var attentionSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Needs attention", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+                Spacer()
+                Text(String(attentionJobs.count)).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            }
+            if attentionJobs.isEmpty {
+                Text("No blocked or failing jobs in the current inventory.").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            } else {
+                ForEach(attentionJobs.prefix(3)) { job in
+                    Button { select(job) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(job.name).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.text)
+                            Text(job.lastError ?? "\(job.status.capitalized) · \(job.category)").font(.system(size: 9)).foregroundStyle(theme.textSecondary).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(7)
+                        .background(theme.cardRaised)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }.buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(8)
+        .background(theme.cardRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var nextSafeAction: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Next safe action", systemImage: "play.circle")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+            if let runnableJob {
+                Text("\(runnableJob.name) can be run once without changing its schedule.")
+                    .font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                ActionButton(title: "Run selected job", icon: "bolt.fill") {
+                    requestUpdate(runnableJob, payload: DesktopCronUpdatePayload(action: "run_now"))
+                }.disabled(busyID == runnableJob.id)
+            } else {
+                Text("No manual run action is available from this snapshot.").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            }
+        }
+        .padding(8)
+        .background(theme.cardRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func row(_ job: DesktopCronJob) -> some View {
@@ -128,7 +227,7 @@ struct SystemCronNativePanel: View {
                 HStack(spacing: 8) {
                     TextField("Cron schedule", text: $scheduleDraft).textFieldStyle(.plain).font(.system(size: 12, weight: .medium, design: .monospaced))
                         .padding(10).background(theme.field).clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    ActionButton(title: "Save schedule", icon: "checkmark") { Task { await update(job, payload: DesktopCronUpdatePayload(schedule: scheduleDraft)) } }
+                    ActionButton(title: "Save schedule", icon: "checkmark") { requestUpdate(job, payload: DesktopCronUpdatePayload(schedule: scheduleDraft)) }
                         .disabled(busyID == job.id || scheduleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -142,12 +241,12 @@ struct SystemCronNativePanel: View {
             HStack(spacing: 8) {
                 if job.controls.contains("enable") || job.controls.contains("resume") || job.controls.contains("disable") || job.controls.contains("pause") {
                     ActionButton(title: job.enabled ? "Pause" : "Enable", icon: job.enabled ? "pause.fill" : "play.fill") {
-                        Task { await update(job, payload: DesktopCronUpdatePayload(enabled: !job.enabled)) }
+                        requestUpdate(job, payload: DesktopCronUpdatePayload(enabled: !job.enabled))
                     }.disabled(busyID == job.id)
                 }
                 if job.controls.contains("run_now") {
                     ActionButton(title: "Run now", icon: "bolt.fill") {
-                        Task { await update(job, payload: DesktopCronUpdatePayload(action: "run_now")) }
+                        requestUpdate(job, payload: DesktopCronUpdatePayload(action: "run_now"))
                     }.disabled(busyID == job.id || job.running)
                 }
                 if job.controlMode == "observable_only" {
@@ -228,6 +327,8 @@ struct SystemCronNativePanel: View {
     }
 
     private func load() async {
+        readinessRetry?.cancel()
+        readinessRetry = nil
         isLoading = true
         defer { isLoading = false }
         do {
@@ -235,7 +336,17 @@ struct SystemCronNativePanel: View {
             jobs = envelope.jobs
             if selectedID.isEmpty || !jobs.contains(where: { $0.id == selectedID }) { selectedID = jobs.first?.id ?? "" }
             if let selected { scheduleDraft = selected.schedule }
-            message = ""
+            if envelope.ready == false {
+                message = "Showing the job registry while live scheduler state loads."
+                readinessRetry = Task {
+                    do { try await Task.sleep(for: .seconds(1)) }
+                    catch { return }
+                    guard !Task.isCancelled else { return }
+                    await load()
+                }
+            } else {
+                message = ""
+            }
         } catch { message = error.localizedDescription }
     }
 
@@ -254,6 +365,22 @@ struct SystemCronNativePanel: View {
             if let selected { scheduleDraft = selected.schedule }
             message = payload.action == "run_now" ? "Run requested for \(job.name)." : "Saved \(job.name)."
         } catch { message = error.localizedDescription }
+    }
+
+    private var confirmationMessage: String {
+        guard let pendingUpdate else { return "Review the change before it is sent." }
+        if let schedule = pendingUpdate.payload.schedule {
+            return "Change \(pendingUpdate.job.name)’s schedule to \(schedule)?"
+        }
+        if let enabled = pendingUpdate.payload.enabled {
+            return "\(enabled ? "Enable" : "Pause") \(pendingUpdate.job.name)?"
+        }
+        return "Run \(pendingUpdate.job.name) now? This starts a one-time run without changing its schedule."
+    }
+
+    private func requestUpdate(_ job: DesktopCronJob, payload: DesktopCronUpdatePayload) {
+        pendingUpdate = (job, payload)
+        confirmsUpdate = true
     }
 
     private func color(for status: String) -> Color {

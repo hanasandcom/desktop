@@ -10,6 +10,25 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum NativeAutomationRoute: Equatable {
+    case overview(initialAutomationID: String?, startsInCreate: Bool)
+    case health(initialAutomationID: String?, startsInCreate: Bool)
+    case personalCron
+    case systemCron
+
+    static func resolve(path: String, query: [String: String]) -> NativeAutomationRoute? {
+        let initialID = query["monitor"]
+        let startsInCreate = query["setup"] == "dwm"
+        switch path {
+        case "/dashboard/automations", "/dashboard/automation": return .overview(initialAutomationID: initialID, startsInCreate: startsInCreate)
+        case "/automation/health": return .health(initialAutomationID: initialID, startsInCreate: startsInCreate)
+        case "/automation/cron": return query["scope"] == "system" ? .systemCron : .personalCron
+        case "/system/cron": return .systemCron
+        default: return nil
+        }
+    }
+}
+
 struct NativeDashboardDetail: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
@@ -237,14 +256,19 @@ struct NativeDashboardDetail: View {
             LinksNativePanel()
         case "/dashboard/tests", "/load-testing", "/test":
             RecentTestsNativePanel(initialTestID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
-        case "/dashboard/automations", "/dashboard/automation":
-            AutomationsNativePanel()
-        case "/automation/health":
-            AutomationsNativePanel(scope: .health)
-        case "/automation/cron":
-            AutomationsNativePanel(scope: .personalCron)
-        case "/system/cron":
-            SystemCronNativePanel()
+        case "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron":
+            switch NativeAutomationRoute.resolve(path: model.selectedDashboardPath ?? "", query: model.selectedNativeDashboardQuery) {
+            case .overview(let id, let startsInCreate):
+                AutomationsNativePanel(initialAutomationID: id, startsInCreate: startsInCreate)
+            case .health(let id, let startsInCreate):
+                AutomationsNativePanel(scope: .health, initialAutomationID: id, startsInCreate: startsInCreate)
+            case .personalCron:
+                AutomationsNativePanel(scope: .personalCron)
+            case .systemCron:
+                SystemCronNativePanel()
+            case nil:
+                NativeRouteFallbackPanel()
+            }
         case "/mail":
             MailNativePanel()
         case "/system":

@@ -40,6 +40,63 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertEqual(captured?.url?.absoluteString, "https://api.hanasand.test/api/automations/check-1?page=2")
     }
 
+    func testHealthHistoryFiltersUseISO8601QueryParameters() async throws {
+        var captured: URLRequest?
+        let client = try AutomationClient(settings: settings()) { request in
+            captured = request
+            return self.response(#"{"automation":{"id":"check-1","name":"Website","prompt":"available","status":"active"},"runs":[],"total":0}"#, request)
+        }
+        let from = Date(timeIntervalSince1970: 1_792_800_000)
+        let to = Date(timeIntervalSince1970: 1_792_886_400)
+
+        _ = try await client.detail(id: "check-1", from: from, to: to)
+
+        let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(captured?.url), resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "from" })?.value, "2026-10-24T00:00:00.000Z")
+        XCTAssertEqual(components.queryItems?.first(where: { $0.name == "to" })?.value, "2026-10-25T00:00:00.000Z")
+    }
+
+    func testExternalSenderKeyUsesAuthenticatedScopedMutationAndRejectsImpersonation() async throws {
+        var captured: URLRequest?
+        let client = try AutomationClient(settings: settings()) { request in
+            captured = request
+            return self.response(#"{"secret":"one-time-secret","endpoint":"/api/automations/push-1/events"}"#, request)
+        }
+
+        let key = try await client.createSenderKey("push-1")
+        XCTAssertEqual(key.secret, "one-time-secret")
+        XCTAssertEqual(key.endpoint, "/api/automations/push-1/events")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.url?.path, "/api/automations/push-1/sender-key")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "eirik")
+
+        var impersonated = settings()
+        impersonated.impersonationToken = "view-token"
+        var sends = 0
+        let readOnly = try AutomationClient(settings: impersonated) { request in
+            sends += 1
+            return self.response("{}", request)
+        }
+        do { _ = try await readOnly.createSenderKey("push-1"); XCTFail("Impersonated accounts cannot replace sender keys") }
+        catch AutomationClientError.impersonationReadOnly {}
+        XCTAssertEqual(sends, 0)
+    }
+
+    func testNativeAutomationRoutesPreserveMonitorSetupAndSystemScope() {
+        XCTAssertEqual(
+            NativeAutomationRoute.resolve(path: "/automation/health", query: ["monitor": "check-22", "setup": "dwm"]),
+            .health(initialAutomationID: "check-22", startsInCreate: true)
+        )
+        XCTAssertEqual(
+            NativeAutomationRoute.resolve(path: "/dashboard/automation", query: ["setup": "dwm"]),
+            .overview(initialAutomationID: nil, startsInCreate: true)
+        )
+        XCTAssertEqual(NativeAutomationRoute.resolve(path: "/automation/cron", query: ["scope": "system"]), .systemCron)
+        XCTAssertEqual(NativeAutomationRoute.resolve(path: "/automation/cron", query: ["view": "cron"]), .personalCron)
+    }
+
     func testMutationUsesExactRoutesAndRejectsImpersonationAndUnsafeIdentifiers() async throws {
         var requests: [URLRequest] = []
         let client = try AutomationClient(settings: settings()) { request in
@@ -168,9 +225,10 @@ final class AutomationClientTests: XCTestCase {
         func validate(path: String = "metrics.*.latency", op: String = "gt", value: DesktopAutomationRuleValue = .number(80), monitoring: String = "json",
                       aggregate: String? = "max", target: String = "https://example.test/metrics", canManage: Bool = false,
                       schedule: String = "interval", interval: Int? = nil, timeout: Int? = nil, expectedDown: Bool = false, upsideDown: Bool = false,
-                      action: String = "agent_prompt") -> String? {
+                      action: String = "agent_prompt", retries: Int? = nil, runAt: String? = nil,
+                      now: Date = Date(timeIntervalSince1970: 1_792_756_800)) -> String? {
             let rule = DesktopAutomationJSONRule(path: path, operatorName: op, value: value, aggregate: aggregate)
-            return DesktopAutomationEditorRules.validate(actionType: action, monitoringType: monitoring, targetURL: target, jsonRule: rule, canManageSystem: canManage, scheduleKind: schedule, intervalMinutes: interval, timeoutSeconds: timeout, expectedDown: expectedDown, upsideDown: upsideDown)
+            return DesktopAutomationEditorRules.validate(actionType: action, monitoringType: monitoring, targetURL: target, jsonRule: rule, canManageSystem: canManage, scheduleKind: schedule, intervalMinutes: interval, timeoutSeconds: timeout, retryCount: retries, runAt: runAt, now: now, expectedDown: expectedDown, upsideDown: upsideDown)
         }
 
         XCTAssertNil(validate())
@@ -193,6 +251,12 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 86_401))
         XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 180, expectedDown: true))
         XCTAssertNotNil(validate(monitoring: "push", target: "uptime.site", interval: 1, timeout: 180, action: "system_alert"))
+        XCTAssertNotNil(validate(interval: 43_201))
+        XCTAssertNotNil(validate(timeout: 121))
+        XCTAssertNotNil(validate(retries: 6))
+        XCTAssertNil(validate(schedule: "once", runAt: "2026-10-24T00:00:00Z"))
+        XCTAssertNotNil(validate(schedule: "once", runAt: nil))
+        XCTAssertNotNil(validate(schedule: "once", runAt: "2026-10-23T11:59:59Z"))
     }
 
     private func settings() -> HanasandDesktopSettings {

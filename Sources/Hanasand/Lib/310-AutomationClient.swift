@@ -57,8 +57,10 @@ struct AutomationClient {
             throw AutomationClientError.invalidBaseURL
         }
         var query = [URLQueryItem(name: "page", value: String(page))]
-        if let from { query.append(URLQueryItem(name: "from", value: ISO8601DateFormatter().string(from: from))) }
-        if let to { query.append(URLQueryItem(name: "to", value: ISO8601DateFormatter().string(from: to))) }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let from { query.append(URLQueryItem(name: "from", value: formatter.string(from: from))) }
+        if let to { query.append(URLQueryItem(name: "to", value: formatter.string(from: to))) }
         components.queryItems = query
         guard let url = components.url else { throw AutomationClientError.invalidBaseURL }
         return try await request(url)
@@ -88,6 +90,12 @@ struct AutomationClient {
         try requireMutation()
         guard Self.validID(id) else { throw AutomationClientError.invalidInput }
         return try await request(endpoint("automations/\(Self.pathComponent(id))/run"), method: "POST")
+    }
+
+    func createSenderKey(_ id: String) async throws -> DesktopAutomationSenderKeyEnvelope {
+        try requireMutation()
+        guard Self.validID(id) else { throw AutomationClientError.invalidInput }
+        return try await request(endpoint("automations/\(Self.pathComponent(id))/sender-key"), method: "POST")
     }
 
     static func pathComponent(_ value: String) -> String {
