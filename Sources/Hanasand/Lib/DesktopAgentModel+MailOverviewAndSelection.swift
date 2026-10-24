@@ -40,12 +40,24 @@ struct MailMessageReputationEnvelope: Decodable, Equatable {
     let attachments: [MailAttachmentReputation]
 }
 
+struct MailInlineImageContent: Equatable {
+    let data: Data
+    let mimeType: String
+}
+
 enum MailMessageSafetyError: Error {
     case invalidRequest
     case mismatchedMessage
 }
 
 enum MailMessageSafety {
+    static let inlineImageScheme = "hanasand-mail-image"
+    static let maximumInlineImageBytes = 100 * 1024 * 1024
+    static let maximumInlineImageTotalBytes = 200 * 1024 * 1024
+    static let maximumInlineImageCount = 50
+
+    private static let inlineImageTypes: Set<String> = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+
     static func makeRequestURL(baseURL: URL, mailboxUser: String, messageID: String) throws -> URL {
         let user = mailboxUser.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,6 +75,85 @@ enum MailMessageSafety {
             throw MailMessageSafetyError.invalidRequest
         }
         return url
+    }
+
+    static func makeAttachmentURL(baseURL: URL, mailboxUser: String, blobID: String, name: String) throws -> URL {
+        let user = mailboxUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let blob = blobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !user.isEmpty, user.count <= 256, !blob.isEmpty, blob.count <= 512,
+              !name.isEmpty, name.count <= 512 else { throw MailMessageSafetyError.invalidRequest }
+        let segmentCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
+        let segments = [user, blob, name].compactMap { $0.addingPercentEncoding(withAllowedCharacters: segmentCharacters) }
+        guard segments.count == 3,
+              var components = URLComponents(url: baseURL.appendingAPIPath("mail/blob"), resolvingAgainstBaseURL: false) else {
+            throw MailMessageSafetyError.invalidRequest
+        }
+        components.percentEncodedPath += "/" + segments.joined(separator: "/")
+        guard let url = components.url, url.usesSecureHanasandTransport else { throw MailMessageSafetyError.invalidRequest }
+        return url
+    }
+
+    static func eligibleInlineAttachments(
+        _ attachments: [MailOverviewEnvelope.Attachment],
+        reputations: [MailAttachmentReputation]
+    ) -> [MailOverviewEnvelope.Attachment] {
+        let reputationByBlobID = Dictionary(reputations.map { ($0.blobId, $0) }, uniquingKeysWith: { first, _ in first })
+        var totalBytes = 0
+        var eligible: [MailOverviewEnvelope.Attachment] = []
+        for attachment in attachments {
+            guard let cid = attachment.cid?.trimmingCharacters(in: .whitespacesAndNewlines), !cid.isEmpty,
+                  let declaredType = normalizedImageType(attachment.type), inlineImageTypes.contains(declaredType),
+                  let reputation = reputationByBlobID[attachment.blobId], reputation.reputation.isKnownClear,
+                  reputation.size > 0, reputation.size <= maximumInlineImageBytes,
+                  eligible.count < maximumInlineImageCount,
+                  totalBytes + reputation.size <= maximumInlineImageTotalBytes else { continue }
+            totalBytes += reputation.size
+            eligible.append(attachment)
+        }
+        return eligible
+    }
+
+    static func validatedInlineImage(data: Data, declaredType: String?, responseType: String?) -> MailInlineImageContent? {
+        guard let declared = normalizedImageType(declaredType), inlineImageTypes.contains(declared),
+              normalizedImageType(responseType) == declared,
+              data.count <= maximumInlineImageBytes,
+              matchesImageSignature(data, mimeType: declared) else { return nil }
+        return MailInlineImageContent(data: data, mimeType: declared)
+    }
+
+    static func inlineImageURL(token: String) -> String? {
+        guard !token.isEmpty,
+              token.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else { return nil }
+        return "\(inlineImageScheme)://inline/\(token)"
+    }
+
+    static func replacingInlineContentIDs(in html: String, tokensByCID: [String: String]) -> String {
+        var result = html
+        for (cid, token) in tokensByCID.sorted(by: { $0.key.count > $1.key.count }) {
+            let normalizedCID = cid.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+            guard !normalizedCID.isEmpty, let url = inlineImageURL(token: token) else { continue }
+            result = result.replacingOccurrences(of: "cid:<\(normalizedCID)>", with: url)
+            result = result.replacingOccurrences(of: "cid:\(normalizedCID)", with: url)
+        }
+        let cidPattern = #"(?i)cid:(?:<[^>]*>|[^\s\"'<>)]*)"#
+        guard let regex = try? NSRegularExpression(pattern: cidPattern) else { return result }
+        return regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+    }
+
+    private static func normalizedImageType(_ value: String?) -> String? {
+        guard let value else { return nil }
+        return value.split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func matchesImageSignature(_ data: Data, mimeType: String) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        switch mimeType {
+        case "image/png": return bytes.count >= 8 && bytes[0] == 0x89 && Array(bytes[1...3]) == Array("PNG".utf8) && bytes[4...7].elementsEqual([0x0d, 0x0a, 0x1a, 0x0a])
+        case "image/jpeg": return bytes.count >= 3 && bytes[0...2].elementsEqual([0xff, 0xd8, 0xff])
+        case "image/gif": return bytes.count >= 6 && (Array(bytes[0..<6]) == Array("GIF87a".utf8) || Array(bytes[0..<6]) == Array("GIF89a".utf8))
+        case "image/webp": return bytes.count >= 12 && Array(bytes[0..<4]) == Array("RIFF".utf8) && Array(bytes[8..<12]) == Array("WEBP".utf8)
+        default: return false
+        }
     }
 
     static func validated(_ value: MailMessageReputationEnvelope, expectedMessageID: String,
@@ -125,7 +216,7 @@ enum MailMessageSafety {
             let port = url.port.map { ":\($0)" } ?? ""
             return "\(scheme)://\(host)\(port)\(path.isEmpty ? "/" : path)"
         }
-        let imageSources = ( ["data:", "blob:"] + remoteSources).joined(separator: " ")
+        let imageSources = (["data:", "blob:", "\(inlineImageScheme):"] + remoteSources).joined(separator: " ")
         return "default-src 'none'; img-src \(imageSources); style-src 'unsafe-inline'; font-src data:; frame-src 'none'; media-src 'none'; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     }
 
@@ -156,6 +247,28 @@ extension DesktopAgentModel {
         let url = try MailMessageSafety.makeRequestURL(baseURL: settings.apiBaseURL.normalizedBaseURL, mailboxUser: mailboxUser, messageID: messageID)
         let response: MailMessageReputationEnvelope = try await requestJSON(url, authenticated: true)
         return try MailMessageSafety.validated(response, expectedMessageID: messageID, html: html, attachmentIDs: attachmentIDs)
+    }
+
+    func loadMailInlineImage(_ attachment: MailOverviewEnvelope.Attachment, mailboxUser: String) async throws -> MailInlineImageContent? {
+        guard let declaredType = attachment.type,
+              ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(declaredType.split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "") else {
+            return nil
+        }
+        let url = try MailMessageSafety.makeAttachmentURL(
+            baseURL: settings.apiBaseURL.normalizedBaseURL,
+            mailboxUser: mailboxUser,
+            blobID: attachment.blobId,
+            name: attachment.name
+        )
+        var urlRequest = request(url, authenticated: true)
+        urlRequest.setValue("image/png, image/jpeg, image/gif, image/webp", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        try validateHTTP(response)
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.expectedContentLength <= Int64(MailMessageSafety.maximumInlineImageBytes),
+              data.count <= MailMessageSafety.maximumInlineImageBytes else { return nil }
+        let responseType = httpResponse.value(forHTTPHeaderField: "Content-Type")
+        return MailMessageSafety.validatedInlineImage(data: data, declaredType: declaredType, responseType: responseType)
     }
 
     func refreshLocalStatus() async {

@@ -20,4 +20,6 @@ struct MailNativePanel: View {
     @State var messageReputationError = ""
     @State var messageReputationPending = false
     @State var approvedRemoteImageMessageID: String?
+    @State var inlineImageContents: [String: MailInlineImageContent] = [:]
+    @State var inlineImageTokensByCID: [String: String] = [:]
 }

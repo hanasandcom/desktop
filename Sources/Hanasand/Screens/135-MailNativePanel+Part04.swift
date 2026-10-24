@@ -19,6 +19,8 @@ extension MailNativePanel {
             messageReputationError = ""
             messageReputationPending = false
             approvedRemoteImageMessageID = nil
+            inlineImageContents = [:]
+            inlineImageTokensByCID = [:]
             return
         }
         let messageID = message.id
@@ -26,6 +28,8 @@ extension MailNativePanel {
         messageReputationError = ""
         messageReputationPending = true
         approvedRemoteImageMessageID = nil
+        inlineImageContents = [:]
+        inlineImageTokensByCID = [:]
         do {
             let response = try await model.loadMailMessageReputation(
                 messageID: messageID,
@@ -37,6 +41,28 @@ extension MailNativePanel {
                   overview.mailboxUser == mailboxUser else { return }
             messageReputation = response
             messageReputationPending = false
+            var imageContents: [String: MailInlineImageContent] = [:]
+            var tokensByCID: [String: String] = [:]
+            var totalImageBytes = 0
+            for attachment in MailMessageSafety.eligibleInlineAttachments(message.attachments ?? [], reputations: response.attachments) {
+                guard !Task.isCancelled, selectedMessage?.id == messageID,
+                      overview.mailboxUser == mailboxUser else { return }
+                do {
+                    guard let image = try await model.loadMailInlineImage(attachment, mailboxUser: mailboxUser),
+                          totalImageBytes + image.data.count <= MailMessageSafety.maximumInlineImageTotalBytes,
+                          let cid = attachment.cid,
+                          let token = String(imageContents.count).addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { continue }
+                    imageContents[token] = image
+                    tokensByCID[cid] = token
+                    totalImageBytes += image.data.count
+                } catch {
+                    continue
+                }
+            }
+            guard !Task.isCancelled, selectedMessage?.id == messageID,
+                  overview.mailboxUser == mailboxUser else { return }
+            inlineImageContents = imageContents
+            inlineImageTokensByCID = tokensByCID
         } catch {
             guard !Task.isCancelled, selectedMessage?.id == messageID else { return }
             messageReputationError = "Safety status unavailable. External images and attachments remain blocked."
@@ -142,8 +168,9 @@ extension MailNativePanel {
                             .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         MailSafeHTMLBodyView(
-                            html: message.renderedHTML(mailboxUser: overview.mailboxUser, apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL),
+                            html: message.renderedHTML(inlineImageTokensByCID: inlineImageTokensByCID),
                             approvedRemoteURLs: approvedRemoteImageMessageID == message.id ? safeRemoteURLs : [],
+                            inlineImageContents: inlineImageContents,
                             configuredWebsiteBaseURL: model.settings.websiteBaseURL,
                             onOpenURL: { model.openURL($0, label: "Mail link") }
                         )
@@ -245,6 +272,7 @@ extension MailNativePanel {
 struct MailSafeHTMLBodyView: NSViewRepresentable {
     let html: String
     let approvedRemoteURLs: [String]
+    let inlineImageContents: [String: MailInlineImageContent]
     let configuredWebsiteBaseURL: String
     let onOpenURL: (String) -> Void
 
@@ -252,15 +280,12 @@ struct MailSafeHTMLBodyView: NSViewRepresentable {
         MailMessageSafety.frameHTML(html, approvedRemoteURLs: approvedRemoteURLs)
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(configuredWebsiteBaseURL: configuredWebsiteBaseURL, onOpenURL: onOpenURL)
-    }
-
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.setURLSchemeHandler(context.coordinator.inlineImageHandler, forURLScheme: MailMessageSafety.inlineImageScheme)
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
@@ -271,15 +296,18 @@ struct MailSafeHTMLBodyView: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.configuredWebsiteBaseURL = configuredWebsiteBaseURL
         context.coordinator.onOpenURL = onOpenURL
+        context.coordinator.inlineImageHandler.update(inlineImageContents)
         context.coordinator.load(securedHTML, in: view)
     }
 
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
         private var loadedHTML: String?
+        let inlineImageHandler: MailInlineImageSchemeHandler
         var configuredWebsiteBaseURL: String
         var onOpenURL: (String) -> Void
 
-        init(configuredWebsiteBaseURL: String, onOpenURL: @escaping (String) -> Void) {
+        init(inlineImageContents: [String: MailInlineImageContent], configuredWebsiteBaseURL: String, onOpenURL: @escaping (String) -> Void) {
+            inlineImageHandler = MailInlineImageSchemeHandler(inlineImageContents)
             self.configuredWebsiteBaseURL = configuredWebsiteBaseURL
             self.onOpenURL = onOpenURL
         }
@@ -304,4 +332,47 @@ struct MailSafeHTMLBodyView: NSViewRepresentable {
             decisionHandler(.allow)
         }
     }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(inlineImageContents: inlineImageContents, configuredWebsiteBaseURL: configuredWebsiteBaseURL, onOpenURL: onOpenURL)
+    }
+}
+
+final class MailInlineImageSchemeHandler: NSObject, WKURLSchemeHandler {
+    private let lock = NSLock()
+    private var inlineImageContents: [String: MailInlineImageContent]
+
+    init(_ inlineImageContents: [String: MailInlineImageContent]) {
+        self.inlineImageContents = inlineImageContents
+    }
+
+    func update(_ contents: [String: MailInlineImageContent]) {
+        lock.lock()
+        inlineImageContents = contents
+        lock.unlock()
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url,
+              url.scheme == MailMessageSafety.inlineImageScheme,
+              url.host == "inline", url.query == nil, url.fragment == nil,
+              url.pathComponents.count == 2,
+              let token = url.pathComponents.last else {
+            urlSchemeTask.didFailWithError(URLError(.badURL))
+            return
+        }
+        lock.lock()
+        let image = inlineImageContents[token]
+        lock.unlock()
+        guard let image else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let response = URLResponse(url: url, mimeType: image.mimeType, expectedContentLength: image.data.count, textEncodingName: nil)
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(image.data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }

@@ -15,6 +15,67 @@ final class MailMessageSafetyTests: XCTestCase {
         XCTAssertThrowsError(try MailMessageSafety.makeRequestURL(baseURL: URL(string: "https://api.example.test")!, mailboxUser: " ", messageID: "id"))
     }
 
+    func testAttachmentURLEncodesEverySegmentAndRequiresSecureTransport() throws {
+        let url = try MailMessageSafety.makeAttachmentURL(
+            baseURL: URL(string: "https://api.example.test/api/")!,
+            mailboxUser: "person/name@example.test",
+            blobID: "blob?one",
+            name: "logo #1.png"
+        )
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+                       "/api/mail/blob/person%2Fname%40example.test/blob%3Fone/logo%20%231.png")
+        XCTAssertThrowsError(try MailMessageSafety.makeAttachmentURL(
+            baseURL: URL(string: "http://api.example.test")!, mailboxUser: "person", blobID: "blob", name: "logo.png"
+        ))
+    }
+
+    func testInlineAttachmentsRequireCIDKnownClearReputationAndRasterType() {
+        let clear = reputation(status: "known", flagged: 0)
+        let attachments = [
+            attachment(blobID: "clear", cid: "clear", type: "image/png", size: 10),
+            attachment(blobID: "flagged", cid: "flagged", type: "image/png", size: 10),
+            attachment(blobID: "unknown", cid: "unknown", type: "image/png", size: 10),
+            attachment(blobID: "svg", cid: "svg", type: "image/svg+xml", size: 10),
+            attachment(blobID: "no-cid", cid: nil, type: "image/jpeg", size: 10),
+        ]
+        let verdicts = [
+            attachmentReputation(blobID: "clear", reputation: clear),
+            attachmentReputation(blobID: "flagged", reputation: reputation(status: "known", flagged: 2)),
+            attachmentReputation(blobID: "unknown", reputation: reputation(status: "unknown", flagged: nil)),
+            attachmentReputation(blobID: "svg", reputation: clear),
+        ]
+
+        XCTAssertEqual(MailMessageSafety.eligibleInlineAttachments(attachments, reputations: verdicts).map(\.blobId), ["clear"])
+        XCTAssertNil(MailMessageSafety.inlineImageURL(token: "../other"))
+        XCTAssertEqual(MailMessageSafety.inlineImageURL(token: "0"), "hanasand-mail-image://inline/0")
+    }
+
+    func testInlineImageRequiresMatchingRasterMIMEAndSignature() {
+        let samples: [(String, [UInt8])] = [
+            ("image/png", [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+            ("image/jpeg", [0xff, 0xd8, 0xff]),
+            ("image/gif", Array("GIF89a".utf8)),
+            ("image/webp", Array("RIFF0000WEBP".utf8)),
+        ]
+        for (mimeType, bytes) in samples {
+            XCTAssertEqual(MailMessageSafety.validatedInlineImage(
+                data: Data(bytes), declaredType: mimeType, responseType: "\(mimeType); charset=binary"
+            )?.mimeType, mimeType)
+        }
+        XCTAssertNil(MailMessageSafety.validatedInlineImage(data: Data("<svg/>".utf8), declaredType: "image/svg+xml", responseType: "image/svg+xml"))
+        XCTAssertNil(MailMessageSafety.validatedInlineImage(data: Data([0x89, 0x50, 0x4e, 0x47]), declaredType: "image/png", responseType: "image/png"))
+        XCTAssertNil(MailMessageSafety.validatedInlineImage(data: Data([0xff, 0xd8, 0xff]), declaredType: "image/png", responseType: "image/jpeg"))
+    }
+
+    func testCIDRenderingUsesOnlyOpaqueLocalImageURLs() {
+        let html = #"<img src="cid:logo"><img src='cid:<logo>'><img src="cid:blocked">"#
+        let rendered = MailMessageSafety.replacingInlineContentIDs(in: html, tokensByCID: ["logo": "0"])
+
+        XCTAssertEqual(rendered.components(separatedBy: "hanasand-mail-image://inline/0").count - 1, 2)
+        XCTAssertFalse(rendered.contains("cid:"))
+        XCTAssertFalse(rendered.contains("/mail/blob/"))
+    }
+
     func testValidatedReputationIsMessageScopedAndOnlyMatchesActualImageSources() throws {
         let html = #"<IMG src='https://images.example.test/safe.png#fragment'><img src="https://images.example.test/other.png"><img src="https://user:secret@images.example.test/private.png"><img src="cid:logo">"#
         let safeURL = "https://images.example.test/safe.png"
@@ -53,7 +114,7 @@ final class MailMessageSafetyTests: XCTestCase {
 
     func testRemoteImageCSPBlocksByDefaultAndAddsOnlyCanonicalApprovedImagePath() {
         let blocked = MailMessageSafety.contentSecurityPolicy(approvedRemoteURLs: [])
-        XCTAssertTrue(blocked.contains("default-src 'none'; img-src data: blob:"))
+        XCTAssertTrue(blocked.contains("default-src 'none'; img-src data: blob: hanasand-mail-image:"))
         XCTAssertFalse(blocked.contains("images.example.test"))
 
         let allowed = MailMessageSafety.contentSecurityPolicy(approvedRemoteURLs: [
@@ -73,7 +134,7 @@ final class MailMessageSafetyTests: XCTestCase {
         let policyIndex = try XCTUnwrap(secured.range(of: "Content-Security-Policy")).lowerBound
         let bodyIndex = try XCTUnwrap(secured.range(of: "<body>")).lowerBound
         XCTAssertLessThan(policyIndex, bodyIndex)
-        XCTAssertTrue(secured.contains("img-src data: blob:"))
+        XCTAssertTrue(secured.contains("img-src data: blob: hanasand-mail-image:"))
     }
 
     func testMailLayoutPreservesThreePaneOnlyWhenWideEnough() {
@@ -89,5 +150,17 @@ final class MailMessageSafetyTests: XCTestCase {
             url: url,
             reputation: MailResourceReputation(provider: "virustotal", status: "known", flagged: flagged, total: 60, checkedAt: nil, reportUrl: nil)
         )
+    }
+
+    private func attachment(blobID: String, cid: String?, type: String, size: Int) -> MailOverviewEnvelope.Attachment {
+        MailOverviewEnvelope.Attachment(blobId: blobID, name: "\(blobID).png", type: type, size: size, disposition: "inline", cid: cid, isInline: true)
+    }
+
+    private func reputation(status: String, flagged: Int?) -> MailResourceReputation {
+        MailResourceReputation(provider: "virustotal", status: status, flagged: flagged, total: nil, checkedAt: nil, reportUrl: nil)
+    }
+
+    private func attachmentReputation(blobID: String, reputation: MailResourceReputation) -> MailAttachmentReputation {
+        MailAttachmentReputation(blobId: blobID, name: "\(blobID).png", size: 10, reputation: reputation)
     }
 }

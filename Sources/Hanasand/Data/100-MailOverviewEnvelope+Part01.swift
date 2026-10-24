@@ -136,21 +136,12 @@ extension MailOverviewEnvelope {
             !(htmlBody?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         }
 
-        func renderedHTML(mailboxUser: String?, apiBaseURL: URL) -> String {
+        func renderedHTML(inlineImageTokensByCID: [String: String]) -> String {
             var html = htmlBody?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if html.isEmpty {
                 html = "<pre>\(bodyText.htmlEscaped)</pre>"
             }
-            if let mailboxUser {
-                for attachment in attachments ?? [] {
-                    guard let cid = attachment.cid, !cid.isEmpty else { continue }
-                    let url = apiBaseURL
-                        .appendingAPIPath("mail/blob/\(mailboxUser)/\(attachment.blobId)/\(attachment.name)")
-                        .absoluteString
-                    html = html.replacingOccurrences(of: "cid:\(cid)", with: url)
-                    html = html.replacingOccurrences(of: "cid:<\(cid)>", with: url)
-                }
-            }
+            html = MailMessageSafety.replacingInlineContentIDs(in: html, tokensByCID: inlineImageTokensByCID)
             return """
             <!doctype html>
             <html>
