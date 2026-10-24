@@ -42,6 +42,16 @@ final class VirtualMachinesNativePanelTests: XCTestCase {
         XCTAssertNil(nativeVMMemoryGiB("unavailable"))
     }
 
+    func testVMAccessAndHostOptionControlsRequireCredentialsAndOwnAccount() {
+        XCTAssertTrue(NativeVMAccessPolicy.mayManage(canManage: true, isImpersonating: false, hasCredentials: true))
+        XCTAssertFalse(NativeVMAccessPolicy.mayManage(canManage: false, isImpersonating: false, hasCredentials: true))
+        XCTAssertFalse(NativeVMAccessPolicy.mayManage(canManage: true, isImpersonating: true, hasCredentials: true))
+        XCTAssertFalse(NativeVMAccessPolicy.mayManage(canManage: true, isImpersonating: false, hasCredentials: false))
+        XCTAssertTrue(NativeVMAccessPolicy.mayRevealSudoPassword(isImpersonating: false, hasCredentials: true))
+        XCTAssertFalse(NativeVMAccessPolicy.mayRevealSudoPassword(isImpersonating: true, hasCredentials: true))
+        XCTAssertFalse(NativeVMAccessPolicy.mayRevealSudoPassword(isImpersonating: false, hasCredentials: false))
+    }
+
     func testCPUHistoryIsOldestToNewestAndSplitsUnavailableSamples() {
         let newestFirst = [
             Self.metric(id: "new", cpu: "50"),

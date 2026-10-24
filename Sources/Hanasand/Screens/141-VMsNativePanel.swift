@@ -227,7 +227,8 @@ struct VMsNativePanel: View {
 
     @ViewBuilder
     private func vmDetails(_ vm: NativeVMInventoryItem) -> some View {
-        NativeGroupPanel(title: "\(vm.name) details", subtitle: "Host inventory, metrics, and public services") {
+        VStack(alignment: .leading, spacing: 14) {
+          NativeGroupPanel(title: "\(vm.name) details", subtitle: "Host inventory, metrics, and public services") {
             HStack(spacing: 8) {
                 ActionButton(title: "Refresh details", icon: "arrow.clockwise") { detailReloadToken += 1 }
                 ActionButton(title: "Close details", icon: "xmark") { selectedVMName = nil }
@@ -330,6 +331,11 @@ struct VMsNativePanel: View {
                     if let createdAt = service.createdAt { detailRow("Created", value: createdAt) }
                 }
             }
+          }
+          NativeVMAccessPanel(vm: vm, canManage: selectedManagement?.canManage == true) {
+              inventoryRefreshToken += 1
+              detailReloadToken += 1
+          }
         }
     }
 

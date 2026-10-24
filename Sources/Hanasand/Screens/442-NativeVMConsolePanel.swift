@@ -40,6 +40,7 @@ struct NativeVMConsolePanel: View {
                 HStack(spacing: 8) {
                     Text(session.status).font(.system(size: 12, weight: .medium)).foregroundStyle(session.isConnected ? theme.green : theme.textSecondary)
                     Spacer()
+                    NativeVMSudoPasswordButton(vmName: vmName)
                     ActionButton(title: session.isConnected ? "Connected" : session.isPreparing ? "Preparing…" : "Reconnect", icon: session.isConnected ? "checkmark.circle" : "terminal") { reviewConsole = true }.disabled(session.isConnected || session.isPreparing)
                     ActionButton(title: "Back to VMs", icon: "chevron.left") { model.openNativeDashboard(path: "/vms", label: "VMs") }
                 }
