@@ -96,6 +96,10 @@ struct SandboxLiveWorkspaceNativePanel: View {
         .onChange(of: model.authTokenForRequests) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.settings.impersonationToken) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.settings.impersonatingUserID) { _, _ in stopIfCredentialsChanged() }
+        .onDisappear {
+            guard session.isActive else { return }
+            Task { await session.stop() }
+        }
     }
 
     private func startSession() {

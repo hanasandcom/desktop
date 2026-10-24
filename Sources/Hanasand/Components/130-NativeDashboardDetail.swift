@@ -175,7 +175,10 @@ struct NativeDashboardDetail: View {
         case "/public-profile":
             NativePublicProfilePanel(userID: model.selectedNativeDashboardDetailID)
         case "/sandbox":
-            SandboxHistoryNativePanel(initialRunID: model.selectedNativeDashboardDetailID)
+            VStack(alignment: .leading, spacing: 14) {
+                SandboxLiveWorkspaceNativePanel()
+                SandboxHistoryNativePanel(initialRunID: model.selectedNativeDashboardDetailID)
+            }
         case "/sandbox/result":
             SandboxStoredReportNativePanel(resultID: model.selectedNativeDashboardDetailID, reportToken: model.selectedNativeDashboardQuery["token"], selectedRunID: model.selectedNativeDashboardQuery["run"])
         case "/sandbox/report":
