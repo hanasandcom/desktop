@@ -233,3 +233,15 @@ struct NativeBackupActionResult: Decodable {
     let message: String
     let operation: NativeBackupOperation
 }
+
+func backupOperation(withID id: String, in dashboard: NativeBackupDashboard) -> NativeBackupOperation? {
+    for service in dashboard.backups {
+        if service.currentOperation?.id == id { return service.currentOperation }
+        if let operation = service.operations.first(where: { $0.id == id }) { return operation }
+    }
+    return nil
+}
+
+func shouldRefreshBackupOperation(currentOperation: NativeBackupOperation?, trackedOperation: NativeBackupOperation?) -> Bool {
+    currentOperation != nil || trackedOperation?.status.lowercased() == "running"
+}

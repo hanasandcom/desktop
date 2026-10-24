@@ -3,6 +3,22 @@ import XCTest
 @testable import Hanasand
 
 final class NativeDatabaseClientTests: XCTestCase {
+    func testBackupOperationLookupFollowsCurrentAndHistoricalOperationIDs() throws {
+        let activeOperation = #"{"id":"op2","kind":"restore_drill","status":"running","stage":"restoring","startedAt":"2026-10-24T10:00:00Z"}"#
+        let json = Self.backupDashboardJSON.replacingOccurrences(
+            of: #""currentOperation":null"#,
+            with: "\"currentOperation\":\(activeOperation)"
+        )
+        let dashboard = try JSONDecoder().decode(NativeBackupDashboard.self, from: Data(json.utf8))
+
+        XCTAssertEqual(backupOperation(withID: "op2", in: dashboard)?.stage, "restoring")
+        XCTAssertEqual(backupOperation(withID: "op1", in: dashboard)?.stage, "completed")
+        XCTAssertNil(backupOperation(withID: "missing", in: dashboard))
+        XCTAssertTrue(shouldRefreshBackupOperation(currentOperation: backupOperation(withID: "op2", in: dashboard), trackedOperation: nil))
+        XCTAssertTrue(shouldRefreshBackupOperation(currentOperation: nil, trackedOperation: backupOperation(withID: "op2", in: dashboard)))
+        XCTAssertFalse(shouldRefreshBackupOperation(currentOperation: nil, trackedOperation: backupOperation(withID: "op1", in: dashboard)))
+    }
+
     func testAccessCheckUsesIdentityOriginAndAuthenticatedRequest() async throws {
         var settings = HanasandDesktopSettings()
         settings.userID = "user_1"

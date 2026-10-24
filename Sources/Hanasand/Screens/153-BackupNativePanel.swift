@@ -13,6 +13,7 @@ struct BackupNativePanel: View {
     @State private var isLoading = false
     @State private var isOperating = false
     @State private var reviewRequired = false
+    @State private var operationResult: NativeBackupOperation?
     @State private var errorMessage = ""
     @State private var operationMessage = ""
 
@@ -26,6 +27,15 @@ struct BackupNativePanel: View {
         "\(model.settings.apiBaseURL)|\(model.settings.internalAPIBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.settings.selectedOrganizationID)"
     }
     private var hasCurrentOperation: Bool { dashboard?.backups.contains(where: { $0.currentOperation != nil }) == true }
+    private var currentOperation: NativeBackupOperation? { dashboard?.backups.compactMap(\.currentOperation).first }
+    private var trackedOperation: NativeBackupOperation? {
+        guard let operationResult else { return nil }
+        return dashboard.flatMap { backupOperation(withID: operationResult.id, in: $0) } ?? operationResult
+    }
+    private var operationRefreshKey: String { currentOperation?.id ?? operationResult?.id ?? "idle" }
+    private var shouldRefreshOperation: Bool {
+        shouldRefreshBackupOperation(currentOperation: currentOperation, trackedOperation: trackedOperation)
+    }
     private var writesEnabled: Bool { access?.allowed == true && access?.canEdit == true && !hasCurrentOperation && !isLoading && !isOperating && !reviewRequired && dashboard?.errors.isEmpty == true }
 
     var body: some View {
@@ -57,7 +67,14 @@ struct BackupNativePanel: View {
                 operationHistory(dashboard)
             }
         }
-        .task(id: credentialScope) { await refresh() }
+        .task(id: credentialScope) {
+            client = nil
+            dashboard = nil
+            access = nil
+            operationResult = nil
+            await refresh()
+        }
+        .task(id: operationRefreshKey) { await refreshWhileOperationRuns() }
     }
 
     private var accessCanEdit: Bool { access?.allowed == true && access?.canEdit == true }
@@ -193,8 +210,10 @@ struct BackupNativePanel: View {
             let result = try await (action == .verify
                 ? client.verifyBackup(file, access: access, dashboard: dashboard)
                 : client.deleteBackup(file, access: access, dashboard: dashboard))
-            operationMessage = "\(result.message) Status: \(result.operation.status). Refresh to review the updated archive list and history."
+            operationMessage = "\(result.message) Status: \(result.operation.status)."
+            operationResult = result.operation
             reviewRequired = true
+            await refresh(isBackground: true)
         } catch { errorMessage = error.localizedDescription; if (error as? NativeDatabaseClientError)?.requiresSQLReviewBeforeRetry == true { reviewRequired = true } }
     }
 
@@ -206,17 +225,32 @@ struct BackupNativePanel: View {
         defer { isOperating = false }
         do {
             let result = try await client.runBackup(access: access, dashboard: dashboard)
-            operationMessage = "\(result.message) Status: \(result.operation.status). Refresh to review the updated archive list and history."
+            operationMessage = "\(result.message) Status: \(result.operation.status)."
+            operationResult = result.operation
             reviewRequired = true
+            await refresh(isBackground: true)
         } catch { errorMessage = error.localizedDescription; if (error as? NativeDatabaseClientError)?.requiresSQLReviewBeforeRetry == true { reviewRequired = true } }
     }
 
-    private func refresh() async {
-        isLoading = true
-        errorMessage = ""
-        reviewRequired = false
-        operationMessage = ""
-        defer { isLoading = false }
+    private func refreshWhileOperationRuns() async {
+        guard shouldRefreshOperation else { return }
+        while !Task.isCancelled, shouldRefreshOperation {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await refresh(isBackground: true)
+        }
+    }
+
+    private func refresh(isBackground: Bool = false) async {
+        if !isBackground {
+            isLoading = true
+            errorMessage = ""
+            reviewRequired = false
+            operationMessage = ""
+        } else {
+            errorMessage = ""
+        }
+        defer { if !isBackground { isLoading = false } }
         do {
             let value = try NativeDatabaseClient(settings: model.settings)
             let permissions = try await value.loadAccess()
@@ -226,11 +260,18 @@ struct BackupNativePanel: View {
             access = permissions
             dashboard = data
             selectedFileID = data.files.first(where: { $0.id == selectedFileID })?.id ?? data.files.first?.id ?? ""
+            if let operationResult,
+               let refreshed = backupOperation(withID: operationResult.id, in: data) {
+                self.operationResult = refreshed
+                if refreshed.status.lowercased() != "running" { reviewRequired = false }
+            }
         } catch {
-            client = nil
-            dashboard = nil
-            access = nil
             errorMessage = error.localizedDescription
+            if !isBackground {
+                client = nil
+                dashboard = nil
+                access = nil
+            }
         }
     }
 }

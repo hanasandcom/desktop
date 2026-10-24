@@ -19,9 +19,17 @@ struct RestoreNativePanel: View {
     private var selectedFile: NativeBackupFile? { dashboard?.files.first(where: { $0.id == selectedFileID }) }
     private var activeDrill: NativeBackupOperation? { dashboard?.backups.compactMap(\.currentOperation).first(where: { $0.kind == "restore_drill" }) }
     private var activeOperation: NativeBackupOperation? { dashboard?.backups.compactMap(\.currentOperation).first }
+    private var trackedRestoreOperation: NativeBackupOperation? {
+        guard let operationResult else { return nil }
+        return dashboard.flatMap { backupOperation(withID: operationResult.id, in: $0) } ?? operationResult
+    }
     private var restoreOperation: NativeBackupOperation? {
         let expectedKind = isLiveRestore ? "restore_live" : "restore_drill"
-        return dashboard?.backups.compactMap(\.currentOperation).first(where: { $0.kind == expectedKind }) ?? operationResult
+        if let trackedRestoreOperation, trackedRestoreOperation.kind == expectedKind { return trackedRestoreOperation }
+        return dashboard?.backups.compactMap(\.currentOperation).first(where: { $0.kind == expectedKind })
+    }
+    private var shouldRefreshOperation: Bool {
+        shouldRefreshBackupOperation(currentOperation: activeOperation, trackedOperation: trackedRestoreOperation)
     }
     private var isLiveRestore: Bool { model.selectedNativeDashboardQuery["mode"] == "live" }
     private var liveDatabase: String { dashboard?.backups.first?.database ?? "" }
@@ -71,7 +79,14 @@ struct RestoreNativePanel: View {
                 drillHistoryPanel
             }
         }
-        .task(id: credentialScope) { await refresh() }
+        .task(id: credentialScope) {
+            client = nil
+            dashboard = nil
+            access = nil
+            operationResult = nil
+            await refresh()
+        }
+        .task(id: activeOperation?.id ?? operationResult?.id) { await refreshWhileOperationRuns() }
     }
 
     @ViewBuilder
@@ -157,23 +172,36 @@ struct RestoreNativePanel: View {
             let result = try await (isLiveRestore
                 ? client.runLiveRestore(file, confirmation: confirmation, access: access, dashboard: dashboard)
                 : client.runRestoreDrill(file, targetDatabase: targetDatabase, confirmation: confirmation, access: access, dashboard: dashboard))
-            operationMessage = "\(result.message) Status: \(result.operation.status). Refresh to review the audit history."
+            operationMessage = "\(result.message) Status: \(result.operation.status)."
             operationResult = result.operation
             reviewRequired = true
             confirmation = ""
+            await refresh(isBackground: true)
         } catch {
             errorMessage = error.localizedDescription
             if (error as? NativeDatabaseClientError)?.requiresSQLReviewBeforeRetry == true { reviewRequired = true }
         }
     }
 
-    private func refresh() async {
-        isLoading = true
-        errorMessage = ""
-        operationMessage = ""
-        reviewRequired = false
-        operationResult = nil
-        defer { isLoading = false }
+    private func refreshWhileOperationRuns() async {
+        guard shouldRefreshOperation else { return }
+        while !Task.isCancelled, shouldRefreshOperation {
+            try? await Task.sleep(for: .milliseconds(1_500))
+            guard !Task.isCancelled else { return }
+            await refresh(isBackground: true)
+        }
+    }
+
+    private func refresh(isBackground: Bool = false) async {
+        if !isBackground {
+            isLoading = true
+            errorMessage = ""
+            operationMessage = ""
+            reviewRequired = false
+        } else {
+            errorMessage = ""
+        }
+        defer { if !isBackground { isLoading = false } }
         do {
             let value = try NativeDatabaseClient(settings: model.settings)
             let permissions = try await value.loadAccess()
@@ -186,11 +214,18 @@ struct RestoreNativePanel: View {
             selectedFileID = data.files.first(where: { $0.file == requestedFile })?.id
                 ?? data.files.first(where: { $0.id == selectedFileID })?.id
                 ?? data.files.first?.id ?? ""
+            if let operationResult,
+               let refreshed = backupOperation(withID: operationResult.id, in: data) {
+                self.operationResult = refreshed
+                if refreshed.status.lowercased() != "running" { reviewRequired = false }
+            }
         } catch {
-            client = nil
-            dashboard = nil
-            access = nil
             errorMessage = error.localizedDescription
+            if !isBackground {
+                client = nil
+                dashboard = nil
+                access = nil
+            }
         }
     }
 
