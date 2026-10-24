@@ -52,15 +52,97 @@ final class NativeVMWorkspaceClientTests: XCTestCase {
             token: "token-value",
             send: { request in
                 XCTAssertEqual(request.url?.path, "/api/vm/vm-17/public-services")
-                let data = Data(#"{"canManage":true,"services":[{"name":"site","type":"http","port":8080,"hostname":"site.example.test"}]}"#.utf8)
+                let data = Data(#"{"canManage":true,"services":[{"id":"route-1","name":"site","type":"http","port":8080,"hostname":"site.example.test","createdAt":"2026-10-24T10:00:00Z"}]}"#.utf8)
                 return (data, try Self.response(for: request, status: 200))
             }
         )
 
         let access = try await client.loadManagement(for: "vm-17")
         XCTAssertTrue(access.canManage)
-        XCTAssertEqual(access.services.first?.0, "site")
-        XCTAssertEqual(access.services.first?.1, "http · port 8080 · site.example.test")
+        XCTAssertEqual(access.services.first?.id, "route-1")
+        XCTAssertEqual(access.services.first?.name, "site")
+        XCTAssertEqual(access.services.first?.port, 8080)
+        XCTAssertEqual(access.services.first?.hostname, "site.example.test")
+        XCTAssertEqual(access.services.first?.createdAt, "2026-10-24T10:00:00Z")
+    }
+
+    func testInventoryMergesOwnedAndAccessibleRowsAndCarriesWorkspaceHeader() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            organizationID: "org-2",
+            send: { request in
+                XCTAssertEqual(request.value(forHTTPHeaderField: "x-organization-id"), "org-2")
+                switch request.url?.path {
+                case "/api/vms/user-1":
+                    return (Data(#"[{"name":"vm-17","owner":"user-1","organization_id":"org-2","status":"running","limits_cpu":"4","limits_memory":"8GiB","access_users":["editor-1"]}]"#.utf8), try Self.response(for: request, status: 200))
+                case "/api/vms/access/user-1":
+                    return (Data(#"[{"name":"vm-17","owner":"user-1","organization_id":"org-2","status":"running"},{"name":"vm-18","owner":"other","organization_id":"org-2","deleted_at":"2026-10-20T10:00:00Z"}]"#.utf8), try Self.response(for: request, status: 200))
+                default: XCTFail("Unexpected VM inventory URL: \(String(describing: request.url))"); throw NativeVMWorkspaceClientError.invalidResponse
+                }
+            }
+        )
+
+        let snapshot = try await client.loadInventory()
+        XCTAssertTrue(snapshot.isComplete)
+        XCTAssertEqual(snapshot.items.map(\.name), ["vm-17", "vm-18"])
+        XCTAssertEqual(snapshot.items.first?.accessUsers, ["editor-1"])
+        XCTAssertEqual(snapshot.items.last?.isScheduledForDeletion, true)
+    }
+
+    func testInventoryReturnsPartialRowsWhenOneSourceFails() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            send: { request in
+                if request.url?.path == "/api/vms/user-1" {
+                    return (Data(#"[{"name":"vm-17","owner":"user-1"}]"#.utf8), try Self.response(for: request, status: 200))
+                }
+                return (Data(#"{"error":"unavailable"}"#.utf8), try Self.response(for: request, status: 503))
+            }
+        )
+
+        let snapshot = try await client.loadInventory()
+        XCTAssertFalse(snapshot.isComplete)
+        XCTAssertEqual(snapshot.items.map(\.name), ["vm-17"])
+        XCTAssertEqual(snapshot.warnings.count, 1)
+    }
+
+    func testHistoricalMetricsRetainFullFieldsAndSortNewestFirst() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            send: { request in
+                let data = Data(#"[{"id":1,"name":"vm-17","created_at":"2026-10-24T09:00:00Z","cpu_usage_percent":12.5,"gpu_memory_used_mb":256,"disk_read_iops":20,"powered_on_at":"2026-10-23T09:00:00Z"},{"id":2,"name":"vm-17","created_at":"2026-10-24T10:00:00Z","cpu_usage_percent":25}]"#.utf8)
+                return (data, try Self.response(for: request, status: 200))
+            }
+        )
+
+        let metrics = try await client.loadMetrics(for: "vm-17")
+        XCTAssertEqual(metrics.count, 2)
+        XCTAssertEqual(metrics.first?.id, "2")
+        XCTAssertEqual(metrics.first?.values.first(where: { $0.0 == "CPU usage (%)" })?.1, "25")
+        XCTAssertTrue(metrics.last?.values.contains(where: { $0.0 == "GPU memory used (MB)" && $0.1 == "256" }) == true)
+        XCTAssertEqual(metrics.last?.poweredOnAt, "2026-10-23T09:00:00Z")
+    }
+
+    func testDetailsIncludeHardwareAndNetworkFields() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            send: { request in
+                let data = Data(#"{"name":"vm-17","device_eth0_ipv4_address":"192.0.2.8","device_eth0_name":"eth0","device_eth0_network":"lan0","volatile_eth0_hwaddr":"00:11:22:33:44:55","volatile_last_state_power":"RUNNING","ephemeral":false}"#.utf8)
+                return (data, try Self.response(for: request, status: 200))
+            }
+        )
+        let details = try await client.loadDetails(for: "vm-17")
+        XCTAssertTrue(details?.fields.contains(where: { $0.0 == "Network interface" && $0.1 == "eth0" }) == true)
+        XCTAssertTrue(details?.fields.contains(where: { $0.0 == "Network MAC" && $0.1 == "00:11:22:33:44:55" }) == true)
+        XCTAssertTrue(details?.fields.contains(where: { $0.0 == "Ephemeral" && $0.1 == "0" || $0.0 == "Ephemeral" && $0.1 == "false" }) == true)
     }
 
     func testVMNameAndEndpointValidation() throws {

@@ -55,6 +55,46 @@ struct NativeVMWorkspaceClient {
         self.send = send
     }
 
+    func loadInventory() async throws -> NativeVMInventorySnapshot {
+        let account = try validatedIdentifier(userID)
+        var merged: [String: NativeVMInventoryItem] = [:]
+        var warnings: [String] = []
+        var failures: [Error] = []
+        var successfulReads = 0
+
+        for path in ["vms/\(account)", "vms/access/\(account)"] {
+            do {
+                let value = try await get(path)
+                guard let rows = value as? [[String: Any]], rows.count <= 10_000 else {
+                    throw NativeVMWorkspaceClientError.invalidResponse
+                }
+                var identities = Set<String>()
+                let items = try rows.map(parseInventoryItem)
+                for item in items {
+                    let identity = item.name.lowercased()
+                    guard identities.insert(identity).inserted else { throw NativeVMWorkspaceClientError.invalidResponse }
+                    if let organizationID, !organizationID.isEmpty,
+                       item.organizationID != organizationID {
+                        throw NativeVMWorkspaceClientError.invalidResponse
+                    }
+                    if let existing = merged[identity] {
+                        merged[identity] = mergeInventoryItems(existing, item)
+                    } else {
+                        merged[identity] = item
+                    }
+                }
+                successfulReads += 1
+            } catch {
+                failures.append(error)
+                warnings.append(error.localizedDescription)
+            }
+        }
+
+        guard successfulReads > 0 else { throw failures.first ?? NativeVMWorkspaceClientError.invalidResponse }
+        let items = merged.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return NativeVMInventorySnapshot(items: items, isComplete: successfulReads == 2, warnings: warnings)
+    }
+
     func loadDetails(for rawName: String) async throws -> NativeVMWorkspaceDetails? {
         let name = try validatedName(rawName)
         let value = try await get("vm/details/\(name)")
@@ -66,16 +106,25 @@ struct NativeVMWorkspaceClient {
             ("status", "Status"), ("status_reason", "Status reason"), ("type", "Type"),
             ("architecture", "Architecture"), ("created", "Created"), ("last_used", "Last used"),
             ("last_checked", "Last checked"), ("config_architecture", "Image architecture"),
+            ("config_image_architecture", "Configured image architecture"),
             ("config_image_description", "Image"), ("config_image_label", "Image label"),
             ("config_image_os", "Operating system"), ("config_image_release", "OS release"),
+            ("config_image_serial", "Image serial"), ("config_image_type", "Image type"),
             ("config_image_version", "Image version"), ("limits_cpu", "CPU limit"),
-            ("limits_memory", "Memory limit"), ("device_eth0_ipv4_address", "IPv4"),
-            ("device_eth0_network", "Network"), ("primary_host", "Primary host"),
-            ("description", "Description"), ("volatile_uuid", "Instance UUID")
+            ("limits_memory", "Memory limit"), ("volatile_base_image", "Base image"),
+            ("volatile_cloud_init_instance_id", "Cloud-init instance"), ("volatile_eth0_hwaddr", "Network MAC"),
+            ("volatile_last_state_power", "Previous power state"), ("volatile_uuid", "Instance UUID"),
+            ("volatile_uuid_generation", "UUID generation"), ("volatile_vsock_id", "VSock ID"),
+            ("device_eth0_ipv4_address", "IPv4"), ("device_eth0_name", "Network interface"),
+            ("device_eth0_network", "Network"), ("device_eth0_type", "Network type"),
+            ("description", "Description"), ("primary_host", "Primary host"),
+            ("ephemeral", "Ephemeral"), ("stateful", "Stateful")
         ]
         let fields = fieldNames.compactMap { key, label -> (String, String)? in
-            guard let text = object[key] as? String,
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            guard let raw = object[key], !(raw is NSNull) else { return nil }
+            let text = String(describing: raw)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  text.count <= 1_000 else { return nil }
             return (label, String(text.prefix(1_000)))
         }
         let profiles = (object["profiles"] as? [String] ?? []).prefix(100).map { String($0.prefix(200)) }
@@ -92,9 +141,14 @@ struct NativeVMWorkspaceClient {
             ("cpu_usage_percent", "CPU usage (%)"), ("cpu_cores", "CPU cores"),
             ("cpu_temperature", "CPU temperature"), ("ram_used_mb", "Memory used (MB)"),
             ("ram_total_mb", "Memory total (MB)"), ("gpu_usage_percent", "GPU usage (%)"),
+            ("gpu_memory_used_mb", "GPU memory used (MB)"), ("gpu_memory_total_mb", "GPU memory total (MB)"),
+            ("gpu_temperature", "GPU temperature"), ("system_temperature", "System temperature"),
             ("disk_used_mb", "Disk used (MB)"), ("disk_total_mb", "Disk total (MB)"),
+            ("disk_read_iops", "Disk reads (IOPS)"), ("disk_write_iops", "Disk writes (IOPS)"),
             ("net_in_kbps", "Network in (KB/s)"), ("net_out_kbps", "Network out (KB/s)"),
-            ("uptime_seconds", "Uptime (s)"), ("load_average_1", "Load average (1m)")
+            ("power_consumption_watts", "Power (W)"), ("uptime_seconds", "Uptime (s)"),
+            ("uptime_total_seconds", "Total uptime (s)"), ("load_average_1", "Load average (1m)"),
+            ("load_average_5", "Load average (5m)"), ("load_average_15", "Load average (15m)")
         ]
         return try rows.enumerated().map { index, row in
             guard (row["name"] as? String)?.caseInsensitiveCompare(name) == .orderedSame else {
@@ -102,7 +156,12 @@ struct NativeVMWorkspaceClient {
             }
             let values = keys.compactMap { key, label -> (String, String)? in
                 guard let value = row[key], !(value is NSNull) else { return nil }
-                let text = String(describing: value)
+                let text: String
+                if let number = value as? NSNumber, String(cString: number.objCType) != "c", number.doubleValue.isFinite {
+                    text = number.stringValue
+                } else if let string = value as? String, Double(string)?.isFinite == true {
+                    text = string
+                } else { return nil }
                 guard text.count <= 100 else { return nil }
                 return (label, text)
             }
@@ -110,8 +169,15 @@ struct NativeVMWorkspaceClient {
                 id: String(describing: row["id"] ?? "\(name)-\(index)"),
                 recordedAt: row["created_at"] as? String,
                 powerState: row["power_state"] as? String,
+                poweredOnAt: row["powered_on_at"] as? String,
+                poweredOffAt: row["powered_off_at"] as? String,
                 values: values
             )
+        }
+        .sorted {
+            guard let lhs = $0.recordedAt.flatMap(Date.init(iso8601String:)),
+                  let rhs = $1.recordedAt.flatMap(Date.init(iso8601String:)) else { return false }
+            return lhs > rhs
         }
     }
 
@@ -123,13 +189,128 @@ struct NativeVMWorkspaceClient {
               let rows = object["services"] as? [[String: Any]], rows.count <= 1_000 else {
             throw NativeVMWorkspaceClientError.invalidResponse
         }
-        let services = rows.compactMap { row -> (String, String)? in
-            guard let serviceName = row["name"] as? String,
-                  let type = row["type"] as? String,
-                  let port = row["port"] else { return nil }
-            return (String(serviceName.prefix(100)), "\(type) · port \(String(describing: port)) · \(String(describing: row["hostname"] ?? "Host unavailable"))")
+        let services = try rows.map { row -> NativeVMPublicService in
+            guard let id = row["id"] as? String, !id.isEmpty, id.count <= 200,
+                  let serviceName = row["name"] as? String, !serviceName.isEmpty, serviceName.count <= 100,
+                  let type = row["type"] as? String, ["http", "tls", "minecraft-java"].contains(type),
+                  let portValue = row["port"] as? NSNumber, String(cString: portValue.objCType) != "c",
+                  portValue.intValue > 0, portValue.intValue <= 65_535,
+                  let hostname = row["hostname"] as? String, hostname.count <= 253 else {
+                throw NativeVMWorkspaceClientError.invalidResponse
+            }
+            return NativeVMPublicService(
+                id: id,
+                name: serviceName,
+                type: type,
+                port: portValue.intValue,
+                hostname: hostname,
+                createdAt: row["createdAt"] as? String
+            )
         }
         return NativeVMManagementAccess(canManage: canManage, services: services)
+    }
+
+    private func parseInventoryItem(_ object: [String: Any]) throws -> NativeVMInventoryItem {
+        guard let rawName = object["name"] as? String else { throw NativeVMWorkspaceClientError.invalidResponse }
+        let name = try validatedName(rawName)
+        guard let owner = object["owner"] as? String, owner.count <= 200 else {
+            throw NativeVMWorkspaceClientError.invalidResponse
+        }
+        func optionalText(_ key: String, maximum: Int = 1_000) throws -> String? {
+            guard let value = object[key], !(value is NSNull) else { return nil }
+            guard let text = value as? String, text.count <= maximum else { throw NativeVMWorkspaceClientError.invalidResponse }
+            return text
+        }
+        func optionalFlag(_ key: String) throws -> Bool? {
+            guard let value = object[key], !(value is NSNull) else { return nil }
+            guard let flag = value as? Bool else { throw NativeVMWorkspaceClientError.invalidResponse }
+            return flag
+        }
+        let accessUsers: [String]
+        if let rawUsers = object["access_users"], !(rawUsers is NSNull) {
+            guard let users = rawUsers as? [String], users.count <= 10_000,
+                  users.allSatisfy({ !$0.isEmpty && $0.count <= 200 }) else { throw NativeVMWorkspaceClientError.invalidResponse }
+            accessUsers = users
+        } else { accessUsers = [] }
+        var restoredInstanceMissing: Bool?
+        if let rawRestore = object["deletion_restore"], !(rawRestore is NSNull) {
+            guard let restore = rawRestore as? [String: Any] else { throw NativeVMWorkspaceClientError.invalidResponse }
+            if let rawMissing = restore["instanceMissing"], !(rawMissing is NSNull) {
+                guard let missing = rawMissing as? Bool else { throw NativeVMWorkspaceClientError.invalidResponse }
+                restoredInstanceMissing = missing
+            }
+        }
+        return NativeVMInventoryItem(
+            name: name,
+            owner: owner,
+            createdBy: try optionalText("created_by", maximum: 200),
+            organizationID: try optionalText("organization_id", maximum: 200),
+            organizationName: try optionalText("organization_name"),
+            accessUsers: accessUsers,
+            managed: try optionalFlag("managed"),
+            canAssignOrganization: try optionalFlag("can_assign_organization"),
+            status: try optionalText("status"),
+            statusReason: try optionalText("status_reason"),
+            statusCheckedAt: try optionalText("status_checked_at"),
+            deletedAt: try optionalText("deleted_at"),
+            deleteAfter: try optionalText("delete_after"),
+            deletionError: try optionalText("deletion_error"),
+            restoredInstanceMissing: restoredInstanceMissing,
+            primaryHost: try optionalText("primary_host"),
+            failoverHost: try optionalText("failover_host"),
+            failoverPremium: try optionalFlag("failover_premium"),
+            failoverEnabled: try optionalFlag("failover_enabled"),
+            alwaysRunningPremium: try optionalFlag("always_running_premium"),
+            alwaysRunningEnabled: try optionalFlag("always_running_enabled"),
+            type: try optionalText("type"),
+            architecture: try optionalText("architecture"),
+            created: try optionalText("created"),
+            lastUsed: try optionalText("last_used"),
+            cpuLimit: try optionalText("limits_cpu"),
+            memoryLimit: try optionalText("limits_memory"),
+            imageDescription: try optionalText("config_image_description"),
+            imageOS: try optionalText("config_image_os"),
+            imageVersion: try optionalText("config_image_version"),
+            ipv4: try optionalText("device_eth0_ipv4_address"),
+            lastChecked: try optionalText("last_checked")
+        )
+    }
+
+    private func mergeInventoryItems(_ first: NativeVMInventoryItem, _ second: NativeVMInventoryItem) -> NativeVMInventoryItem {
+        NativeVMInventoryItem(
+            name: first.name,
+            owner: first.owner,
+            createdBy: first.createdBy ?? second.createdBy,
+            organizationID: first.organizationID ?? second.organizationID,
+            organizationName: first.organizationName ?? second.organizationName,
+            accessUsers: Array(Set(first.accessUsers + second.accessUsers)).sorted(),
+            managed: first.managed ?? second.managed,
+            canAssignOrganization: first.canAssignOrganization ?? second.canAssignOrganization,
+            status: first.status ?? second.status,
+            statusReason: first.statusReason ?? second.statusReason,
+            statusCheckedAt: first.statusCheckedAt ?? second.statusCheckedAt,
+            deletedAt: first.deletedAt ?? second.deletedAt,
+            deleteAfter: first.deleteAfter ?? second.deleteAfter,
+            deletionError: first.deletionError ?? second.deletionError,
+            restoredInstanceMissing: first.restoredInstanceMissing ?? second.restoredInstanceMissing,
+            primaryHost: first.primaryHost ?? second.primaryHost,
+            failoverHost: first.failoverHost ?? second.failoverHost,
+            failoverPremium: first.failoverPremium ?? second.failoverPremium,
+            failoverEnabled: first.failoverEnabled ?? second.failoverEnabled,
+            alwaysRunningPremium: first.alwaysRunningPremium ?? second.alwaysRunningPremium,
+            alwaysRunningEnabled: first.alwaysRunningEnabled ?? second.alwaysRunningEnabled,
+            type: first.type ?? second.type,
+            architecture: first.architecture ?? second.architecture,
+            created: first.created ?? second.created,
+            lastUsed: first.lastUsed ?? second.lastUsed,
+            cpuLimit: first.cpuLimit ?? second.cpuLimit,
+            memoryLimit: first.memoryLimit ?? second.memoryLimit,
+            imageDescription: first.imageDescription ?? second.imageDescription,
+            imageOS: first.imageOS ?? second.imageOS,
+            imageVersion: first.imageVersion ?? second.imageVersion,
+            ipv4: first.ipv4 ?? second.ipv4,
+            lastChecked: first.lastChecked ?? second.lastChecked
+        )
     }
 
     private func validatedName(_ rawName: String) throws -> String {
@@ -139,6 +320,13 @@ struct NativeVMWorkspaceClient {
             throw NativeVMWorkspaceClientError.invalidVMName
         }
         return rawName
+    }
+
+    private func validatedIdentifier(_ rawValue: String) throws -> String {
+        guard rawValue.count <= 200,
+              rawValue.range(of: #"^[A-Za-z0-9_.:@-]+$"#, options: .regularExpression) != nil,
+              rawValue != ".", rawValue != ".." else { throw NativeVMWorkspaceClientError.invalidResponse }
+        return rawValue
     }
 
     private func get(_ path: String) async throws -> Any {
@@ -181,5 +369,15 @@ struct NativeVMWorkspaceClient {
         if let object = value as? [String: Any] { return object }
         if let rows = value as? [[String: Any]] { return rows.first }
         return nil
+    }
+}
+
+private extension Date {
+    init?(iso8601String: String) {
+        if let date = ISO8601DateFormatter().date(from: iso8601String) { self = date; return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: iso8601String) else { return nil }
+        self = date
     }
 }
