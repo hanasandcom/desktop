@@ -438,3 +438,9 @@ struct DesktopCronUpdatePayload: Encodable {
     var enabled: Bool?
     var action: String?
 }
+
+enum DesktopCronActionRules {
+    static func runnableJob(in jobs: [DesktopCronJob]) -> DesktopCronJob? {
+        jobs.first { $0.controls.contains("run_now") && !$0.running }
+    }
+}

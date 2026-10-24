@@ -27,11 +27,7 @@ struct SystemCronNativePanel: View {
 
     private var selected: DesktopCronJob? { jobs.first { $0.id == selectedID } }
     private var attentionJobs: [DesktopCronJob] { jobs.filter { $0.failureCount > 0 || ["failed", "blocked"].contains($0.status.lowercased()) } }
-    private var runnableJob: DesktopCronJob? {
-        jobs.first { job in
-            job.controls.contains("run_now") && !attentionJobs.contains(where: { $0.id == job.id }) && !job.running
-        }
-    }
+    private var runnableJob: DesktopCronJob? { DesktopCronActionRules.runnableJob(in: jobs) }
     private var filtered: [DesktopCronJob] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return jobs.filter { job in
