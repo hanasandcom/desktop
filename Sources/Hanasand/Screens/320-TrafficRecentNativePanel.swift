@@ -43,6 +43,11 @@ struct TrafficRecentNativePanel: View {
                 stackedFilterControls
             }
 
+            Label("Search, method, and status filters apply to this loaded page only. Domain filtering is applied by the Traffic API.", systemImage: "info.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Text(status)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(status.hasPrefix("Could not") || status.contains("unavailable") ? theme.danger : theme.textSecondary)
