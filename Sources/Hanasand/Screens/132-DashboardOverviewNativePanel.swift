@@ -15,6 +15,8 @@ struct DashboardOverviewNativePanel: View {
     @Environment(\.desktopTheme) var theme
     @State var searchText = ""
     @State var selectedStatus = "all"
+    @State private var monitoringOverview = DashboardMonitoringOverviewState.loading
+    @State private var monitoringRequestID = UUID()
 
     let columns = [
         GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top),
@@ -25,6 +27,8 @@ struct DashboardOverviewNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            monitoringPanel
+
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 FeatureCard(title: "Overall", value: status?.overall.capitalized ?? "Unknown", icon: statusIcon(status?.overall ?? "unknown"))
                 FeatureCard(title: "Checks", value: "\(status?.checks.count ?? 0)", icon: "checklist")
@@ -70,10 +74,150 @@ struct DashboardOverviewNativePanel: View {
                 }
             }
         }
+        .task(id: monitoringScopeKey) { await loadMonitoringOverview() }
     }
 
     var status: DashboardServiceStatus? {
         model.serviceStatus
+    }
+
+    private var monitoringScopeKey: String {
+        let settings = model.settings
+        return [settings.websiteBaseURL, settings.userID, String(settings.authToken.hashValue),
+                settings.selectedOrganizationID, settings.selectedOrganizationUserID,
+                settings.impersonatingUserID, settings.impersonationToken.isEmpty ? "own-account" : "impersonating"].joined(separator: "|")
+    }
+
+    @ViewBuilder
+    private var monitoringPanel: some View {
+        NativeGroupPanel(
+            title: model.selectedOrganizationID.isEmpty ? "Personal monitoring" : "Organization monitoring",
+            subtitle: "Monitoring snapshot, alerts, source coverage, and readiness"
+        ) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Text("What Hanasand found for the terms you are watching.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(2)
+                    Spacer(minLength: 8)
+                    openMonitoringButton
+                    refreshOverviewButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("What Hanasand found for the terms you are watching.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                    HStack(spacing: 8) {
+                        openMonitoringButton
+                        refreshOverviewButton
+                    }
+                }
+            }
+
+            if monitoringOverview.isLoading && monitoringOverview.snapshot == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading monitoring overview…").font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.updatesFrequently)
+            }
+
+            if let message = monitoringOverview.errorMessage {
+                NativeNotice(message: message, title: "Monitoring overview unavailable")
+            } else if let snapshot = monitoringOverview.snapshot {
+                if snapshot.watchlist.isEmpty {
+                    NativeEmptyState(title: "Start monitoring", message: "Create a watchlist to monitor companies, domains, brands, and vendors.")
+                    ActionButton(title: "Create watchlist", icon: "arrow.right") {
+                        model.openNativeDashboard(path: "/watchlists", label: "Watchlists")
+                    }
+                } else {
+                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
+                        FeatureCard(title: "Active watch terms", value: "\(snapshot.watchlist.count)", icon: "dot.radiowaves.left.and.right")
+                        FeatureCard(title: "New matches · 7 days", value: "\(snapshot.recentMatchCount)", icon: "shield.lefthalf.filled")
+                        FeatureCard(title: "Open alerts", value: "\(snapshot.openAlertCount)", icon: "bell.badge")
+                        FeatureCard(title: "Open cases", value: monitoringOverview.openCaseCount.map(String.init) ?? "—", icon: "ticket")
+                        FeatureCard(title: "Source health", value: snapshot.sourceCoverage.isEmpty ? "—" : "\(snapshot.healthySourceCount)/\(snapshot.sourceCoverage.count)", icon: "checkmark.shield")
+                        FeatureCard(title: "Latest evidence", value: snapshot.latestEvidence == nil ? "None yet" : "Available", icon: "doc.text.magnifyingglass")
+                    }
+                    if let latest = snapshot.latestEvidence {
+                        Label("Latest evidence: \(latest.sourceName) · \(latest.latestTimestamp ?? "time not reported")", systemImage: "doc.text")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                    if let casesMessage = monitoringOverview.casesErrorMessage {
+                        Text("Open cases: \(casesMessage)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Label(snapshot.isReady ? "Collection is active" : "Collection needs setup", systemImage: snapshot.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(snapshot.isReady ? theme.green : theme.accent)
+                        Spacer(minLength: 4)
+                        Text("Updated \(overviewAge(snapshot.generatedAt))")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    if !snapshot.isReady, let blocker = snapshot.readiness.blockers.first, !blocker.isEmpty {
+                        Text(blocker).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("dashboard.monitoring-overview")
+    }
+
+    private var openMonitoringButton: some View {
+        ActionButton(title: "Open monitoring", icon: "dot.radiowaves.left.and.right") {
+            model.openNativeDashboard(path: "/findings", label: "Findings")
+        }
+    }
+
+    private var refreshOverviewButton: some View {
+        ActionButton(title: monitoringOverview.isLoading ? "Refreshing…" : "Refresh overview", icon: "arrow.clockwise") {
+            Task { await loadMonitoringOverview() }
+        }
+        .disabled(monitoringOverview.isLoading)
+    }
+
+    @MainActor
+    private func loadMonitoringOverview() async {
+        let requestID = UUID()
+        monitoringRequestID = requestID
+        monitoringOverview = DashboardMonitoringOverviewState(snapshot: monitoringOverview.snapshot, openCaseCount: monitoringOverview.openCaseCount,
+                                                               isLoading: true, errorMessage: nil, casesErrorMessage: nil)
+        do {
+            let client = try DashboardMonitoringOverviewClient(settings: model.settings)
+            async let snapshotResult = client.load()
+            async let casesResult = client.loadOpenCaseCount()
+            let snapshot = try await snapshotResult
+            let cases = await casesResult
+            guard monitoringRequestID == requestID else { return }
+            switch cases {
+            case .success(let count):
+                monitoringOverview = DashboardMonitoringOverviewState(snapshot: snapshot, openCaseCount: count, isLoading: false, errorMessage: nil, casesErrorMessage: nil)
+            case .failure(let error):
+                monitoringOverview = DashboardMonitoringOverviewState(snapshot: snapshot, openCaseCount: nil, isLoading: false, errorMessage: nil, casesErrorMessage: error.localizedDescription)
+            }
+        } catch {
+            guard monitoringRequestID == requestID else { return }
+            monitoringOverview = DashboardMonitoringOverviewState(snapshot: nil, openCaseCount: nil, isLoading: false,
+                                                                   errorMessage: error.localizedDescription, casesErrorMessage: nil)
+        }
+    }
+
+    private func overviewAge(_ value: String) -> String {
+        guard let date = DashboardMonitoringOverview.date(from: value) else { return "recently" }
+        let minutes = max(0, Int(Date().timeIntervalSince(date) / 60))
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
     }
 
     private var refreshButton: some View {
