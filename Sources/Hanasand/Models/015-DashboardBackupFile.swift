@@ -26,3 +26,7 @@ func filterNativeBackupFiles(_ files: [NativeBackupFile], service: String, date:
         (search.isEmpty || file.file.localizedCaseInsensitiveContains(search))
     }
 }
+
+func selectedNativeBackupFile(_ files: [NativeBackupFile], id: String, service: String, date: String, search: String) -> NativeBackupFile? {
+    filterNativeBackupFiles(files, service: service, date: date, search: search).first { $0.id == id }
+}

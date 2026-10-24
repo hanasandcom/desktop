@@ -13,5 +13,7 @@ final class NativeBackupArchiveFilteringTests: XCTestCase {
         XCTAssertEqual(filterNativeBackupFiles(files, service: "", date: "2026-10-23", search: "").map(\.file), ["analytics-2026-10-23.sql.gz"])
         XCTAssertEqual(filterNativeBackupFiles(files, service: "missing", date: "", search: "").map(\.file), [])
         XCTAssertEqual(filterNativeBackupFiles(files, service: "", date: "", search: "  ").map(\.file), [])
+        XCTAssertEqual(selectedNativeBackupFile(files, id: "core-core-2026-10-24.sql.gz", service: "core", date: "", search: "")?.file, "core-2026-10-24.sql.gz")
+        XCTAssertNil(selectedNativeBackupFile(files, id: "core-core-2026-10-24.sql.gz", service: "analytics", date: "", search: ""), "A filtered-out archive must not prefill restore")
     }
 }

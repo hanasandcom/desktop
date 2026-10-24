@@ -16,9 +16,11 @@ struct BackupNativePanel: View {
     @State private var errorMessage = ""
     @State private var operationMessage = ""
 
-    private var selectedFile: NativeBackupFile? { dashboard?.files.first(where: { $0.id == selectedFileID }) }
     private var filteredFiles: [NativeBackupFile] {
         filterNativeBackupFiles(dashboard?.files ?? [], service: archiveServiceFilter, date: archiveDateFilter, search: archiveSearch)
+    }
+    private var selectedFile: NativeBackupFile? {
+        selectedNativeBackupFile(dashboard?.files ?? [], id: selectedFileID, service: archiveServiceFilter, date: archiveDateFilter, search: archiveSearch)
     }
     private var credentialScope: String {
         "\(model.settings.apiBaseURL)|\(model.settings.internalAPIBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.settings.selectedOrganizationID)"
@@ -34,7 +36,6 @@ struct BackupNativePanel: View {
                 ActionButton(title: "Restore drill", icon: "arrow.counterclockwise") {
                     model.openNativeDashboard(path: "/db/restore", label: "Restore drill", query: selectedFile.map { ["file": $0.file] } ?? [:])
                 }
-                .disabled(dashboard?.files.isEmpty != false)
                 Spacer()
                 ActionButton(title: isOperating ? "Working…" : "Backup now", icon: "externaldrive.badge.timemachine") { Task { await runBackup() } }
                     .disabled(!writesEnabled)
