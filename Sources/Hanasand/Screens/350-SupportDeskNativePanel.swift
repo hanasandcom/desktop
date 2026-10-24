@@ -3,6 +3,9 @@ import SwiftUI
 struct SupportDeskNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var live = SupportLiveSession()
+    @State private var isVisible = false
     @State private var snapshot: SupportDeskSnapshot?
     @State private var guestConversation: SupportGuestConversation?
     @State private var guestSession: SupportGuestSession?
@@ -169,7 +172,7 @@ struct SupportDeskNativePanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if snapshot != nil {
-                    Text("Refresh to check for new messages or conversations.")
+                    Text(snapshot?.realtime == true ? live.status.title : "Live updates are not enabled for this Support queue.")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                 }
                 if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
@@ -201,7 +204,10 @@ struct SupportDeskNativePanel: View {
                 NativeEmptyState(title: model.hasHanasandAuth ? "Support unavailable" : "Sign in required", message: model.hasHanasandAuth ? "Refresh to try loading the Support queue." : "Sign in to review Support conversations.")
             }
         }
-        .task(id: "\(model.userIDForRequests):\(model.authTokenForRequests):\(model.settings.impersonatingUserID):\(revision)") { await load() }
+        .task(id: "\(model.settings.websiteBaseURL):\(model.userIDForRequests):\(model.authTokenForRequests):\(model.settings.impersonationToken):\(model.settings.impersonatingUserID):\(revision)") { await load() }
+        .onAppear { isVisible = true; updateLive() }
+        .onDisappear { isVisible = false; live.stop() }
+        .onChange(of: scenePhase) { _, _ in updateLive() }
         .confirmationDialog(pendingAction?.title ?? "Confirm Support action", isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
             if let pendingAction {
                 Button(pendingAction.confirmTitle, role: pendingAction.destructive ? .destructive : nil) { Task { await perform(pendingAction) } }
@@ -439,6 +445,11 @@ struct SupportDeskNativePanel: View {
     }
 
     @MainActor private func load() async {
+        await load(keepingLive: false)
+    }
+
+    @MainActor private func load(keepingLive: Bool) async {
+        if !keepingLive { live.stop() }
         guard model.hasHanasandAuth else { snapshot = nil; return }
         busy = true; error = ""; notice = ""; defer { busy = false }
         do {
@@ -451,7 +462,25 @@ struct SupportDeskNativePanel: View {
             if !selectedID.isEmpty { await loadMessages(selectedID) }
             guard !Task.isCancelled else { return }
             refreshRequired = false
+            if !keepingLive { updateLive() }
+            else if !next.realtime { live.stop() }
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    private func refreshFromLive() {
+        guard !busy, !refreshRequired else { return }
+        Task { await load(keepingLive: true) }
+    }
+
+    private func updateLive() {
+        guard isVisible, scenePhase == .active, model.hasHanasandAuth,
+              let snapshot, snapshot.realtime else { live.stop(); return }
+        live.start(apiBaseURL: SupportDeskClient.defaultBaseURL.absoluteString,
+                   websiteBaseURL: model.settings.websiteBaseURL,
+                   userID: model.userIDForRequests, token: model.authTokenForRequests,
+                   impersonationToken: model.settings.impersonationToken) {
+            refreshFromLive()
+        }
     }
 
     @MainActor private func loadMessages(_ id: String) async {
