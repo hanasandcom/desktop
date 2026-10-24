@@ -5,6 +5,7 @@ struct NativeVMConsolePanel: View {
     @Environment(\.desktopTheme) private var theme
     @StateObject private var session: NativeVMConsoleSession
     @State private var command = ""
+    @State private var reviewConsole = false
     private let vmName: String
 
     init(vmName: String, apiBaseURL: String, userID: String, token: String, isImpersonating: Bool, provisioningFlow: Bool) {
@@ -25,7 +26,7 @@ struct NativeVMConsolePanel: View {
                 HStack(spacing: 8) {
                     Text(session.status).font(.system(size: 12, weight: .medium)).foregroundStyle(session.isConnected ? theme.green : theme.textSecondary)
                     Spacer()
-                    ActionButton(title: "Reconnect", icon: "arrow.clockwise") { session.disconnect(); startSession() }.disabled(session.isConnected || session.isPreparing)
+                    ActionButton(title: session.isConnected ? "Connected" : session.isPreparing ? "Preparing…" : "Reconnect", icon: session.isConnected ? "checkmark.circle" : "terminal") { reviewConsole = true }.disabled(session.isConnected || session.isPreparing)
                     ActionButton(title: "Back to VMs", icon: "chevron.left") { model.openNativeDashboard(path: "/vms", label: "VMs") }
                 }
                 ScrollViewReader { proxy in
@@ -72,7 +73,17 @@ struct NativeVMConsolePanel: View {
                 isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty,
                 provisioningFlow: model.selectedNativeDashboardQuery["provisioning"] == "1"
             )
-            startSession()
+            reviewConsole = true
+        }
+        .confirmationDialog(
+            "Open VM console?",
+            isPresented: $reviewConsole,
+            titleVisibility: .visible
+        ) {
+            Button("Open console") { startSession(reviewed: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This opens a server shell for \(vmName). If the VM is stopped, opening the console may start it.")
         }
         .onDisappear { session.disconnect() }
     }
@@ -81,9 +92,9 @@ struct NativeVMConsolePanel: View {
         "\(model.settings.apiBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.selectedNativeDashboardQuery["provisioning"] ?? "")"
     }
 
-    private func startSession() {
+    private func startSession(reviewed: Bool) {
         if session.isConnected || session.isPreparing { return }
-        session.connect()
+        session.connect(reviewed: reviewed)
     }
 
     private func sendCommand() {

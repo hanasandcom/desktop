@@ -40,11 +40,13 @@ final class NativeVMConsoleSession: ObservableObject {
         username = ""
     }
 
-    func connect() {
+    func connect(reviewed: Bool = false) {
         guard socket == nil else { return }
-        guard nativeVMConsoleMayOpen(hasAuth: true, isImpersonating: isImpersonating, userID: userID, token: token),
+        guard nativeVMConsoleMayOpen(hasAuth: true, isImpersonating: isImpersonating, reviewed: reviewed, userID: userID, token: token),
               let url = nativeVMConsoleWebSocketURL(apiBaseURL: apiBaseURL, vmName: vmName) else {
-            status = "Sign in to your own account and configure a secure API URL to open this console."
+            status = reviewed
+                ? "Sign in to your own account and configure a secure API URL to open this console."
+                : "Review console access before connecting. Opening it may start this VM."
             return
         }
         receiveTask = Task { [weak self] in

@@ -17,7 +17,7 @@ func nativeVMConsoleWebSocketURL(apiBaseURL: String, vmName: String) -> URL? {
     return components.url
 }
 
-func nativeVMConsoleMayOpen(hasAuth: Bool, isImpersonating: Bool, userID: String, token: String) -> Bool {
-    hasAuth && !isImpersonating && !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+func nativeVMConsoleMayOpen(hasAuth: Bool, isImpersonating: Bool, reviewed: Bool, userID: String, token: String) -> Bool {
+    hasAuth && reviewed && !isImpersonating && !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 }

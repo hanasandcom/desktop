@@ -128,6 +128,9 @@ struct VMsNativePanel: View {
             }
 
             HStack(spacing: 8) {
+                ActionButton(title: "Console", icon: "terminal") {
+                    model.openNativeDashboard(path: "/vms/console", label: "VM console", detailID: vm.name)
+                }
                 ActionButton(title: "Start", icon: "play.circle") {
                     Task { await model.runVirtualMachineAction(vm, action: "start") }
                 }
