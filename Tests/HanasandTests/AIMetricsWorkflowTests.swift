@@ -37,6 +37,14 @@ final class AIMetricsWorkflowTests: XCTestCase {
         XCTAssertNil(summary.laneCount)
     }
 
+    func testManualRefreshReconnectsDisconnectedTelemetryAndRechecksUncertainPrompts() {
+        XCTAssertTrue(AIMetricLiveRecovery.shouldReconnect(onManualRefresh: true, liveState: "Disconnected", promptPhase: .ready))
+        XCTAssertTrue(AIMetricLiveRecovery.shouldReconnect(onManualRefresh: true, liveState: "Connecting", promptPhase: .ready))
+        XCTAssertTrue(AIMetricLiveRecovery.shouldReconnect(onManualRefresh: true, liveState: "Connected", promptPhase: .uncertain))
+        XCTAssertFalse(AIMetricLiveRecovery.shouldReconnect(onManualRefresh: false, liveState: "Disconnected", promptPhase: .ready))
+        XCTAssertFalse(AIMetricLiveRecovery.shouldReconnect(onManualRefresh: true, liveState: "Connected", promptPhase: .ready))
+    }
+
     func testPromptBoundsHistoryAndExactExplicitTargetWireShape() throws {
         let prior = [AIMetricPromptMessage(role: "assistant", content: "prior")]
         let messages = try AIMetricsValidation.prompt("  test this model  ", history: prior)

@@ -89,6 +89,12 @@ struct AIMetricSummary: Equatable {
 }
 
 enum AIMetricPromptPhase: Equatable { case ready, connecting, running, completed, failed, uncertain }
+enum AIMetricLiveRecovery {
+    static func shouldReconnect(onManualRefresh manual: Bool, liveState: String, promptPhase: AIMetricPromptPhase) -> Bool {
+        manual && (liveState != "Connected" || promptPhase == .uncertain)
+    }
+}
+
 struct AIMetricPromptMessage: Codable, Equatable { let role: String; let content: String }
 struct AIMetricReviewGate: Equatable {
     private(set) var requiresReview = false

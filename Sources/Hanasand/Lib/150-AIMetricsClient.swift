@@ -39,7 +39,7 @@ final class AIMetricsClient: ObservableObject {
     }
     func start() {
         guard timer == nil else { return }
-        refresh(manual: true); connect()
+        refresh(manual: false); connect()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh(manual: false) } }
     }
     func stop() {
@@ -50,8 +50,9 @@ final class AIMetricsClient: ObservableObject {
         state.liveState = "Disconnected"
     }
     func refresh(manual: Bool) {
-        if manual && promptPhase == .uncertain {
-            snapshotSeen = false; manualReviewPassed = false
+        if AIMetricLiveRecovery.shouldReconnect(onManualRefresh: manual, liveState: state.liveState, promptPhase: promptPhase) {
+            snapshotSeen = false
+            if promptPhase == .uncertain { manualReviewPassed = false }
             receiveTask?.cancel(); receiveTask = nil; socket?.cancel(with: .goingAway, reason: nil); socket = nil; connect()
         }
         readTask?.cancel(); let capturedScope = scope, current = settings
