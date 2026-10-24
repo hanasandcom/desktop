@@ -73,7 +73,7 @@ extension DesktopAgentModel {
             optionsRequest.timeoutInterval = 15
             optionsRequest.setValue("application/json", forHTTPHeaderField: "Accept")
             optionsRequest.setValue("Hanasand Desktop/\(Self.appVersion)", forHTTPHeaderField: "User-Agent")
-            let (optionsData, optionsResponse) = try await URLSession.shared.data(for: optionsRequest)
+            let (optionsData, optionsResponse) = try await AccountCredentialTransport.shared.data(for: optionsRequest)
             guard (optionsResponse as? HTTPURLResponse)?.statusCode == 200 else {
                 throw authenticationError(from: optionsData, fallback: "Passkey sign-in is unavailable.")
             }
@@ -110,7 +110,7 @@ extension DesktopAgentModel {
                 )
             )
             let verifyData = try JSONEncoder().encode(payload)
-            let (data, response) = try await URLSession.shared.data(for: jsonRequest(
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: jsonRequest(
                 url: authenticationURL("auth/mobile/passkeys/authenticate/verify"),
                 body: verifyData
             ))
@@ -196,7 +196,7 @@ extension DesktopAgentModel {
 
         do {
             let body = try JSONEncoder().encode(["code": code, "verifier": verifier])
-            let (data, response) = try await URLSession.shared.data(for: jsonRequest(
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: jsonRequest(
                 url: authenticationURL("auth/mobile/sso/exchange"),
                 body: body
             ))

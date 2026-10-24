@@ -67,7 +67,7 @@ extension DesktopAgentModel {
         request.setValue("Hanasand Desktop/\(Self.appVersion)", forHTTPHeaderField: "User-Agent")
         request.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await AccountCredentialTransport.shared.data(for: request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
         if (200..<300).contains(statusCode) {
             return try JSONDecoder().decode(T.self, from: data)
@@ -165,6 +165,20 @@ extension DesktopAgentModel {
         let (data, response) = try await URLSession.shared.data(for: request(url, method: method, body: body, authenticated: authenticated))
         try validateHTTP(response)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func accountCredentialJSON<T: Decodable>(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false) async throws -> T {
+        let accountRequest = request(url, method: method, body: body, authenticated: authenticated)
+        let (data, response) = try await AccountCredentialTransport.shared.data(for: accountRequest)
+        try validateHTTP(response)
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func accountCredentialText(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false) async throws -> String {
+        let accountRequest = request(url, method: method, body: body, authenticated: authenticated)
+        let (data, response) = try await AccountCredentialTransport.shared.data(for: accountRequest)
+        try validateHTTP(response)
+        return String(data: data, encoding: .utf8) ?? ""
     }
 
     func isValidShortcutDestination(_ path: String) -> Bool {

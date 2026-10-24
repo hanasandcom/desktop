@@ -10,6 +10,33 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+private final class AccountCredentialRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
+enum AccountCredentialTransport {
+    static let shared = makeSession()
+
+    static func makeSession(configuration: URLSessionConfiguration = .ephemeral) -> URLSession {
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        return URLSession(
+            configuration: configuration,
+            delegate: AccountCredentialRedirectBlocker(),
+            delegateQueue: nil
+        )
+    }
+}
+
 struct AccountSignupResponse: Decodable {
     let id: String?
     let token: String?
@@ -54,27 +81,10 @@ enum AccountSignupError: LocalizedError {
     }
 }
 
-private final class AccountSignupRedirectDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-}
-
-private enum AccountSignupSession {
-    static let shared: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCache = nil
-        return URLSession(configuration: configuration, delegate: AccountSignupRedirectDelegate(), delegateQueue: nil)
-    }()
-}
-
 struct AccountSignupClient {
     let endpoint: URL
     var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
-        try await AccountSignupSession.shared.data(for: request)
+        try await AccountCredentialTransport.shared.data(for: request)
     }
 
     init(baseURL: URL, send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
@@ -190,7 +200,7 @@ extension DesktopAgentModel {
             request.setValue("Hanasand Desktop/\(Self.appVersion)", forHTTPHeaderField: "User-Agent")
             request.httpBody = try JSONEncoder().encode(HanasandLoginRequest(password: password))
 
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
             let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data)
 
@@ -236,7 +246,7 @@ extension DesktopAgentModel {
         do {
             let body = try JSONEncoder().encode(["id": userID, "restoreToken": restoreToken])
             let url = settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/restore")
-            let (data, response) = try await URLSession.shared.data(for: request(url, method: "POST", body: body, authenticated: false))
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: request(url, method: "POST", body: body, authenticated: false))
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
             let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data)
             guard (200..<300).contains(statusCode), let token = decoded?.token, !token.isEmpty else {
@@ -276,7 +286,7 @@ extension DesktopAgentModel {
         if revokeRemoteSession, hadAuth {
             do {
                 let body = (try? JSONEncoder().encode(["keep_current": false])) ?? Data("{}".utf8)
-                _ = try await requestPrettyText(
+                _ = try await accountCredentialText(
                     settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("auth/sessions/revoke"),
                     method: "POST",
                     body: body,
@@ -341,7 +351,7 @@ extension DesktopAgentModel {
         }
 
         do {
-            _ = try await requestPrettyText(
+            _ = try await accountCredentialText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self"),
                 method: "DELETE",
                 authenticated: true

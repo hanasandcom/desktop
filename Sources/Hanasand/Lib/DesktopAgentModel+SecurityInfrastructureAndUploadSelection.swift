@@ -25,7 +25,7 @@ extension DesktopAgentModel {
             let body = try JSONEncoder().encode(payload)
             isLoadingNativeDashboard = true
             defer { isLoadingNativeDashboard = false }
-            let _: ProfileSshKeyEnvelope = try await requestJSON(
+            let _: ProfileSshKeyEnvelope = try await accountCredentialJSON(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys"),
                 method: "POST",
                 body: body,
@@ -53,7 +53,7 @@ extension DesktopAgentModel {
         isLoadingNativeDashboard = true
         defer { isLoadingNativeDashboard = false }
         do {
-            _ = try await requestPrettyText(
+            _ = try await accountCredentialText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys/\(key.id)"),
                 method: "DELETE",
                 authenticated: true
@@ -78,7 +78,7 @@ extension DesktopAgentModel {
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
+            _ = try await accountCredentialText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("auth/sessions/\(session.tokenID)"),
                 method: "DELETE",
                 authenticated: true
@@ -104,7 +104,7 @@ extension DesktopAgentModel {
 
         do {
             let body = (try? JSONEncoder().encode(["keep_current": true])) ?? Data("{}".utf8)
-            let text = try await requestPrettyText(
+            let text = try await accountCredentialText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("auth/sessions/revoke"),
                 method: "POST",
                 body: body,
@@ -130,7 +130,7 @@ extension DesktopAgentModel {
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
+            _ = try await accountCredentialText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("certificates/\(certificate.id)"),
                 method: "DELETE",
                 authenticated: true

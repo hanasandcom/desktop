@@ -162,13 +162,13 @@ extension DesktopAgentModel {
             return
         }
 
-        profileCertificates = (try? await requestJSON(
+        profileCertificates = (try? await accountCredentialJSON(
             settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("certificates/user/\(userIDForRequests)"),
             authenticated: true
         )) ?? []
 
         do {
-            let sshKeys: ProfileSshKeyList = try await requestJSON(
+            let sshKeys: ProfileSshKeyList = try await accountCredentialJSON(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self/ssh-keys"),
                 authenticated: true
             )
@@ -179,7 +179,7 @@ extension DesktopAgentModel {
             profileSshKeyLoadError = error.localizedDescription
         }
 
-        let sessionsEnvelope: DashboardSessionsEnvelope? = try? await requestJSON(
+        let sessionsEnvelope: DashboardSessionsEnvelope? = try? await accountCredentialJSON(
             settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("auth/sessions"),
             authenticated: true
         )

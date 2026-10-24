@@ -66,7 +66,7 @@ extension DesktopAgentModel {
             guard let encodedID = profile.id.addingPercentEncoding(withAllowedCharacters: allowed), !encodedID.isEmpty else {
                 throw DashboardProfileIdentityUpdateError.accountMismatch
             }
-            let identity: DashboardAccountIdentityResponse = try await requestJSON(
+            let identity: DashboardAccountIdentityResponse = try await accountCredentialJSON(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/\(encodedID)"),
                 authenticated: true
             )
@@ -118,7 +118,7 @@ extension DesktopAgentModel {
 
         do {
             let body = try JSONEncoder().encode(payload)
-            let updated: DashboardProfileIdentityUpdateResponse = try await requestJSON(
+            let updated: DashboardProfileIdentityUpdateResponse = try await accountCredentialJSON(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/self"),
                 method: "PUT",
                 body: body,
