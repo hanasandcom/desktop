@@ -13,6 +13,10 @@ struct SandboxHistoryNativePanel: View {
     @State private var isLoadingReport = false
     @State private var reportRequestID = UUID()
     @State private var error = ""
+    @State private var deleteError = ""
+    @State private var failedDeleteRun: SandboxHistoryRun?
+    @State private var deletingRunID: String?
+    @State private var deletionMessage = ""
     @State private var selectedReport: SandboxHistoryReport?
     @State private var quota: SandboxHistoryQuota?
     @State private var quotaLoadState = QuotaLoadState.loading
@@ -78,6 +82,21 @@ struct SandboxHistoryNativePanel: View {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(runs) { run in runRow(run) }
                     }
+                }
+
+                if !deletionMessage.isEmpty {
+                    NativeNotice(message: deletionMessage, tone: .success)
+                }
+                if let failedDeleteRun {
+                    HStack(alignment: .top, spacing: 8) {
+                        NativeNotice(message: deleteError, title: "Run could not be removed")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ActionButton(title: deletingRunID == failedDeleteRun.id ? "Removing…" : "Retry", icon: "arrow.clockwise") {
+                            Task { await deleteRun(failedDeleteRun) }
+                        }
+                        .disabled(deletingRunID != nil)
+                    }
+                    .accessibilityIdentifier("sandbox-history-delete-error")
                 }
 
                 if let selectedRun {
@@ -189,6 +208,17 @@ struct SandboxHistoryNativePanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Remove from history", systemImage: "trash", role: .destructive) {
+                Task { await deleteRun(run) }
+            }
+            .disabled(deletingRunID != nil)
+        }
+        .overlay(alignment: .trailing) {
+            if deletingRunID == run.id {
+                ProgressView().controlSize(.small).padding(.trailing, 10)
+            }
+        }
     }
 
     private func providerColor(_ status: String) -> Color {
@@ -229,6 +259,31 @@ struct SandboxHistoryNativePanel: View {
     }
 
     @MainActor
+    private func deleteRun(_ run: SandboxHistoryRun) async {
+        guard deletingRunID == nil else { return }
+        deletingRunID = run.id
+        deleteError = ""
+        deletionMessage = ""
+        defer { deletingRunID = nil }
+        do {
+            try await makeClient().deleteRun(id: run.id)
+            runs.removeAll { $0.id == run.id || $0.resultID == run.resultID }
+            failedDeleteRun = nil
+            if selectedRunID == run.id || selectedRun?.resultID == run.resultID {
+                selectedRunID = ""
+                selectedReport = nil
+                reportRequestID = UUID()
+                isLoadingReport = false
+            }
+            deletionMessage = "Run removed from saved history."
+            await refresh()
+        } catch {
+            failedDeleteRun = run
+            deleteError = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func refresh() async {
         guard !isLoading else { return }
         isLoading = true
@@ -249,6 +304,11 @@ struct SandboxHistoryNativePanel: View {
             runs = loadedRuns
             nextOffset = page.nextOffset
             error = ""
+            if let failedDeleteRun,
+               !loadedRuns.contains(where: { $0.id == failedDeleteRun.id || $0.resultID == failedDeleteRun.resultID }) {
+                self.failedDeleteRun = nil
+                deleteError = ""
+            }
             if let requestedID = initialRunID, !requestedID.isEmpty {
                 if let run = loadedRuns.first(where: { $0.id == requestedID || $0.resultID == requestedID }) {
                     selectedRunID = run.id

@@ -69,6 +69,7 @@ enum SandboxHistoryError: LocalizedError, Equatable {
     case invalidResponse
     case responseTooLarge
     case redirectRejected
+    case runNotFound
     case requestFailed(Int)
 
     var errorDescription: String? {
@@ -81,6 +82,7 @@ enum SandboxHistoryError: LocalizedError, Equatable {
         case .invalidResponse: "The Sandbox history service returned an invalid response."
         case .responseTooLarge: "The Sandbox history response exceeded its size limit."
         case .redirectRejected: "The Sandbox report redirected to an unexpected address."
+        case .runNotFound: "This saved run is no longer in history. Refresh the run list and try again."
         case .requestFailed(401): "Sign in again to view saved Sandbox runs."
         case .requestFailed(403): "Current account does not have access to these Sandbox runs."
         case .requestFailed: "Saved Sandbox runs are unavailable. Refresh to try again."

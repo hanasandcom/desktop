@@ -162,6 +162,38 @@ struct SandboxHistoryClient {
                                    concurrentLimit: concurrentLimit)
     }
 
+    func deleteRun(id: String) async throws {
+        guard Self.validIdentifier(id) else { throw SandboxHistoryError.invalidResponse }
+        let url = baseURL.appendingAPIPath("browser/runs")
+        guard url.scheme?.lowercased() == "https", url.host == baseURL.host,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+            throw SandboxHistoryError.invalidBaseURL
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "DELETE"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["ids": [id]], options: [.sortedKeys])
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == baseURL.host else {
+            throw SandboxHistoryError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else { throw SandboxHistoryError.requestFailed(http.statusCode) }
+        guard data.count <= SandboxHistoryLimits.responseBytes,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let deleted = Self.nonnegativeInteger(root["deleted"]) else {
+            throw data.count > SandboxHistoryLimits.responseBytes ? SandboxHistoryError.responseTooLarge : SandboxHistoryError.invalidResponse
+        }
+        guard deleted > 0 else { throw SandboxHistoryError.runNotFound }
+    }
+
     private static func decodeRun(_ object: [String: Any]) -> SandboxHistoryRun? {
         guard let id = object["id"] as? String,
               let resultID = object["resultId"] as? String,

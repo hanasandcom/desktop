@@ -60,6 +60,45 @@ final class SandboxHistoryTests: XCTestCase {
         XCTAssertEqual(quota.summary, "1 min 30 sec per run · 2 simultaneous browsers · no daily run limit")
     }
 
+    func testDeleteRunUsesScopedOwnerRequestAndRequiresDeletionReceipt() async throws {
+        var captured: URLRequest?
+        let client = try makeClient { request in
+            captured = request
+            return (Data(#"{"deleted":2}"#.utf8), Self.response(for: request, status: 200))
+        }
+
+        try await client.deleteRun(id: "run-1")
+
+        XCTAssertEqual(captured?.url?.absoluteString, "https://api.example.test/api/browser/runs")
+        XCTAssertEqual(captured?.httpMethod, "DELETE")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "owner.test")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+        let body = try XCTUnwrap(captured?.httpBody)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: [String]])
+        XCTAssertEqual(payload, ["ids": ["run-1"]])
+    }
+
+    func testDeleteRunKeepsFailureWhenServiceRejectsOrReturnsNoDeletion() async throws {
+        let rejected = try makeClient { request in
+            (Data(#"{"error":"try later"}"#.utf8), Self.response(for: request, status: 503))
+        }
+        do {
+            try await rejected.deleteRun(id: "run-1")
+            XCTFail("Service failures must keep the run available for retry")
+        } catch { XCTAssertEqual(error as? SandboxHistoryError, .requestFailed(503)) }
+
+        let stale = try makeClient { request in
+            (Data(#"{"deleted":0}"#.utf8), Self.response(for: request, status: 200))
+        }
+        do {
+            try await stale.deleteRun(id: "run-1")
+            XCTFail("A zero deletion receipt must not be treated as success")
+        } catch { XCTAssertEqual(error as? SandboxHistoryError, .runNotFound) }
+    }
+
     func testRejectsMalformedQuotaAndBadQuotaTypes() async throws {
         for body in [
             #"{"runs":[]}"#,
