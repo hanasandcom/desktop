@@ -37,6 +37,14 @@ final class ProfileAccountSessionsTests: XCTestCase {
         XCTAssertTrue(session.matches(search: []))
     }
 
+    func testLegacyBunProxyAgentIsUnknownWithoutPublicIPButAutomationWithPublicIP() throws {
+        let legacyProxy = try decodeSession(userAgent: "Bun/1.3.13", ip: nil)
+        XCTAssertEqual(legacyProxy.deviceLabel, "Device details unavailable")
+
+        let directAPIClient = try decodeSession(userAgent: "Bun/1.3.13", ip: "203.0.113.7")
+        XCTAssertEqual(directAPIClient.deviceLabel, "Automation or API client")
+    }
+
     func testRevokeUsesSpecificSessionDeleteAndBlocksCurrentSession() async throws {
         var captured: URLRequest?
         let client = try makeClient { request in
@@ -84,5 +92,11 @@ final class ProfileAccountSessionsTests: XCTestCase {
     private func makeSession(current: Bool, revokedAt: String?) -> ProfileAccountSession {
         let data = Data(#"{"token_id":42,"ip":"203.0.113.7","private_ip":null,"current":\#(current),"network":{"provider":"Example ISP","country":"Norway","region":"Oslo","city":"Oslo"},"user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36","created_at":"2026-10-20T10:00:00Z","last_seen_at":"2026-10-23T10:00:00Z","revoked_at":\#(revokedAt.map { "\"\($0)\"" } ?? "null")}"#.utf8)
         return try! JSONDecoder().decode(ProfileAccountSession.self, from: data)
+    }
+
+    private func decodeSession(userAgent: String, ip: String?) throws -> ProfileAccountSession {
+        let ipValue = ip.map { "\"\($0)\"" } ?? "null"
+        let data = Data(#"{"token_id":42,"ip":\#(ipValue),"private_ip":null,"current":false,"network":null,"user_agent":"\#(userAgent)","created_at":"2026-10-20T10:00:00Z","last_seen_at":"2026-10-23T10:00:00Z","revoked_at":null}"#.utf8)
+        return try JSONDecoder().decode(ProfileAccountSession.self, from: data)
     }
 }

@@ -71,6 +71,9 @@ struct ProfileAccountSession: Decodable, Identifiable, Equatable {
     var isActive: Bool { revokedAt == nil }
     var deviceLabel: String {
         let agent = userAgent.lowercased()
+        if (ip == nil || ip?.isEmpty == true) && agent.range(of: "^bun/", options: .regularExpression) != nil {
+            return "Device details unavailable"
+        }
         if agent.range(of: "hanasand[-_\\s]?desktop|desktop[-_\\s]?app|tauri|electron", options: .regularExpression) != nil { return "Hanasand desktop app" }
         if agent.range(of: "hanasand[-_\\s]?mobile|mobile[-_\\s]?app|reactnative|expo|okhttp", options: .regularExpression) != nil { return "Mobile app" }
         if agent.range(of: "curl|node|bun/|monitor|playwright|python", options: .regularExpression) != nil { return "Automation or API client" }
