@@ -241,6 +241,10 @@ struct VMsNativePanel: View {
                         .foregroundStyle(theme.textTertiary)
                 }
             }
+            VMAdministrationControls(vm: vm) {
+                inventoryRefreshToken += 1
+                detailReloadToken += 1
+            }
             if let selectedDetails {
                 Text("Stored host details").font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
                 ForEach(Array(selectedDetails.fields.enumerated()), id: \.offset) { _, field in
