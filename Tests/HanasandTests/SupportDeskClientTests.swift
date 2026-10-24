@@ -15,6 +15,13 @@ final class SupportDeskClientTests: XCTestCase {
         try SupportDeskClient(baseURL: service, siteBaseURL: site, userID: "agent", token: "token", organizationID: "org", send: send)
     }
 
+    private func discordClient(siteBaseURL: URL = URL(string: "https://hanasand.com")!,
+                               impersonationToken: String = "",
+                               send: @escaping (URLRequest) async throws -> (Data, URLResponse)) throws -> SupportDeskClient {
+        try SupportDeskClient(baseURL: service, siteBaseURL: siteBaseURL, userID: "agent", token: "token",
+                              organizationID: "org", impersonationToken: impersonationToken, send: send)
+    }
+
     private func response(_ body: String, request: URLRequest, status: Int = 200) -> (Data, URLResponse) {
         (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!)
     }
@@ -118,6 +125,86 @@ final class SupportDeskClientTests: XCTestCase {
         catch let SupportDeskClientError.requestFailed(_, message) { XCTAssertFalse(message?.contains("private-input-secret") == true) }
         do { _ = try await instance.messages(ticketID: "../../wrong"); XCTFail("Expected path guard") }
         catch SupportDeskClientError.invalidTicket {}
+    }
+
+    func testDiscordLinkCodeUsesValidatedNativeOriginAndAuthenticatedNoCookieRequest() async throws {
+        var captured: URLRequest?
+        let expiry = ISO8601DateFormatter()
+        expiry.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let expiration = expiry.string(from: Date().addingTimeInterval(300))
+        let instance = try discordClient { request in
+            captured = request
+            return self.response(#"{"code":"AB12CD34EF56AB78","expiresAt":"\#(expiration)"}"#, request: request)
+        }
+
+        let result = try await instance.createDiscordLinkCode()
+        XCTAssertEqual(result.code, "AB12CD34EF56AB78")
+        XCTAssertEqual(captured?.url?.absoluteString, "https://support.synthetic.invalid/api/support/discord/link-code")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.httpBody, Data("{}".utf8))
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Origin"), "https://hanasand.com")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "agent")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "x-api-key"))
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+    }
+
+    func testDiscordLinkCodeRejectsUntrustedOriginAndImpersonationBeforeSending() async throws {
+        var sent = false
+        let invalidOrigin = try discordClient(siteBaseURL: URL(string: "https://example.invalid")!) { request in
+            sent = true
+            return self.response("{}", request: request)
+        }
+        do { _ = try await invalidOrigin.createDiscordLinkCode(); XCTFail("Untrusted website origins must not be sent") }
+        catch SupportDeskClientError.invalidServiceURL {}
+        XCTAssertFalse(sent)
+
+        let impersonated = try discordClient(impersonationToken: "imp") { request in
+            sent = true
+            return self.response("{}", request: request)
+        }
+        do { _ = try await impersonated.createDiscordLinkCode(); XCTFail("A link code must not be issued for an impersonated account") }
+        catch SupportDeskClientError.readOnly {}
+        XCTAssertFalse(sent)
+    }
+
+    func testDiscordLinkCodeRequiresUppercaseHexAndExpiryWithinTenMinutes() async throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let now = Date()
+        let cases: [(String, String)] = [
+            ("ab12cd34ef56ab78", formatter.string(from: now.addingTimeInterval(300))),
+            ("AB12CD34EF56AB78", formatter.string(from: now.addingTimeInterval(-1))),
+            ("AB12CD34EF56AB78", formatter.string(from: now.addingTimeInterval(601))),
+            ("AB12CD34EF56AB7", formatter.string(from: now.addingTimeInterval(300))),
+            ("AB12CD34EF56AB7G", formatter.string(from: now.addingTimeInterval(300))),
+            ("AB12CD34EF56AB78", "not-a-date"),
+        ]
+        for (code, expiresAt) in cases {
+            let invalid = try discordClient { request in
+                self.response(#"{"code":"\#(code)","expiresAt":"\#(expiresAt)"}"#, request: request)
+            }
+            do { _ = try await invalid.createDiscordLinkCode(now: now); XCTFail("Invalid link code response must be rejected") }
+            catch SupportDeskClientError.invalidResponse {}
+        }
+    }
+
+    func testDiscordLinkCodeFailureStatusesRemainRetryable() async throws {
+        for status in [401, 403, 429] {
+            let rejected = try discordClient { request in self.response(#"{"error":"temporarily unavailable"}"#, request: request, status: status) }
+            do { _ = try await rejected.createDiscordLinkCode(); XCTFail("Expected HTTP \(status) rejection") }
+            catch let SupportDeskClientError.requestFailed(actual, _) { XCTAssertEqual(actual, status) }
+        }
+
+        let failed = try discordClient { request in self.response(#"{"error":"not echoed"}"#, request: request, status: 500) }
+        do { _ = try await failed.createDiscordLinkCode(); XCTFail("Expected an unconfirmed server outcome") }
+        catch let SupportDeskClientError.requestFailed(status, message) {
+            XCTAssertEqual(status, 0)
+            XCTAssertTrue(message?.contains("Request another code") == true)
+            XCTAssertFalse(message?.contains("not echoed") == true)
+        }
     }
 
     func testOwnTicketListUsesOwnerEndpointAndRejectsSupportOrForeignRows() async throws {

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SupportDeskNativePanel: View {
@@ -27,6 +28,11 @@ struct SupportDeskNativePanel: View {
     @State private var error = ""
     @State private var notice = ""
     @State private var refreshRequired = false
+    @State private var discordLinkCode: SupportDiscordLinkCode?
+    @State private var discordLinkCodeBusy = false
+    @State private var discordLinkCodeError = ""
+    @State private var discordLinkCodeCopied = false
+    @State private var discordLinkAttemptID = 0
     @State private var pendingAction: PendingAction?
     @State private var pendingGuestResolve = false
     @State private var guestFeedbackRating = 5
@@ -42,6 +48,14 @@ struct SupportDeskNativePanel: View {
         return snapshot.scope == client.scope && client.canMutate && !busy && !refreshRequired
     }
     private var isSupport: Bool { snapshot?.isSupport == true }
+    private var discordLinkScope: String {
+        [SupportDeskClient.defaultBaseURL.absoluteString, model.settings.websiteBaseURL,
+         model.userIDForRequests, model.authTokenForRequests, model.settings.impersonationToken,
+         model.settings.impersonatingUserID, model.selectedOrganizationID].joined(separator: "\n")
+    }
+    private var canCreateDiscordLinkCode: Bool {
+        model.hasHanasandAuth && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
+    }
     private var canReplyToSelected: Bool {
         guard let ticket, let snapshot else { return false }
         return canWrite && ticket.status == "open" && (snapshot.isSupport || ticket.userID == model.userIDForRequests)
@@ -180,6 +194,32 @@ struct SupportDeskNativePanel: View {
                     Text(snapshot?.realtime == true ? live.status.title : "Live updates are not enabled for this Support queue.")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                 }
+                if discordLinkCodeBusy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Creating a Discord link code…").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    }
+                }
+                if let discordLinkCode {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("In Discord, run /tickets, choose Link account, then enter this code.")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 10) { discordLinkCodeValue(discordLinkCode) }
+                                .fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading, spacing: 8) { discordLinkCodeValue(discordLinkCode) }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Text("Code expires \(discordLinkCode.expiresAt.formatted(date: .abbreviated, time: .shortened)).")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if !discordLinkCodeError.isEmpty {
+                    NativeNotice(message: discordLinkCodeError, title: "Discord account linking", tone: .error)
+                }
                 if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
                 if !notice.isEmpty { NativeNotice(message: notice) }
                 if refreshRequired { NativeNotice(message: "Refresh and review this conversation before another change. The previous operation may have completed.") }
@@ -213,6 +253,7 @@ struct SupportDeskNativePanel: View {
         .onAppear { isVisible = true; updateLive() }
         .onDisappear { isVisible = false; live.stop() }
         .onChange(of: scenePhase) { _, _ in updateLive() }
+        .onChange(of: discordLinkScope) { _, _ in clearDiscordLinkState() }
         .confirmationDialog(pendingAction?.title ?? "Confirm Support action", isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
             if let pendingAction {
                 Button(pendingAction.confirmTitle, role: pendingAction.destructive ? .destructive : nil) { Task { await perform(pendingAction) } }
@@ -224,6 +265,9 @@ struct SupportDeskNativePanel: View {
     @ViewBuilder
     private var supportActions: some View {
         ActionButton(title: busy ? "Working…" : "Refresh", icon: "arrow.clockwise") { revision += 1 }.disabled(busy)
+        ActionButton(title: discordLinkCodeBusy ? "Creating code…" : "Connect Discord", icon: "bubble.left.and.bubble.right") {
+            createDiscordLinkCode()
+        }.disabled(!canCreateDiscordLinkCode || discordLinkCodeBusy)
         if isSupport { ActionButton(title: searchOpen ? "Hide filters" : "Find conversations", icon: "line.3.horizontal.decrease.circle") { searchOpen.toggle() }.disabled(busy) }
         else { ActionButton(title: "New support ticket", icon: "plus") { creatingTicket = true; createSubject = ""; draft = ""; selectedID = ""; messages = [] }.disabled(busy || !canWrite) }
         if !selectedID.isEmpty || creatingTicket { ActionButton(title: isSupport ? "Back to queue" : "Back to conversations", icon: "list.bullet") { selectedID = ""; creatingTicket = false; messages = []; accountOpen = false }.disabled(busy) }
@@ -566,6 +610,54 @@ struct SupportDeskNativePanel: View {
         return try SupportDeskClient(siteBaseURL: site, userID: model.userIDForRequests, token: model.authTokenForRequests,
             organizationID: model.selectedOrganizationID, impersonationToken: model.settings.impersonationToken,
             impersonatingUserID: model.settings.impersonatingUserID)
+    }
+
+    @ViewBuilder private func discordLinkCodeValue(_ value: SupportDiscordLinkCode) -> some View {
+        Text(value.code)
+            .font(.system(size: 14, weight: .bold, design: .monospaced))
+            .foregroundStyle(theme.text)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: true, vertical: false)
+        ActionButton(title: discordLinkCodeCopied ? "Copied" : "Copy code", icon: "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            discordLinkCodeCopied = NSPasteboard.general.setString(value.code, forType: .string)
+            if !discordLinkCodeCopied { discordLinkCodeError = "The code could not be copied. Select the code and copy it manually." }
+        }
+    }
+
+    @MainActor private func createDiscordLinkCode() {
+        guard !discordLinkCodeBusy, canCreateDiscordLinkCode else { return }
+        discordLinkAttemptID += 1
+        let attemptID = discordLinkAttemptID
+        let scope = discordLinkScope
+        discordLinkCode = nil
+        discordLinkCodeError = ""
+        discordLinkCodeCopied = false
+        discordLinkCodeBusy = true
+
+        Task { @MainActor in
+            defer {
+                if attemptID == discordLinkAttemptID { discordLinkCodeBusy = false }
+            }
+            do {
+                let client = try makeClient()
+                guard client.canMutate, client.scope == scope else { throw SupportDeskClientError.readOnly }
+                let code = try await client.createDiscordLinkCode()
+                guard attemptID == discordLinkAttemptID, discordLinkScope == scope, model.hasHanasandAuth else { return }
+                discordLinkCode = code
+            } catch {
+                guard attemptID == discordLinkAttemptID, discordLinkScope == scope else { return }
+                discordLinkCodeError = error.localizedDescription
+            }
+        }
+    }
+
+    @MainActor private func clearDiscordLinkState() {
+        discordLinkAttemptID += 1
+        discordLinkCode = nil
+        discordLinkCodeBusy = false
+        discordLinkCodeError = ""
+        discordLinkCodeCopied = false
     }
 
     private func date(_ value: String) -> String {

@@ -56,6 +56,31 @@ struct SupportDeskClient {
         return snapshot
     }
 
+    func createDiscordLinkCode(now: Date = Date()) async throws -> SupportDiscordLinkCode {
+        guard canMutate else { throw SupportDeskClientError.readOnly }
+        let origin: String
+        do { origin = try SupportLiveProtocol.originHeader(websiteBaseURL: siteBaseURL.absoluteString) }
+        catch { throw SupportDeskClientError.invalidServiceURL }
+        let (data, response) = try await request(path: "support/discord/link-code", method: "POST",
+                                                 body: try Self.json([:]), writing: true, origin: origin)
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else {
+            do { throw failure(status: http.statusCode, data: data, writing: true) }
+            catch SupportDeskClientError.uncertainResult {
+                throw SupportDeskClientError.requestFailed(0, "The code could not be confirmed. Request another code to replace any earlier code.")
+            }
+        }
+        let result: SupportDiscordLinkCode
+        do { result = try JSONDecoder().decode(SupportDiscordLinkCode.self, from: data) }
+        catch { throw SupportDeskClientError.invalidResponse }
+        guard result.code.range(of: #"^[A-F0-9]{16}$"#, options: .regularExpression) != nil,
+              result.expiresAt > now,
+              result.expiresAt.timeIntervalSince(now) <= 10 * 60 else {
+            throw SupportDeskClientError.invalidResponse
+        }
+        return result
+    }
+
     private func decodeSnapshot(_ data: Data, response: URLResponse) throws -> SupportDeskSnapshot {
         let http = try checked(response)
         guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, data: data) }
@@ -174,7 +199,8 @@ struct SupportDeskClient {
               snapshot.tickets.contains(where: { $0 == ticket }) else { throw SupportDeskClientError.readOnly }
     }
 
-    private func request(path: String, method: String = "GET", body: Data? = nil, writing: Bool = false) async throws -> (Data, URLResponse) {
+    private func request(path: String, method: String = "GET", body: Data? = nil, writing: Bool = false,
+                         origin: String? = nil) async throws -> (Data, URLResponse) {
         let pieces = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
         var url = baseURL
         for component in pieces[0].split(separator: "/") where !component.isEmpty { url.appendPathComponent(String(component)) }
@@ -192,6 +218,7 @@ struct SupportDeskClient {
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(userID, forHTTPHeaderField: "id")
+        if let origin { request.setValue(origin, forHTTPHeaderField: "Origin") }
         if !impersonationToken.isEmpty { request.setValue(impersonationToken, forHTTPHeaderField: "x-impersonation-token") }
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         do {

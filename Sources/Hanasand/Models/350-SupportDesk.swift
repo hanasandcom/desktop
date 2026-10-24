@@ -101,6 +101,33 @@ struct SupportDeskSnapshot: Equatable {
     let tickets: [SupportDeskTicket]
 }
 
+struct SupportDiscordLinkCode: Decodable, Equatable {
+    let code: String
+    let expiresAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case code, expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        code = try values.decode(String.self, forKey: .code)
+        let rawExpiry = try values.decode(String.self, forKey: .expiresAt)
+        guard let expiry = Self.parseExpiry(rawExpiry) else {
+            throw DecodingError.dataCorruptedError(forKey: .expiresAt, in: values, debugDescription: "Invalid ISO-8601 expiry")
+        }
+        expiresAt = expiry
+    }
+
+    private static func parseExpiry(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+}
+
 struct SupportGuestConversation: Decodable, Equatable {
     let id: String?
     let channel: String
