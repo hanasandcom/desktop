@@ -382,6 +382,36 @@ enum SandboxLiveProtocol {
         return request
     }
 
+    static func streamURL(from value: String, apiBaseURL: URL, sessionID: String) throws -> URL {
+        guard value.utf8.count <= 2_048,
+              sessionID.range(of: "^(?:regular-)?[a-f0-9-]{36}$", options: .regularExpression) != nil,
+              apiBaseURL.scheme?.lowercased() == "https", let apiHost = apiBaseURL.host?.lowercased(),
+              apiBaseURL.user == nil, apiBaseURL.password == nil, apiBaseURL.query == nil, apiBaseURL.fragment == nil else {
+            throw SandboxLiveSessionError.invalidResponse
+        }
+        var origin = URLComponents()
+        origin.scheme = "https"
+        origin.host = apiHost
+        origin.port = apiBaseURL.port
+        guard let originURL = origin.url,
+              let url = URL(string: value, relativeTo: originURL)?.absoluteURL,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https", components.host?.lowercased() == apiHost,
+              (components.port ?? 443) == (apiBaseURL.port ?? 443),
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else {
+            throw SandboxLiveSessionError.invalidResponse
+        }
+        let parts = components.path.split(separator: "/").map(String.init)
+        guard parts.count == 5, parts[0] == "api", parts[1] == "browser-stream",
+              parts[2] == sessionID,
+              parts[3].range(of: "^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$", options: .regularExpression) != nil,
+              parts[4] == "index.html" else {
+            throw SandboxLiveSessionError.invalidResponse
+        }
+        return url
+    }
+
     static func startMessage(configuration: SandboxLiveConfiguration, sessionID: String,
                              resumeToken: String, clientID: String) throws -> String {
         let target = try normalizedTarget(configuration.target)
@@ -498,12 +528,16 @@ final class SandboxLiveSession: ObservableObject {
     @Published private(set) var pageURL = ""
     @Published private(set) var pageTitle = ""
     @Published private(set) var serviceMessage = ""
+    @Published private(set) var streamURL: URL?
+    @Published private(set) var streamWidth = 0
+    @Published private(set) var streamHeight = 0
 
     private let transport: SandboxLiveSocketTransport
     private var receiveTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var inputSendTask: Task<Void, Never>?
     private var sessionID: String?
+    private var apiBaseURL: URL?
     private var resumeToken: String?
     private var connectionRequest: URLRequest?
     private var isStopping = false
@@ -548,6 +582,9 @@ final class SandboxLiveSession: ObservableObject {
                 clientID: "desktop-\(UUID().uuidString.lowercased())"
             )
             sessionID = id
+            apiBaseURL = configuration.apiBaseURL
+            streamWidth = configuration.width
+            streamHeight = configuration.height
             resumeToken = newResumeToken
             connectionRequest = request
             state = .connecting
@@ -575,6 +612,10 @@ final class SandboxLiveSession: ObservableObject {
         receiveTask?.cancel()
         receiveTask = nil
         sessionID = nil
+        streamURL = nil
+        streamWidth = 0
+        streamHeight = 0
+        apiBaseURL = nil
         resumeToken = nil
         connectionRequest = nil
         isStopping = false
@@ -625,10 +666,10 @@ final class SandboxLiveSession: ObservableObject {
         switch type {
         case "ready":
             state = .live
-            serviceMessage = "Browser ready. The viewport refreshes after page changes and input."
+            serviceMessage = streamURL == nil ? "Browser ready. Live video is connecting." : "Browser ready. Live video is active."
         case "reconnected":
             state = .live
-            serviceMessage = "Browser connection restored. The viewport refreshes after page changes and input."
+            serviceMessage = streamURL == nil ? "Browser connection restored. Live video is connecting." : "Browser connection restored. Live video is active."
         case "resume_unavailable":
             failMessage("The Sandbox session expired and can no longer be resumed. Start a new session.")
         case "frame":
@@ -658,13 +699,26 @@ final class SandboxLiveSession: ObservableObject {
             inputSendTask?.cancel()
             inputSendTask = nil
             sessionID = nil
+            streamURL = nil
+            streamWidth = 0
+            streamHeight = 0
+            apiBaseURL = nil
             state = .ended
             serviceMessage = "Sandbox session ended."
             transport.close()
         case "stream_ready":
-            // The service's tokenized stream URL is intentionally not opened. Native
-            // interaction uses the authenticated frame/input channel on this socket.
-            break
+            guard let rawURL = payload["streamUrl"] as? String,
+                  let apiBaseURL, let sessionID else {
+                serviceMessage = "The live video stream could not be verified. Showing frame updates instead."
+                break
+            }
+            do {
+                streamURL = try SandboxLiveProtocol.streamURL(from: rawURL, apiBaseURL: apiBaseURL, sessionID: sessionID)
+                serviceMessage = "Live browser video is connecting."
+            } catch {
+                streamURL = nil
+                serviceMessage = "The live video stream could not be verified. Showing frame updates instead."
+            }
         case "pong":
             break
         default:
@@ -725,6 +779,10 @@ final class SandboxLiveSession: ObservableObject {
         receiveTask = nil
         transport.close()
         sessionID = nil
+        streamURL = nil
+        streamWidth = 0
+        streamHeight = 0
+        apiBaseURL = nil
         resumeToken = nil
         connectionRequest = nil
         isStopping = false
@@ -746,6 +804,10 @@ final class SandboxLiveSession: ObservableObject {
         frameData = nil
         frameWidth = 0
         frameHeight = 0
+        streamURL = nil
+        streamWidth = 0
+        streamHeight = 0
+        apiBaseURL = nil
         pageURL = ""
         pageTitle = ""
         serviceMessage = "Connecting to the isolated browser…"

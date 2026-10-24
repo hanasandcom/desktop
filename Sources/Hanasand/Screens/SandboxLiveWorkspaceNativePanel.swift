@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 
 struct SandboxLiveWorkspaceNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
@@ -19,6 +20,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
     @State private var platform = SandboxBrowserFingerprint.presets[0].platform
     @State private var isMobile = SandboxBrowserFingerprint.presets[0].isMobile
     @State private var hasTouch = SandboxBrowserFingerprint.presets[0].hasTouch
+    @State private var streamFailure = ""
 
     private var selectedProfile: SandboxBrowserProfile {
         profiles.first(where: { $0.id == selectedProfileID }) ?? SandboxBrowserProfile.defaults[0]
@@ -48,7 +50,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             NativeGroupPanel(title: "Live browser", subtitle: "Native controls · Isolated Sandbox session") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Click, type, scroll, and paste in the native viewport. Frames refresh after page actions rather than showing continuous video.")
+                    Text("Click, type, and scroll in the live browser. If live video is unavailable, Desktop keeps the latest frame available.")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -162,9 +164,23 @@ struct SandboxLiveWorkspaceNativePanel: View {
                 }
             }
 
-            if let frameData = session.frameData, let image = NSImage(data: frameData) {
+            if let streamURL = session.streamURL, streamFailure.isEmpty {
+                NativeGroupPanel(title: session.pageTitle.isEmpty ? "Browser viewport" : session.pageTitle,
+                                 subtitle: "Live WebRTC browser stream") {
+                    NativeSandboxWebRTCStreamView(url: streamURL, failureMessage: $streamFailure)
+                        .aspectRatio(CGFloat(max(session.streamWidth, 1)) / CGFloat(max(session.streamHeight, 1)), contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .frame(maxHeight: 720)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(theme.divider, lineWidth: 1))
+                        .accessibilityLabel("Live interactive Sandbox browser viewport")
+                }
+            } else if let frameData = session.frameData, let image = NSImage(data: frameData) {
                 NativeGroupPanel(title: session.pageTitle.isEmpty ? "Browser viewport" : session.pageTitle,
                                  subtitle: session.pageURL.isEmpty ? "Isolated remote browser" : session.pageURL) {
+                    if !streamFailure.isEmpty {
+                        NativeNotice(message: streamFailure, tone: .error)
+                    }
                     NativeSandboxLiveViewport(
                         image: image,
                         imageWidth: session.frameWidth,
@@ -180,11 +196,15 @@ struct SandboxLiveWorkspaceNativePanel: View {
                 }
             } else if session.isActive {
                 NativeGroupPanel(title: "Browser viewport", subtitle: "Waiting for the first page frame") {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Starting the isolated browser…")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(theme.textSecondary)
+                    if !streamFailure.isEmpty {
+                        NativeNotice(message: streamFailure, tone: .error)
+                    } else {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Starting the isolated browser…")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                        }
                     }
                 }
             }
@@ -201,6 +221,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
     }
 
     private func startSession() {
+        streamFailure = ""
         let configuration = SandboxLiveConfiguration(
             userID: model.userIDForRequests,
             token: model.authTokenForRequests,
@@ -282,6 +303,81 @@ struct SandboxLiveWorkspaceNativePanel: View {
     private func stopIfCredentialsChanged() {
         guard session.isActive else { return }
         Task { await session.stop() }
+    }
+}
+
+private struct NativeSandboxWebRTCStreamView: NSViewRepresentable {
+    let url: URL
+    @Binding var failureMessage: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url, failureMessage: $failureMessage)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = false
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.failureMessage = $failureMessage
+        if webView.url != url {
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+            webView.load(request)
+        }
+    }
+
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        let allowedHost: String
+        let allowedPort: Int
+        var failureMessage: Binding<String>
+
+        init(url: URL, failureMessage: Binding<String>) {
+            allowedHost = url.host?.lowercased() ?? ""
+            allowedPort = url.port ?? 443
+            self.failureMessage = failureMessage
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard navigationAction.targetFrame != nil,
+                  let destination = navigationAction.request.url,
+                  destination.scheme?.lowercased() == "https",
+                  destination.host?.lowercased() == allowedHost,
+                  destination.user == nil, destination.password == nil,
+                  (destination.port ?? 443) == allowedPort else {
+                failureMessage.wrappedValue = "Live video left the trusted Browser service. Showing frame updates instead."
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            failureMessage.wrappedValue = ""
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            failureMessage.wrappedValue = "Live video could not connect. Showing frame updates instead."
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            failureMessage.wrappedValue = "Live video was interrupted. Showing frame updates instead."
+        }
     }
 }
 

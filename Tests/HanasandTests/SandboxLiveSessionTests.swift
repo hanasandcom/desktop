@@ -151,6 +151,70 @@ final class SandboxLiveSessionTests: XCTestCase {
         }
     }
 
+    func testStreamURLAcceptsOnlySameOriginHTTPSRunStream() throws {
+        let runID = "regular-123e4567-e89b-12d3-a456-426614174000"
+        let token = "123e4567-e89b-12d3-a456-426614174001"
+        XCTAssertEqual(
+            try SandboxLiveProtocol.streamURL(
+                from: "/api/browser-stream/\(runID)/\(token)/index.html",
+                apiBaseURL: api,
+                sessionID: runID
+            ).absoluteString,
+            "https://browser.example.test/api/browser-stream/\(runID)/\(token)/index.html"
+        )
+        XCTAssertEqual(
+            try SandboxLiveProtocol.streamURL(
+                from: "https://browser.example.test/api/browser-stream/\(runID)/\(token)/index.html",
+                apiBaseURL: api,
+                sessionID: runID
+            ).host,
+            "browser.example.test"
+        )
+
+        for value in [
+            "http://browser.example.test/api/browser-stream/\(runID)/\(token)/index.html",
+            "https://attacker.example.test/api/browser-stream/\(runID)/\(token)/index.html",
+            "https://user@browser.example.test/api/browser-stream/\(runID)/\(token)/index.html",
+            "https://browser.example.test:8443/api/browser-stream/\(runID)/\(token)/index.html",
+            "https://browser.example.test/api/browser-stream/other/\(token)/index.html",
+            "https://browser.example.test/api/browser-stream/\(runID)/bad-token/index.html",
+            "https://browser.example.test/api/browser-stream/\(runID)/\(token)/index.html?secret=1",
+            "https://browser.example.test/api/browser-stream/\(runID)/\(token)/index.html#fragment",
+            "https://browser.example.test/api/browser-stream/\(runID)/\(token)/other.html",
+        ] {
+            XCTAssertThrowsError(try SandboxLiveProtocol.streamURL(from: value, apiBaseURL: api, sessionID: runID), value)
+        }
+    }
+
+    func testStreamReadyHidesTokenAndFallsBackOnUnsafeURL() async throws {
+        let transport = MockSandboxLiveSocket()
+        let session = SandboxLiveSession(transport: transport)
+        await session.start(SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        ))
+        let startPayload = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(transport.messages.first).utf8)
+        ) as? [String: Any])
+        let runID = try XCTUnwrap(startPayload["sessionId"] as? String)
+        let secret = "123e4567-e89b-12d3-a456-426614174001"
+
+        transport.enqueue(#"{"type":"stream_ready","streamUrl":"/api/browser-stream/\#(runID)/\#(secret)/index.html"}"#)
+        await waitFor { session.streamURL != nil }
+        XCTAssertEqual(session.streamURL?.host, "browsers.hanasand.com")
+        XCTAssertFalse(session.serviceMessage.contains(secret))
+
+        transport.enqueue(#"{"type":"stream_ready","streamUrl":"https://attacker.example.test/api/browser-stream/\#(runID)/\#(secret)/index.html"}"#)
+        await waitFor { session.streamURL == nil && session.serviceMessage.contains("could not be verified") }
+        XCTAssertTrue(session.isActive, "An unsafe optional video URL should leave the authenticated frame session running.")
+        XCTAssertFalse(session.serviceMessage.contains(secret))
+
+        transport.enqueue(#"{"type":"ended"}"#)
+        await waitFor { session.state == .ended }
+        XCTAssertNil(session.streamURL)
+        XCTAssertEqual(session.streamWidth, 0)
+        XCTAssertEqual(session.streamHeight, 0)
+    }
+
     func testEncodesSupportedNativeInputAndRejectsUnsupportedInput() throws {
         let click = try XCTUnwrap(SandboxLiveProtocol.inputMessage(type: "click", x: 21, y: 42, button: 2))
         let clickPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(click.utf8)) as? [String: Any])
