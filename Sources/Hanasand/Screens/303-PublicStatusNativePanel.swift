@@ -155,7 +155,7 @@ struct PublicStatusNativePanel: View {
         if let incident = model.selectedIncident {
             NativeGroupPanel(title: incident.title, subtitle: "\(incident.displayService) · \(incident.checkName)") {
                 Button {
-                    model.clearSelectedIncident()
+                    Task { await model.clearSelectedIncident() }
                 } label: { Label("All incidents", systemImage: "chevron.left") }
                 .buttonStyle(.plain)
                 Label("\(incident.impact) · \(incident.status.capitalized)", systemImage: statusSymbol(incident.status == "resolved" ? "up" : "degraded"))

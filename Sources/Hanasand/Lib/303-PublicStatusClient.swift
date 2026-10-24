@@ -26,7 +26,10 @@ struct PublicStatusClient {
     }
 
     func dashboard() async throws -> PublicStatusPayload {
-        try await fetch(query: [URLQueryItem(name: "dashboard", value: "true")])
+        // The dashboard projection intentionally compacts incidents for the
+        // website's status overview. Desktop also exposes incident history,
+        // so use the full public snapshot used by the website's history view.
+        try await fetch(query: [])
     }
 
     func incident(id: String) async throws -> PublicStatusPayload {
@@ -117,8 +120,9 @@ final class PublicStatusViewModel: ObservableObject {
         }
     }
 
-    func clearSelectedIncident() {
+    func clearSelectedIncident() async {
         selectedIncident = nil
         incidentError = nil
+        await refresh()
     }
 }

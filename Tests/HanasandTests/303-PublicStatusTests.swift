@@ -53,7 +53,7 @@ final class PublicStatusTests: XCTestCase {
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.url?.host, "status.hanasand.com")
-        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems, [URLQueryItem(name: "dashboard", value: "true")])
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems, [])
         XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
     }
 
@@ -140,6 +140,26 @@ final class PublicStatusTests: XCTestCase {
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems, [URLQueryItem(name: "incident", value: "incident-42")])
+    }
+
+    func testReturningFromIncidentDetailReloadsFullHistorySnapshot() async throws {
+        let fullHistory = Data(#"{"overall":"up","monitoring":"live","checks":[],"history":[{"service":"infrastructure","check_name":"Browser Web","date":"2026-10-23","status":"up","incident_ids":[]}],"incidents":[{"id":"incident-42","service":"infrastructure","check_name":"Browser Web","title":"Browser Web interruption","impact":"Outage","status":"resolved","started_at":"2026-10-23T09:00:00Z","resolved_at":"2026-10-23T09:30:00Z","summary":"Requests recovered.","updates":[]},{"id":"incident-41","service":"infrastructure","check_name":"Browser Web","title":"Earlier interruption","impact":"Outage","status":"resolved","started_at":"2026-10-22T09:00:00Z","resolved_at":"2026-10-22T09:30:00Z","summary":"Earlier recovery.","updates":[]}] }"#.utf8)
+        let transport = PublicStatusFixtureTransport(responses: [(detailJSON, 200), (fullHistory, 200)])
+        let model = await MainActor.run {
+            PublicStatusViewModel(client: PublicStatusClient(send: { request in try await transport.send(request) }))
+        }
+
+        await model.loadIncident(id: "incident-42")
+        await model.clearSelectedIncident()
+
+        let selected = await model.selectedIncident
+        let payload = await model.payload
+        XCTAssertNil(selected)
+        XCTAssertEqual(payload?.incidents.map(\.id), ["incident-42", "incident-41"])
+        XCTAssertEqual(payload?.history.count, 1)
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(requests[1].url), resolvingAgainstBaseURL: false)?.queryItems, [])
     }
 
     func testEmptyPayloadAndRefreshErrorRemainDistinguishable() async throws {
