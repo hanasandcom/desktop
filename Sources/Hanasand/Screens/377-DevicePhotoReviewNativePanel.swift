@@ -35,6 +35,16 @@ struct DevicePhotoReviewProgress {
     }
 }
 
+enum DevicePhotoReviewSwipe {
+    static let threshold: CGFloat = 110
+
+    static func decision(for translation: CGSize) -> DevicePhotoReviewProgress.Decision? {
+        guard abs(translation.width) > threshold,
+              abs(translation.width) > abs(translation.height) else { return nil }
+        return translation.width < 0 ? .discard : .keep
+    }
+}
+
 struct DevicePhotoReviewNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @StateObject private var library = DevicePhotoLibrary()
@@ -45,6 +55,7 @@ struct DevicePhotoReviewNativePanel: View {
     @State private var previewRequestID: PHImageRequestID?
     @State private var previewedPhotoID = ""
     @State private var deleteError = ""
+    @State private var swipeTranslation: CGSize = .zero
 
     private var photoIDs: [String] { library.photos.map(\.localIdentifier) }
     private var currentPhoto: PHAsset? {
@@ -184,6 +195,20 @@ struct DevicePhotoReviewNativePanel: View {
         .padding(12)
         .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(theme.divider, lineWidth: 1))
+        .offset(x: swipeTranslation.width, y: swipeTranslation.height * 0.15)
+        .rotationEffect(.degrees(Double(max(-10, min(10, swipeTranslation.width / 22)))))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { swipeTranslation = $0.translation }
+                .onEnded { value in
+                    let decision = DevicePhotoReviewSwipe.decision(for: value.translation)
+                    withAnimation(.snappy(duration: 0.18)) { swipeTranslation = .zero }
+                    if let decision, !library.isDeleting {
+                        record(decision, asset: asset)
+                    }
+                }
+        )
     }
 
     private func record(_ decision: DevicePhotoReviewProgress.Decision, asset: PHAsset) {
@@ -196,6 +221,7 @@ struct DevicePhotoReviewNativePanel: View {
 
     private func requestPreview() {
         cancelPreview()
+        swipeTranslation = .zero
         guard let asset = currentPhoto else { return }
         let photoID = asset.localIdentifier
         previewedPhotoID = photoID

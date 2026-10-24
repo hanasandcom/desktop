@@ -2,6 +2,17 @@ import XCTest
 @testable import Hanasand
 
 final class DevicePhotoReviewNativePanelTests: XCTestCase {
+    func testSwipeDirectionsMatchMobileKeepAndDiscardActions() {
+        XCTAssertEqual(DevicePhotoReviewSwipe.decision(for: CGSize(width: 180, height: 12)), .keep)
+        XCTAssertEqual(DevicePhotoReviewSwipe.decision(for: CGSize(width: -180, height: 12)), .discard)
+    }
+
+    func testSwipeRequiresAHorizontalThresholdAndRejectsVerticalMovement() {
+        XCTAssertNil(DevicePhotoReviewSwipe.decision(for: CGSize(width: 110, height: 0)))
+        XCTAssertNil(DevicePhotoReviewSwipe.decision(for: CGSize(width: 80, height: 100)))
+        XCTAssertNil(DevicePhotoReviewSwipe.decision(for: CGSize(width: -90, height: -120)))
+    }
+
     func testKeepAndDiscardAdvanceThroughTheLoadedPage() {
         var progress = DevicePhotoReviewProgress()
         let ids = ["first", "second", "third"]
