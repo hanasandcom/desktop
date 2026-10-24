@@ -68,7 +68,7 @@ struct MonitoringCase: Identifiable, Decodable {
         }
 
         guard id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil,
-              ["open", "in_progress", "resolved", "closed"].contains(status),
+              ["open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"].contains(status),
               ["low", "medium", "high", "critical"].contains(severity), source == "monitoring",
               organizationId == nil, occurrences >= 0,
               Int64(id.dropFirst(id.hasPrefix("MON-") ? 4 : 3)) != nil else {
@@ -121,3 +121,20 @@ struct MonitoringCase: Identifiable, Decodable {
 
 struct MonitoringCaseList: Decodable { let items: [MonitoringCase] }
 struct MonitoringCaseDetail: Decodable { let `case`: MonitoringCase }
+
+enum MonitoringCaseResolutionPolicy {
+    static func allowsResolutionMethod(_ method: String?, status: String?) -> Bool {
+        guard let method else { return true }
+        return method == "ai" && ["resolved", "closed"].contains(status ?? "")
+    }
+}
+
+enum MonitoringCaseNativeRoute {
+    static let healthCheckPath = "/automation/health"
+
+    static func healthCheckQuery(automationID: String) -> [String: String]? {
+        let value = automationID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= 200 else { return nil }
+        return ["monitor": value]
+    }
+}

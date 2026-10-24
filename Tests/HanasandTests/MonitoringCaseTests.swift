@@ -31,6 +31,31 @@ final class MonitoringCaseTests: XCTestCase {
         }
     }
 
+    func testAcceptsEveryWebsiteCaseStatusFilterValue() throws {
+        let base = """
+        {"id":"HA-7","source":"monitoring","organizationId":null,"severity":"high","canManage":true,"occurrences":1,"notificationsEnabled":true}
+        """
+        for status in ["open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"] {
+            let item = try decode(base.replacingOccurrences(of: "\"severity\":", with: "\"status\":\"\(status)\",\"severity\":"))
+            XCTAssertEqual(item.status, status)
+        }
+    }
+
+    func testAIResolutionMethodRequiresResolvedOrClosedStatus() {
+        XCTAssertTrue(MonitoringCaseResolutionPolicy.allowsResolutionMethod(nil, status: "open"))
+        XCTAssertTrue(MonitoringCaseResolutionPolicy.allowsResolutionMethod("ai", status: "resolved"))
+        XCTAssertTrue(MonitoringCaseResolutionPolicy.allowsResolutionMethod("ai", status: "closed"))
+        XCTAssertFalse(MonitoringCaseResolutionPolicy.allowsResolutionMethod("ai", status: "open"))
+        XCTAssertFalse(MonitoringCaseResolutionPolicy.allowsResolutionMethod("human", status: "resolved"))
+        XCTAssertFalse(MonitoringCaseResolutionPolicy.allowsResolutionMethod("ai", status: nil))
+    }
+
+    func testHealthCheckLinkUsesNativeMonitorRouteContract() {
+        XCTAssertEqual(MonitoringCaseNativeRoute.healthCheckPath, "/automation/health")
+        XCTAssertEqual(MonitoringCaseNativeRoute.healthCheckQuery(automationID: "health-check-71"), ["monitor": "health-check-71"])
+        XCTAssertNil(MonitoringCaseNativeRoute.healthCheckQuery(automationID: "  "))
+    }
+
     func testDetectsPendingHumanReviewOnlyForUnconfirmedAiOrAutomationResolution() throws {
         let base = """
         {"id":"HA-7","source":"monitoring","organizationId":null,"status":"resolved","severity":"medium","canManage":false,"occurrences":1,"notificationsEnabled":true,"resolution":{"id":"event-1","type":"ai"}}

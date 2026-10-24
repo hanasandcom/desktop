@@ -20,14 +20,14 @@ private enum MonitoringCasePanel: String, CaseIterable {
 }
 
 private enum PendingCaseChange {
-    case status(String, String?)
+    case status(String, String?, Bool)
     case severity(String)
     case notifications(Bool)
     case comment(String)
     case confirmResolution(String)
     var title: String {
         switch self {
-        case .status(let status, _): return status == "resolved" ? "Resolve case?" : status == "closed" ? "Close case?" : "Change case status?"
+        case .status(let status, _, _): return status == "resolved" ? "Resolve case?" : status == "closed" ? "Close case?" : "Change case status?"
         case .severity: return "Change severity?"
         case .notifications(let enabled): return enabled ? "Enable notifications?" : "Disable notifications?"
         case .comment: return "Add comment?"
@@ -36,7 +36,9 @@ private enum PendingCaseChange {
     }
     var message: String {
         switch self {
-        case .status(let status, _): return status == "resolved" || status == "closed" ? "The case will be updated with your resolution comment." : "The case status will be updated."
+        case .status(let status, _, let aiAssisted):
+            if aiAssisted { return "The case will be marked as AI-resolved. A human must confirm the resolution after reviewing it." }
+            return status == "resolved" || status == "closed" ? "The case will be updated with your resolution comment." : "The case status will be updated."
         case .severity: return "The monitoring case severity will be updated."
         case .notifications(let enabled): return "Notifications will be \(enabled ? "enabled" : "disabled") for this case."
         case .comment: return "Your comment will be added to the monitoring case."
@@ -51,6 +53,10 @@ struct MonitoringCasesNativePanel: View {
     @State private var panel: MonitoringCasePanel = .overview
     @State private var pending: PendingCaseChange?
     @State private var confirmingCaseReview = false
+    @State private var aiAssistedResolution = false
+    @State private var commentSearch = ""
+    @State private var hideAutomatedComments = false
+    @State private var commentLimit = 30
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -73,7 +79,7 @@ struct MonitoringCasesNativePanel: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(["active", "all", "open", "in_progress", "resolved", "closed"], id: \.self) { value in
+                    ForEach(["active", "all", "open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"], id: \.self) { value in
                         FilterChip(title: value.replacingOccurrences(of: "_", with: " ").capitalized, active: model.monitoringCaseStatusFilter == value) { model.monitoringCaseStatusFilter = value }
                     }
                 }
@@ -163,6 +169,12 @@ struct MonitoringCasesNativePanel: View {
         } message: {
             Text("The earlier change remains unconfirmed. Check the refreshed case status and history before continuing.")
         }
+        .onChange(of: model.selectedMonitoringCase?.id) { _, _ in
+            aiAssistedResolution = false
+            commentSearch = ""
+            hideAutomatedComments = false
+            commentLimit = 30
+        }
     }
 
     @ViewBuilder private func detail(_ item: MonitoringCase) -> some View {
@@ -206,20 +218,22 @@ struct MonitoringCasesNativePanel: View {
             }
             HStack(spacing: 8) {
                 ActionButton(title: item.status == "in_progress" ? "Set open" : "Start progress", icon: "arrow.trianglehead.2.clockwise") {
-                    pending = .status(item.status == "open" ? "in_progress" : "open", nil)
+                    pending = .status(item.status == "open" ? "in_progress" : "open", nil, false)
                 }
                 if !["resolved", "closed"].contains(item.status) {
-                    ActionButton(title: "Resolve", icon: "checkmark.circle") { pending = .status("resolved", model.monitoringCaseComment) }
+                    ActionButton(title: "Resolve", icon: "checkmark.circle") { pending = .status("resolved", model.monitoringCaseComment, aiAssistedResolution) }
                         .disabled(model.monitoringCaseComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    ActionButton(title: "Close", icon: "xmark.circle") { pending = .status("closed", model.monitoringCaseComment) }
+                    ActionButton(title: "Close", icon: "xmark.circle") { pending = .status("closed", model.monitoringCaseComment, aiAssistedResolution) }
                         .disabled(model.monitoringCaseComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             if !["resolved", "closed"].contains(item.status) {
                 TextField("Resolution comment (required to resolve or close)", text: $model.monitoringCaseComment, axis: .vertical)
                     .lineLimit(2...5).textFieldStyle(.roundedBorder)
+                Toggle("Resolved by AI — requires human confirmation", isOn: $aiAssistedResolution)
+                    .toggleStyle(.checkbox)
             } else {
-                ActionButton(title: "Reopen case", icon: "arrow.uturn.backward") { pending = .status("open", nil) }
+                ActionButton(title: "Reopen case", icon: "arrow.uturn.backward") { pending = .status("open", nil, false) }
             }
         } else {
             Text("This case is read-only for the current session.").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
@@ -229,13 +243,46 @@ struct MonitoringCasesNativePanel: View {
            let resolutionID = MonitoringCase.stringValue(item.resolution, key: "id") {
             ActionButton(title: "Confirm resolution", icon: "checkmark.shield") { pending = .confirmResolution(resolutionID) }
         }
+        if let query = MonitoringCaseNativeRoute.healthCheckQuery(automationID: item.automationId) {
+            ActionButton(title: "View health check", icon: "heart.text.square") {
+                model.openNativeDashboard(path: MonitoringCaseNativeRoute.healthCheckPath, label: "Health Checks", query: query)
+            }
+        }
         if let check = item.currentCheck { evidence("Current check configuration", check) }
         if !item.relatedChecks.isEmpty { entries(item.relatedChecks, empty: "No related checks.") }
         if let diagnostics = item.diskDiagnostics { evidence("Disk diagnostics", diagnostics) }
     }
 
     @ViewBuilder private func comments(_ item: MonitoringCase) -> some View {
-        entries(item.comments, empty: "No comments yet.")
+        SearchFieldRow(placeholder: "Search comments", text: $commentSearch)
+        Toggle("Hide automated comments", isOn: $hideAutomatedComments).toggleStyle(.checkbox)
+        let filtered = item.comments.filter { value in
+            let author = MonitoringCase.stringValue(value, key: "author") ?? ""
+            let body = MonitoringCase.stringValue(value, key: "body") ?? ""
+            let actorType = MonitoringCase.stringValue(value, key: "actorType") ?? ""
+            let matchesActor = !hideAutomatedComments || actorType != "automation"
+            let matchesQuery = commentSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || "\(author) \(body)".localizedCaseInsensitiveContains(commentSearch)
+            return matchesActor && matchesQuery
+        }
+        if filtered.isEmpty {
+            Text(item.comments.isEmpty ? "No comments yet." : "No comments match these filters.")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textTertiary)
+        } else {
+            ForEach(Array(filtered.prefix(commentLimit).enumerated()), id: \.offset) { _, value in
+                NativeGroupPanel(title: MonitoringCase.stringValue(value, key: "author") ?? "Comment",
+                                 subtitle: MonitoringCase.stringValue(value, key: "createdAt") ?? "Time not recorded") {
+                    if MonitoringCase.stringValue(value, key: "actorType") == "automation" {
+                        Text("Automated").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                    }
+                    Text(MonitoringCase.stringValue(value, key: "body") ?? "")
+                        .font(.system(size: 12)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+                }
+            }
+            if filtered.count > commentLimit {
+                ActionButton(title: "Show more comments", icon: "ellipsis") { commentLimit += 30 }
+            }
+        }
         if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty && !model.monitoringCaseMutationNeedsReview {
             TextField("Add a comment", text: $model.monitoringCaseComment, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder)
             ActionButton(title: "Add comment", icon: "text.bubble") { pending = .comment(model.monitoringCaseComment) }
@@ -285,8 +332,8 @@ struct MonitoringCasesNativePanel: View {
         pending = nil
         Task {
             switch change {
-            case .status(let status, let comment):
-                await model.updateMonitoringCase(status: status, comment: comment)
+            case .status(let status, let comment, let aiAssisted):
+                await model.updateMonitoringCase(status: status, comment: comment, resolutionMethod: aiAssisted ? "ai" : nil)
             case .severity(let severity):
                 await model.updateMonitoringCase(severity: severity)
             case .notifications(let enabled):

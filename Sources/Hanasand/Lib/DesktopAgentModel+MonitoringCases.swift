@@ -15,6 +15,7 @@ private struct MonitoringCaseUpdate: Encodable {
     var severity: String?
     var notificationsEnabled: Bool?
     var comment: String?
+    var resolutionMethod: String?
     var confirmResolutionId: String?
 }
 private struct MonitoringCaseReceipt: Decodable { let ok: Bool }
@@ -47,8 +48,9 @@ enum MonitoringCaseMutationOutcome {
 extension DesktopAgentModel {
     var filteredMonitoringCases: [MonitoringCase] {
         monitoringCases.filter { item in
+            let active = !["resolved", "closed", "suppressed", "false_positive"].contains(item.status)
             let statusMatches = monitoringCaseStatusFilter == "all"
-                || monitoringCaseStatusFilter == "active" && ["open", "in_progress"].contains(item.status)
+                || monitoringCaseStatusFilter == "active" && active
                 || item.status == monitoringCaseStatusFilter
             let severityMatches = monitoringCaseSeverityFilter == "all" || item.severity == monitoringCaseSeverityFilter
             let ownerMatches = monitoringCaseOwnerFilter == "all"
@@ -182,7 +184,7 @@ extension DesktopAgentModel {
         }
     }
 
-    func updateMonitoringCase(status: String? = nil, severity: String? = nil, notificationsEnabled: Bool? = nil, comment: String? = nil, confirmResolutionId: String? = nil) async {
+    func updateMonitoringCase(status: String? = nil, severity: String? = nil, notificationsEnabled: Bool? = nil, comment: String? = nil, resolutionMethod: String? = nil, confirmResolutionId: String? = nil) async {
         guard !monitoringCaseMutationNeedsReview else {
             nativeDashboardStatus = "Refresh case records and review the previous change before making another change."
             return
@@ -191,13 +193,14 @@ extension DesktopAgentModel {
               let item = selectedMonitoringCase, item.canManage,
               status.map({ ["open", "in_progress", "resolved", "closed"].contains($0) }) ?? true,
               severity.map({ ["low", "medium", "high", "critical"].contains($0) }) ?? true,
+              MonitoringCaseResolutionPolicy.allowsResolutionMethod(resolutionMethod, status: status),
               comment.map({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 5000 }) ?? true,
-              confirmResolutionId.map({ !$0.isEmpty && status == nil && severity == nil && notificationsEnabled == nil && comment == nil }) ?? true,
+              confirmResolutionId.map({ !$0.isEmpty && status == nil && severity == nil && notificationsEnabled == nil && comment == nil && resolutionMethod == nil }) ?? true,
               !["resolved", "closed"].contains(status ?? "") || comment?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             nativeDashboardStatus = "Refresh a manageable case and provide a resolution comment before making this change."
             return
         }
-        let payload = MonitoringCaseUpdate(status: status, severity: severity, notificationsEnabled: notificationsEnabled, comment: comment?.trimmingCharacters(in: .whitespacesAndNewlines), confirmResolutionId: confirmResolutionId)
+        let payload = MonitoringCaseUpdate(status: status, severity: severity, notificationsEnabled: notificationsEnabled, comment: comment?.trimmingCharacters(in: .whitespacesAndNewlines), resolutionMethod: resolutionMethod, confirmResolutionId: confirmResolutionId)
         var mutationDispatched = false
         do {
             isLoadingNativeDashboard = true

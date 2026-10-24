@@ -29,7 +29,9 @@ struct CasesWorkspaceClient {
     }
 
     func loadMonitoringCases() async throws -> [MonitoringCase] {
-        let data = try await request(path: "cases/monitoring", query: [URLQueryItem(name: "view", value: "summary")])
+        var query = [URLQueryItem(name: "view", value: "summary")]
+        if let organizationID { query.append(URLQueryItem(name: "organizationId", value: organizationID)) }
+        let data = try await request(path: "cases/monitoring", query: query)
         let result: MonitoringCaseList
         do { result = try JSONDecoder().decode(MonitoringCaseList.self, from: data) }
         catch { throw CasesWorkspaceError.invalidResponse }
@@ -63,15 +65,57 @@ struct CasesWorkspaceClient {
 
     func merge(targetID: String, sourceIDs: [String]) async throws {
         let distinctSources = Array(Set(sourceIDs)).sorted()
+        let canonicalTarget = targetID.replacingOccurrences(of: "MON-", with: "HA-")
+        let canonicalSources = distinctSources.map { $0.replacingOccurrences(of: "MON-", with: "HA-") }
         guard targetID.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil,
-              !distinctSources.isEmpty, distinctSources.count <= 50,
-              distinctSources.allSatisfy({ $0.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil && $0 != targetID }) else {
+              !distinctSources.isEmpty, distinctSources.count <= 49, Set(canonicalSources).count == canonicalSources.count,
+              distinctSources.allSatisfy({ $0.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil && $0 != targetID }),
+              !canonicalSources.contains(canonicalTarget) else {
             throw CasesWorkspaceError.invalidInput
+        }
+        let currentCases: [MonitoringCase]
+        do {
+            currentCases = try await withThrowingTaskGroup(of: MonitoringCase.self) { group in
+                for id in [targetID] + distinctSources { group.addTask { try await loadMonitoringCaseDetail(id: id) } }
+                var results: [MonitoringCase] = []
+                for try await item in group { results.append(item) }
+                return results
+            }
+        } catch {
+            throw CasesWorkspaceError.preflightFailed(error.localizedDescription)
+        }
+        guard currentCases.count == distinctSources.count + 1,
+              currentCases.allSatisfy(\.canManage),
+              currentCases.allSatisfy({ $0.automationId == currentCases[0].automationId }),
+              currentCases.map({ $0.id.replacingOccurrences(of: "MON-", with: "HA-") }).sorted() == ([canonicalTarget] + canonicalSources).sorted() else {
+            throw CasesWorkspaceError.preflightFailed("Refresh and select current manageable cases from the same health check and workspace.")
         }
         var query: [URLQueryItem] = []
         if let organizationID { query.append(URLQueryItem(name: "organizationId", value: organizationID)) }
         let body = try JSONSerialization.data(withJSONObject: ["targetId": targetID, "sourceIds": distinctSources], options: [.sortedKeys])
-        _ = try await request(path: "cases/monitoring/merge", method: "POST", query: query, body: body)
+        let data = try await request(path: "cases/monitoring/merge", method: "POST", query: query, body: body)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["ok"] as? Bool == true,
+              object["targetId"] as? String == targetID,
+              let mergedIDs = object["mergedIds"] as? [String], mergedIDs.count == distinctSources.count,
+              Set(mergedIDs) == Set(distinctSources) else {
+            throw CasesWorkspaceError.invalidResponse
+        }
+    }
+
+    private func loadMonitoringCaseDetail(id: String) async throws -> MonitoringCase {
+        guard id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil else {
+            throw CasesWorkspaceError.invalidInput
+        }
+        var query = [URLQueryItem(name: "eventsPage", value: "0")]
+        if let organizationID { query.append(URLQueryItem(name: "organizationId", value: organizationID)) }
+        let data = try await request(path: "cases/monitoring/\(id)", query: query)
+        let result: MonitoringCaseDetail
+        do { result = try JSONDecoder().decode(MonitoringCaseDetail.self, from: data) }
+        catch { throw CasesWorkspaceError.invalidResponse }
+        let canonicalID = id.replacingOccurrences(of: "MON-", with: "HA-")
+        guard result.case.id == id || result.case.id == canonicalID else { throw CasesWorkspaceError.invalidResponse }
+        return result.case
     }
 
     private var organizationID: String? {
@@ -125,6 +169,7 @@ struct CasesWorkspaceClient {
 
 enum CasesWorkspaceError: LocalizedError, Equatable {
     case signInRequired, impersonationUnsupported, invalidEndpoint, invalidResponse, invalidInput, transport
+    case preflightFailed(String)
     case requestFailed(Int)
 
     var errorDescription: String? {
@@ -135,10 +180,47 @@ enum CasesWorkspaceError: LocalizedError, Equatable {
         case .invalidResponse: "The cases service returned data that could not be verified. Refresh and review."
         case .invalidInput: "Review the case details and selected monitoring cases, then try again."
         case .transport: "The case request did not complete. Refresh to check its outcome before retrying."
+        case .preflightFailed(let message): message
         case .requestFailed(401): "Sign in again to access cases."
         case .requestFailed(403): "Current organization access could not be verified."
         case .requestFailed(let status): "The case request failed (HTTP \(status))."
         }
+    }
+}
+
+enum CasesWorkspaceMutationOutcome {
+    static func needsReview(for error: Error) -> Bool {
+        guard let error = error as? CasesWorkspaceError else { return false }
+        return switch error {
+        case .transport, .invalidResponse: true
+        case .requestFailed(408): true
+        case .requestFailed(let status): status >= 500
+        default: false
+        }
+    }
+}
+
+struct CasesWorkspaceMutationReview: Equatable {
+    private(set) var operation: String?
+    private(set) var refreshComplete = false
+    var isLocked: Bool { operation != nil }
+    var canAcknowledge: Bool { isLocked && refreshComplete }
+
+    mutating func requireReview(for operation: String) {
+        self.operation = operation
+        refreshComplete = false
+    }
+
+    mutating func recordRefresh(monitoringLoaded: Bool, intelligenceLoaded: Bool) {
+        guard isLocked else { return }
+        refreshComplete = monitoringLoaded && intelligenceLoaded
+    }
+
+    mutating func acknowledge() -> Bool {
+        guard canAcknowledge else { return false }
+        operation = nil
+        refreshComplete = false
+        return true
     }
 }
 
