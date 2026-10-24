@@ -32,11 +32,11 @@ final class NativeSharePreviewTests: XCTestCase {
     }
 
     func testNonHTTPWorkspaceAndUnsafeAliasesDoNotPreview() throws {
-        let tree = try tree(#"[{"id":"root","name":"notes","type":"folder","children":[{"id":"note","name":"notes.md","type":"file"}]}]"#)
-        XCTAssertNil(NativeSharePreview.target(alias: "notes", tree: tree, rootContent: "plain text", activeContent: nil))
+        let notesTree = try tree(#"[{"id":"root","name":"notes","type":"folder","children":[{"id":"note","name":"notes.md","type":"file"}]}]"#)
+        XCTAssertNil(NativeSharePreview.target(alias: "notes", tree: notesTree, rootContent: "plain text", activeContent: nil))
 
         let webTree = try tree(#"[{"id":"root","name":"project","type":"folder","children":[{"id":"html","name":"index.html","type":"file"}]}]"#)
-        for alias in ["", "../evil", "two labels", "bad_name", "-start", "end-", "a..b", "a/evil", "a@evil.test", String(repeating: "a", count: 241)] {
+        for alias in ["", "../evil", "two labels", "UPPER", "-start", "end-", "a..b", "a/evil", "a@evil.test", String(repeating: "a", count: 241)] {
             XCTAssertNil(NativeSharePreview.target(alias: alias, tree: webTree, rootContent: nil, activeContent: nil), "Unexpected accepted alias: \(alias)")
         }
     }

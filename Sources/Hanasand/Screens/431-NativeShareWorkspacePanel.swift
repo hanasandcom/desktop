@@ -78,7 +78,7 @@ struct NativeShareWorkspacePanel: View {
                         ActionButton(title: "Open chat", icon: "bubble.left.and.bubble.right") { onOpenChat() }
                             .disabled(!interactionPolicy.allowsNavigationAndTreeMutations)
                     }
-                    if let previewURL {
+                    if previewURL != nil {
                         ActionButton(title: isPreviewVisible ? "Hide preview" : "Show preview", icon: "rectangle.on.rectangle") {
                             isPreviewVisible.toggle()
                         }
