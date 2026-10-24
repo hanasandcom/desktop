@@ -26,6 +26,71 @@ final class DwmCaseWorkflowTests: XCTestCase {
         XCTAssertTrue(requests.contains { $0.url?.path == "/api/findings/webhook-receiver" && $0.httpMethod == "GET" })
     }
 
+    func testReportExportUsesSelectedScopedEvidenceAndRejectsMismatchedResponse() async throws {
+        var settings = makeSettings(organization: "org-1")
+        settings.selectedOrganizationUserID = settings.userID
+        var requests: [URLRequest] = []
+        let client = try DwmCaseWorkflowClient(settings: settings) { request in
+            requests.append(request)
+            return (self.reportExportResponse(format: "json"), self.response(request))
+        }
+        let snapshot = DwmCaseWorkflowSnapshot(export: [
+            "evidenceSummary": .array([.object(["id": .string("evidence-1")]), .object(["id": .string("evidence-2")])]),
+        ], destinations: [], deliveries: [], receiverReceipts: [], customerNotificationReceipts: [],
+            caseID: "case-1", organizationID: "org-1", alertID: "alert-1", canManageDestinations: false, liveDeliveryEnabled: false)
+        let report = try await client.reportExport(caseID: "case-1", evidenceIDs: ["evidence-2", "evidence-1"], format: "json",
+            alertID: "alert-1", caseDetail: caseDetail(readOnly: true, enabledAction: false, organizationID: "org-1"),
+            snapshot: snapshot, currentSettings: settings)
+
+        XCTAssertEqual(report["schemaVersion"]?.stringValue, "analyst.case_export.v1")
+        XCTAssertEqual(requests.count, 1)
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        let query = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.contains { $0.name == "report" && $0.value == "true" })
+        XCTAssertTrue(query.contains { $0.name == "format" && $0.value == "json" })
+        XCTAssertEqual(query.filter { $0.name == "evidenceId" }.compactMap(\.value), ["evidence-1", "evidence-2"])
+        XCTAssertEqual(query.first { $0.name == "organizationId" }?.value, "org-1")
+
+        let stixClient = try DwmCaseWorkflowClient(settings: settings) { request in
+            XCTAssertTrue(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains { $0.name == "format" && $0.value == "stix" } == true)
+            return (self.reportExportResponse(format: "stix"), self.response(request))
+        }
+        let stixReport = try await stixClient.reportExport(caseID: "case-1", evidenceIDs: ["evidence-1", "evidence-2"], format: "stix",
+            alertID: "alert-1", caseDetail: caseDetail(readOnly: true, enabledAction: false, organizationID: "org-1"),
+            snapshot: snapshot, currentSettings: settings)
+        XCTAssertEqual(stixReport["bundle"]?["type"]?.stringValue, "bundle")
+
+        let mismatched = try DwmCaseWorkflowClient(settings: settings) { request in
+            let body = String(data: self.reportExportResponse(format: "json"), encoding: .utf8)!.replacingOccurrences(of: "evidence-2", with: "evidence-3")
+            return (Data(body.utf8), self.response(request))
+        }
+        do {
+            _ = try await mismatched.reportExport(caseID: "case-1", evidenceIDs: ["evidence-1", "evidence-2"], format: "json",
+                alertID: "alert-1", caseDetail: caseDetail(readOnly: true, enabledAction: false, organizationID: "org-1"),
+                snapshot: snapshot, currentSettings: settings)
+            XCTFail("A report for a different evidence selection must be rejected.")
+        } catch { XCTAssertEqual(error as? DwmCaseWorkflowError, .malformedResponse) }
+
+        do {
+            _ = try await client.reportExport(caseID: "case-1", evidenceIDs: ["evidence-1", "not-loaded"], format: "json",
+                alertID: "alert-1", caseDetail: caseDetail(readOnly: true, enabledAction: false, organizationID: "org-1"),
+                snapshot: snapshot, currentSettings: settings)
+            XCTFail("Evidence outside the loaded case snapshot must not be exported.")
+        } catch { XCTAssertEqual(error as? DwmCaseWorkflowError, .invalidInput) }
+
+        let oversized = try DwmCaseWorkflowClient(settings: settings) { request in
+            (self.reportExportResponse(format: "json", paddingBytes: 256_001), self.response(request))
+        }
+        do {
+            _ = try await oversized.reportExport(caseID: "case-1", evidenceIDs: ["evidence-1", "evidence-2"], format: "json",
+                alertID: "alert-1", caseDetail: caseDetail(readOnly: true, enabledAction: false, organizationID: "org-1"),
+                snapshot: snapshot, currentSettings: settings)
+            XCTFail("An export above the API report size limit must be rejected.")
+        } catch { XCTAssertEqual(error as? DwmCaseWorkflowError, .malformedResponse) }
+    }
+
     func testNotificationIsDryRunAndRequiresDurableReceipt() async throws {
         let client = try DwmCaseWorkflowClient(settings: makeSettings()) { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -258,6 +323,27 @@ final class DwmCaseWorkflowTests: XCTestCase {
 
     private func integrationBody() -> Data {
         Data(#"{"destinations":[{"id":"dest-1","orgId":"org-1","name":"Receiver","kind":"webhook","status":"active"}],"destinationLifecycle":[],"destinationTests":[],"destinationAdminProof":{"access":{"canManage":true}}}"#.utf8)
+    }
+
+    private func reportExportResponse(format: String, paddingBytes: Int = 0) -> Data {
+        let checksum = String(repeating: "b", count: 64)
+        let policy: [String: Any] = [
+            "direction": "outbound_third_party", "format": format == "stix" ? "stix-2.1" : "hanasand-json",
+            "caseId": "case-1", "alertId": "alert-1", "organizationId": "org-1",
+            "evidenceIds": ["evidence-1", "evidence-2"], "evidenceCount": 2, "exportChecksum": checksum,
+        ]
+        var report: [String: Any] = ["exportChecksum": checksum, "reportPolicy": policy]
+        if format == "json" {
+            report["schemaVersion"] = "analyst.case_export.v1"
+            report["evidence"] = [["id": "evidence-1"], ["id": "evidence-2"]]
+        } else {
+            report["bundle"] = ["type": "bundle", "objects": [
+                ["type": "identity"], ["type": "report"], ["type": "x-ti-evidence"], ["type": "x-ti-evidence"],
+            ]]
+            report["standardsValidation"] = ["standard": "STIX 2.1", "valid": true]
+        }
+        if paddingBytes > 0 { report["padding"] = String(repeating: "x", count: paddingBytes) }
+        return try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
     }
 
     private func response(_ request: URLRequest) -> HTTPURLResponse {

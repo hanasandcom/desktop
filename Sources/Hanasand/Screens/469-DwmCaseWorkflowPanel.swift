@@ -109,6 +109,12 @@ struct DwmCaseWorkflowPanel: View {
             }.disabled(isWriting || pendingReconciliation != nil || !value.canManageDestinations)
             Text("Selected \(selectedEvidenceIDs.count) of up to 25 evidence rows · \(alertID ?? "No linked alert")")
                 .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+            HStack(spacing: 8) {
+                ActionButton(title: "Save JSON report", icon: "square.and.arrow.down") { Task { await saveReport(format: "json") } }
+                    .disabled(isWriting || pendingReconciliation != nil || selectedEvidenceIDs.isEmpty || alertID == nil)
+                ActionButton(title: "Save STIX 2.1 report", icon: "square.and.arrow.down") { Task { await saveReport(format: "stix") } }
+                    .disabled(isWriting || pendingReconciliation != nil || selectedEvidenceIDs.isEmpty || alertID == nil)
+            }
             if let blockReason { Text(blockReason).font(.system(size: 11)).foregroundStyle(theme.textTertiary) }
             if !value.liveDeliveryEnabled { Text("Live delivery is disabled by the current server readiness policy. Dry runs remain available.").font(.system(size: 11)).foregroundStyle(theme.textTertiary) }
             HStack(spacing: 8) {
@@ -147,6 +153,40 @@ struct DwmCaseWorkflowPanel: View {
         Binding(get: { selectedEvidenceIDs.contains(id) }, set: { selected in
             if selected { selectedEvidenceIDs.insert(id) } else { selectedEvidenceIDs.remove(id) }
         })
+    }
+
+    @MainActor private func saveReport(format: String) async {
+        guard let snapshot, let alertID, !selectedEvidenceIDs.isEmpty else { return }
+        isWriting = true; error = ""; notice = ""
+        do {
+            let expectedSettings = model.settings
+            let client = try DwmCaseWorkflowClient(settings: expectedSettings, organizationIDOverride: organizationID)
+            let report = try await client.reportExport(caseID: caseID, evidenceIDs: selectedEvidenceIDs.sorted(), format: format,
+                alertID: alertID, caseDetail: detail, snapshot: snapshot, currentSettings: expectedSettings)
+            guard expectedSettings == model.settings else { throw DwmCaseWorkflowError.scopeChanged }
+            let data = try JSONSerialization.data(withJSONObject: report.mapValues(\.foundationValue), options: [.prettyPrinted, .sortedKeys])
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = "\(safeFilenameComponent(caseID))-\(format)-report.json"
+            guard panel.runModal() == .OK, let url = panel.url else {
+                notice = "Report export cancelled."
+                isWriting = false
+                return
+            }
+            try data.write(to: url, options: .atomic)
+            notice = "\(format.uppercased()) report saved to \(url.lastPathComponent)."
+        } catch {
+            self.error = error.localizedDescription
+        }
+        isWriting = false
+    }
+
+    private func safeFilenameComponent(_ value: String) -> String {
+        let cleaned = value.map { character in
+            character.isLetter || character.isNumber || character == "-" || character == "_" ? character : "_"
+        }
+        return String(cleaned.prefix(100))
     }
 
     @MainActor private func refresh() async {

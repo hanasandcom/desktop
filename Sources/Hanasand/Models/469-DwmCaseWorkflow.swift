@@ -6,18 +6,20 @@ struct DwmCaseWorkflowSnapshot: Equatable {
     let deliveries: [[String: IntelligenceCaseJSON]]
     let receiverReceipts: [[String: IntelligenceCaseJSON]]
     let customerNotificationReceipts: [[String: IntelligenceCaseJSON]]
+    let caseID: String?
     let organizationID: String?
     let alertID: String?
     let canManageDestinations: Bool
     let liveDeliveryEnabled: Bool
     init(export: [String: IntelligenceCaseJSON], destinations: [IntegrationDestination], deliveries: [[String: IntelligenceCaseJSON]],
          receiverReceipts: [[String: IntelligenceCaseJSON]], customerNotificationReceipts: [[String: IntelligenceCaseJSON]],
-         organizationID: String?, alertID: String?, canManageDestinations: Bool, liveDeliveryEnabled: Bool) {
+         caseID: String? = nil, organizationID: String?, alertID: String?, canManageDestinations: Bool, liveDeliveryEnabled: Bool) {
         self.export = export
         self.destinations = destinations
         self.deliveries = deliveries
         self.receiverReceipts = receiverReceipts
         self.customerNotificationReceipts = customerNotificationReceipts
+        self.caseID = caseID
         self.organizationID = organizationID
         self.alertID = alertID
         self.canManageDestinations = canManageDestinations

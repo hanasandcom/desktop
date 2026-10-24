@@ -52,7 +52,7 @@ struct DwmCaseWorkflowClient {
         }
 
         guard let organizationID, let alertID, !alertID.isEmpty else {
-            return DwmCaseWorkflowSnapshot(export: export, destinations: [], deliveries: [], receiverReceipts: [], customerNotificationReceipts: notificationRows, organizationID: organizationID, alertID: alertID, canManageDestinations: false, liveDeliveryEnabled: false)
+            return DwmCaseWorkflowSnapshot(export: export, destinations: [], deliveries: [], receiverReceipts: [], customerNotificationReceipts: notificationRows, caseID: caseID, organizationID: organizationID, alertID: alertID, canManageDestinations: false, liveDeliveryEnabled: false)
         }
         let integration = try await IntegrationClient(apiBaseURL: URL(string: settings.apiBaseURL)!, userID: settings.userID,
             token: settings.authToken, organizationID: organizationID, impersonationToken: settings.impersonationToken,
@@ -74,9 +74,70 @@ struct DwmCaseWorkflowClient {
             throw DwmCaseWorkflowError.scopeChanged
         }
         return DwmCaseWorkflowSnapshot(export: export, destinations: destinationRows, deliveries: deliveryRows, receiverReceipts: receiptRows, customerNotificationReceipts: notificationRows,
+                                       caseID: caseID,
                                        organizationID: organizationID, alertID: alertID,
                                        canManageDestinations: integration.destinationAdminProof.access?.canManage == true,
                                        liveDeliveryEnabled: liveEnabled)
+    }
+
+    func reportExport(caseID: String, evidenceIDs: [String], format: String, alertID: String,
+                      caseDetail: IntelligenceCaseDetailEnvelope, snapshot: DwmCaseWorkflowSnapshot,
+                      currentSettings: HanasandDesktopSettings) async throws -> [String: IntelligenceCaseJSON] {
+        guard currentSettings == settings, let organizationID,
+              IntelligenceCasesClient.validCaseID(caseID), caseDetail.caseRecord.id == caseID,
+              caseDetail.alertContext["id"]?.stringValue == alertID,
+              snapshot.caseID == caseID, snapshot.organizationID == organizationID, snapshot.alertID == alertID,
+              ["json", "stix"].contains(format), !evidenceIDs.isEmpty, evidenceIDs.count <= 25,
+              Set(evidenceIDs).count == evidenceIDs.count,
+              evidenceIDs.allSatisfy({ id in snapshot.evidence.contains { $0["id"]?.stringValue == id } }) else {
+            throw DwmCaseWorkflowError.invalidInput
+        }
+
+        var query = scopeQuery(alertID: alertID)
+        query.append(URLQueryItem(name: "report", value: "true"))
+        query.append(URLQueryItem(name: "format", value: format))
+        evidenceIDs.sorted().forEach { query.append(URLQueryItem(name: "evidenceId", value: $0)) }
+        let report = try await getJSON(service: .ti, path: "/v1/cases/\(encoded(caseID))/export", query: query)
+        let policy = report["reportPolicy"]?.objectValue ?? [:]
+        let policyEvidenceIDs = policy["evidenceIds"]?.arrayValue.map(\.stringValue) ?? []
+        let expectedFormat = format == "stix" ? "stix-2.1" : "hanasand-json"
+        guard let serialized = try? JSONSerialization.data(withJSONObject: report.mapValues(\.foundationValue), options: [.sortedKeys]) else {
+            throw DwmCaseWorkflowError.malformedResponse
+        }
+        guard serialized.count <= 256_000,
+              Self.reportContentMatches(report, format: format, evidenceCount: evidenceIDs.count),
+              let checksum = report["exportChecksum"]?.stringValue,
+              checksum.range(of: "^[A-Fa-f0-9]{64}$", options: .regularExpression) != nil,
+              policy["direction"]?.stringValue == "outbound_third_party",
+              policy["format"]?.stringValue == expectedFormat,
+              policy["caseId"]?.stringValue == caseID,
+              policy["alertId"]?.stringValue == alertID,
+              policy["organizationId"]?.stringValue == organizationID,
+              policy["exportChecksum"]?.stringValue == checksum,
+              policy["evidenceCount"]?.numberValue == Double(evidenceIDs.count),
+              policyEvidenceIDs == evidenceIDs.sorted() else {
+            throw DwmCaseWorkflowError.malformedResponse
+        }
+        return report
+    }
+
+    private static func reportContentMatches(_ report: [String: IntelligenceCaseJSON], format: String, evidenceCount: Int) -> Bool {
+        if format == "json" {
+            return report["schemaVersion"]?.stringValue == "analyst.case_export.v1"
+                && report["evidence"]?.arrayValue.count == evidenceCount
+        }
+        let bundle = report["bundle"]?.objectValue ?? [:]
+        let objects = bundle["objects"]?.arrayValue.map(\.objectValue) ?? []
+        let types = objects.compactMap { $0["type"]?.stringValue }
+        let validation = report["standardsValidation"]?.objectValue ?? [:]
+        return bundle["type"]?.stringValue == "bundle"
+            && objects.count == evidenceCount + 2
+            && types.filter { $0 == "identity" }.count == 1
+            && types.filter { $0 == "report" }.count == 1
+            && types.filter { $0 == "x-ti-evidence" }.count == evidenceCount
+            && types.allSatisfy { ["identity", "report", "x-ti-evidence"].contains($0) }
+            && validation["valid"] == .bool(true)
+            && validation["standard"]?.stringValue == "STIX 2.1"
     }
 
     func notifyCustomerDryRun(caseID: String, note: String, currentSettings: HanasandDesktopSettings,
