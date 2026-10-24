@@ -19,12 +19,21 @@ struct ImagesJourneyNativePanel: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Picker("Images", selection: $section) {
-                ForEach(Section.allCases) { item in
-                    Text(item.title).tag(item)
+            ViewThatFits(in: .horizontal) {
+                Picker("Images", selection: $section) {
+                    ForEach(Section.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
                 }
+                .pickerStyle(.segmented)
+
+                Picker("Images", selection: $section) {
+                    ForEach(Section.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal, 20)
             switch section {
             case .library: GalleryLibraryNativePanel(imagesOnly: libraryMode.mediaFilterIsImageOnly)
