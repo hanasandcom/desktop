@@ -10,6 +10,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+func nativeVMDetailSelection(_ routeVMName: String?, from items: [NativeVMInventoryItem]) -> NativeVMInventoryItem? {
+    guard let routeVMName, !routeVMName.isEmpty else { return nil }
+    return items.first { $0.name == routeVMName }
+}
+
 struct VMsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
@@ -31,7 +36,7 @@ struct VMsNativePanel: View {
     @State private var detailStatus = ""
 
     init(initialVMID: String? = nil) {
-        _inventoryFilter = State(initialValue: NativeVMInventoryFilter(query: initialVMID ?? ""))
+        _selectedVMName = State(initialValue: initialVMID)
     }
 
     let columns = [
@@ -107,7 +112,7 @@ struct VMsNativePanel: View {
                 NativeEmptyState(title: "Sign in to load VMs", message: "VM inventory requires an authenticated Hanasand session.")
             }
 
-            if let selectedVM = inventorySnapshot?.items.first(where: { $0.name == selectedVMName }) {
+            if let selectedVM = nativeVMDetailSelection(selectedVMName, from: inventorySnapshot?.items ?? []) {
                 vmDetails(selectedVM)
             }
         }

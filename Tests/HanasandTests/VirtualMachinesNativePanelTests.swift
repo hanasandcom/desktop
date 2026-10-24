@@ -2,6 +2,15 @@ import XCTest
 @testable import Hanasand
 
 final class VirtualMachinesNativePanelTests: XCTestCase {
+    func testRouteDetailSelectionOpensOnlyTheExactVMAndDoesNotBecomeSearchText() {
+        let items = [Self.vm("vm-17"), Self.vm("vm-170")]
+
+        XCTAssertEqual(nativeVMDetailSelection("vm-17", from: items)?.name, "vm-17")
+        XCTAssertNil(nativeVMDetailSelection("vm-1", from: items))
+        XCTAssertNil(nativeVMDetailSelection(nil, from: items))
+        XCTAssertEqual(nativeVMFilterInventory(items, filter: NativeVMInventoryFilter()).map(\.name), ["vm-17", "vm-170"])
+    }
+
     func testInventoryFiltersNamePowerLifecycleEditorAndMinimumResources() {
         let items = [
             Self.vm("alpha", status: "running", cpu: "4", memory: "8GiB", editors: ["editor-1"]),

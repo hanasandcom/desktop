@@ -2,6 +2,21 @@ import XCTest
 @testable import Hanasand
 
 final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
+    func testVMDetailedRoutesKeepExactNativeDetailContext() {
+        let inventory = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/vms")
+        XCTAssertEqual(inventory?.path, "/vms")
+        XCTAssertNil(inventory?.detailID)
+
+        let directDetail = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/vms/vm-17?tab=metrics")
+        XCTAssertEqual(directDetail?.path, "/vms")
+        XCTAssertEqual(directDetail?.detailID, "vm-17")
+        XCTAssertEqual(directDetail?.query["tab"], "metrics")
+
+        let dashboardDetail = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/vms/vm-18")
+        XCTAssertEqual(dashboardDetail?.path, "/vms")
+        XCTAssertEqual(dashboardDetail?.detailID, "vm-18")
+    }
+
     func testCasesWorkspaceAndPluralPublicProfileRoutesKeepTheirNativeTargets() {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/cases")?.path, "/cases")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/cases")?.path, "/cases")
