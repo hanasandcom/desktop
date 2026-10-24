@@ -9,6 +9,7 @@ enum NativeDatabaseClientError: LocalizedError {
     case invalidResponse
     case requestFailed(Int)
     case uncertainOutcome
+    case invalidConfirmation
 
     var requiresSQLReviewBeforeRetry: Bool {
         switch self {
@@ -26,7 +27,8 @@ enum NativeDatabaseClientError: LocalizedError {
         case .invalidSelection: "Choose a database or table from the current inventory."
         case .invalidResponse: "The database service returned an invalid response. Refresh to try again."
         case let .requestFailed(status): "Database request failed (HTTP \(status))."
-        case .uncertainOutcome: "The statement outcome is unknown. Refresh the database and review its current state before another submission."
+        case .uncertainOutcome: "The operation outcome is unknown. Refresh and review its current state before another submission."
+        case .invalidConfirmation: "Type the exact database restore confirmation before starting the operation."
         }
     }
 }
@@ -106,6 +108,101 @@ struct NativeDatabaseClient {
         let data = try await request(base: internalBaseURL, path: "db/health", method: "GET")
         guard let health = try? JSONDecoder().decode(NativeDatabaseHealth.self, from: data) else { throw NativeDatabaseClientError.invalidResponse }
         return health
+    }
+
+    func loadBackupDashboard() async throws -> NativeBackupDashboard {
+        let data = try await request(base: internalBaseURL, path: "backup/dashboard", method: "GET")
+        guard let dashboard = try? JSONDecoder().decode(NativeBackupDashboard.self, from: data),
+              dashboard.backups.allSatisfy({ !$0.id.isEmpty && !$0.status.isEmpty }),
+              dashboard.files.allSatisfy({ !$0.file.isEmpty }) else {
+            throw NativeDatabaseClientError.invalidResponse
+        }
+        return dashboard
+    }
+
+    func runBackup(access: NativeDatabaseAccess, dashboard: NativeBackupDashboard) async throws -> NativeBackupActionResult {
+        try requireBackupWriter(access)
+        try validateBackupCanStart(dashboard)
+        return try await performBackupAction(path: "backup", expectedKind: "backup", body: [:])
+    }
+
+    func verifyBackup(_ file: NativeBackupFile, access: NativeDatabaseAccess, dashboard: NativeBackupDashboard) async throws -> NativeBackupActionResult {
+        try requireBackupWriter(access)
+        try validateBackupCanStart(dashboard)
+        try requireCurrentFile(file, in: dashboard)
+        return try await performBackupAction(path: "backup/verify", expectedKind: "verify", body: ["file": file.file])
+    }
+
+    func deleteBackup(_ file: NativeBackupFile, access: NativeDatabaseAccess, dashboard: NativeBackupDashboard) async throws -> NativeBackupActionResult {
+        try requireBackupWriter(access)
+        try validateBackupCanStart(dashboard)
+        try requireCurrentFile(file, in: dashboard)
+        return try await performBackupAction(path: "backup/delete", expectedKind: "delete", body: ["file": file.file])
+    }
+
+    func runRestoreDrill(_ file: NativeBackupFile, targetDatabase: String, confirmation: String,
+                         access: NativeDatabaseAccess, dashboard: NativeBackupDashboard) async throws -> NativeBackupActionResult {
+        try requireBackupWriter(access)
+        try validateBackupCanStart(dashboard)
+        try requireCurrentFile(file, in: dashboard)
+        let target = targetDatabase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard target.range(of: "^restore_drill_[a-z0-9_]{1,48}$", options: .regularExpression) != nil,
+              !dashboard.backups.contains(where: { $0.database?.lowercased() == target }),
+              confirmation == "RESTORE \(target)" else { throw NativeDatabaseClientError.invalidConfirmation }
+        return try await performBackupAction(path: "backup/restore", expectedKind: "restore_drill", body: [
+            "file": file.file, "targetDatabase": target, "confirmation": confirmation,
+        ])
+    }
+
+    func runLiveRestore(_ file: NativeBackupFile, confirmation: String, access: NativeDatabaseAccess,
+                        dashboard: NativeBackupDashboard) async throws -> NativeBackupActionResult {
+        try requireBackupWriter(access)
+        try validateBackupCanStart(dashboard)
+        try requireCurrentFile(file, in: dashboard)
+        guard let database = dashboard.backups.first?.database, !database.isEmpty,
+              confirmation == "RESTORE \(database)" else { throw NativeDatabaseClientError.invalidConfirmation }
+        return try await performBackupAction(path: "backup/restore-live", expectedKind: "restore_live", body: [
+            "file": file.file, "confirmation": confirmation,
+        ])
+    }
+
+    private func requireBackupWriter(_ access: NativeDatabaseAccess) throws {
+        guard access.scope == scope, access.allowed, access.canEdit, !isImpersonating else { throw NativeDatabaseClientError.readOnly }
+    }
+
+    private func validateBackupCanStart(_ dashboard: NativeBackupDashboard) throws {
+        guard dashboard.errors.isEmpty, !dashboard.backups.isEmpty,
+              !dashboard.backups.contains(where: { $0.currentOperation != nil }) else {
+            throw NativeDatabaseClientError.invalidSelection
+        }
+    }
+
+    private func requireCurrentFile(_ file: NativeBackupFile, in dashboard: NativeBackupDashboard) throws {
+        guard dashboard.files.contains(where: { $0.file == file.file && $0.service == file.service }) else {
+            throw NativeDatabaseClientError.invalidSelection
+        }
+    }
+
+    private func performBackupAction(path: String, expectedKind: String, body: [String: String]) async throws -> NativeBackupActionResult {
+        do {
+            let data = try await request(base: internalBaseURL, path: path, method: "POST", body: JSONSerialization.data(withJSONObject: body))
+            guard let result = try? JSONDecoder().decode(NativeBackupActionResult.self, from: data),
+                  !result.operation.id.isEmpty,
+                  result.operation.kind == expectedKind,
+                  ["running", "succeeded", "failed", "interrupted"].contains(result.operation.status) else {
+                throw NativeDatabaseClientError.uncertainOutcome
+            }
+            return result
+        } catch let error as NativeDatabaseClientError {
+            switch error {
+            case .accessDenied, .requestFailed, .invalidEndpoint, .readOnly, .invalidSelection, .invalidConfirmation, .signInRequired:
+                throw error
+            default:
+                throw NativeDatabaseClientError.uncertainOutcome
+            }
+        } catch {
+            throw NativeDatabaseClientError.uncertainOutcome
+        }
     }
 
     func browse(_ overview: NativeDatabaseOverview, instanceID: String, databaseName: String, mode: String,
@@ -195,6 +292,7 @@ struct NativeDatabaseClient {
               http.url?.port == base.port else { throw NativeDatabaseClientError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 || http.statusCode == 403 { throw NativeDatabaseClientError.accessDenied }
+            if body != nil, http.statusCode >= 500 { throw NativeDatabaseClientError.uncertainOutcome }
             if body != nil { throw NativeDatabaseClientError.uncertainOutcome }
             throw NativeDatabaseClientError.requestFailed(http.statusCode)
         }

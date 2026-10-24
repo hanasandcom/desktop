@@ -43,6 +43,12 @@ struct DatabaseNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
+                ActionButton(title: "Backups", icon: "externaldrive.badge.timemachine") {
+                    model.openNativeDashboard(path: "/db/backups", label: "Backups")
+                }
+                ActionButton(title: "Restore drill", icon: "arrow.counterclockwise") {
+                    model.openNativeDashboard(path: "/db/restore", label: "Restore drill")
+                }
                 Spacer()
                 ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await refresh() } }
                     .disabled(isLoading || isBrowsing || isRunningSQL)
