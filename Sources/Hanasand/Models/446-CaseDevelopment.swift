@@ -25,6 +25,12 @@ struct CaseDevelopmentEntry: Decodable, Identifiable, Equatable {
         case provider
     }
 
+    var validatedExternalURL: URL? {
+        guard let entryURL = URL(string: url), entryURL.scheme?.lowercased() == "https",
+              entryURL.host != nil, entryURL.user == nil, entryURL.password == nil else { return nil }
+        return entryURL
+    }
+
     func isValid() -> Bool {
         guard CaseDevelopmentRepository.validID(repositoryID),
               ["commit", "pull_request"].contains(kind),
@@ -37,8 +43,7 @@ struct CaseDevelopmentEntry: Decodable, Identifiable, Equatable {
               let repository = URL(string: repositoryURL), repository.scheme?.lowercased() == "https",
               repository.host != nil, repository.user == nil, repository.password == nil,
               repository.query == nil, repository.fragment == nil,
-              let entryURL = URL(string: url), entryURL.scheme?.lowercased() == "https",
-              entryURL.host != nil, entryURL.user == nil, entryURL.password == nil else { return false }
+              validatedExternalURL != nil else { return false }
         return true
     }
 }

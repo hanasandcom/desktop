@@ -130,8 +130,14 @@ struct CasesDevelopmentNativePanel: View {
                     .font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
             }
             HStack(spacing: 8) {
+                if let url = entry.validatedExternalURL {
+                    ActionButton(title: "Open change", icon: "arrow.up.right.square") {
+                        let identifier = entry.kind == "commit" ? String(entry.externalID.prefix(8)) : "#\(entry.externalID)"
+                        model.openInlineBrowser(url: url.absoluteString, title: "\(identifier) · \(entry.title)", source: "Case development")
+                    }
+                }
                 ActionButton(title: "Copy link", icon: "doc.on.doc") { NSPasteboard.general.setString(entry.url, forType: .string) }
-                Text(entry.externalID).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled).lineLimit(1)
+                Text(entry.externalID).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

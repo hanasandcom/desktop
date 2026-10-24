@@ -4,6 +4,24 @@ import XCTest
 @testable import Hanasand
 
 final class CaseDevelopmentClientTests: XCTestCase {
+    func testLinkedChangeURLCanOpenOnlyAsCredentialFreeHTTPS() throws {
+        let entry = CaseDevelopmentEntry(repositoryID: "123e4567-e89b-12d3-a456-426614174000", kind: "commit",
+            externalID: "0123456789abcdef0123456789abcdef01234567", title: "Repair case", url: "https://git.example.test/team/repo/commit/0123456789abcdef0123456789abcdef01234567",
+            author: "Dev", state: "committed", branch: "main", updatedAt: "2026-10-20T10:00:00Z",
+            repositoryURL: "https://git.example.test/team/repo", provider: "forgejo")
+        XCTAssertEqual(entry.validatedExternalURL?.host, "git.example.test")
+
+        let credentialed = CaseDevelopmentEntry(repositoryID: entry.repositoryID, kind: entry.kind, externalID: entry.externalID, title: entry.title,
+            url: "https://user:secret@git.example.test/team/repo/commit/0123456789abcdef0123456789abcdef01234567", author: entry.author,
+            state: entry.state, branch: entry.branch, updatedAt: entry.updatedAt, repositoryURL: entry.repositoryURL, provider: entry.provider)
+        XCTAssertNil(credentialed.validatedExternalURL)
+
+        let insecure = CaseDevelopmentEntry(repositoryID: entry.repositoryID, kind: entry.kind, externalID: entry.externalID, title: entry.title,
+            url: "http://git.example.test/team/repo/commit/0123456789abcdef0123456789abcdef01234567", author: entry.author,
+            state: entry.state, branch: entry.branch, updatedAt: entry.updatedAt, repositoryURL: entry.repositoryURL, provider: entry.provider)
+        XCTAssertNil(insecure.validatedExternalURL)
+    }
+
     func testLoadsCaseChangesAndRepositoriesUsingCurrentIdentityAndOrganization() async throws {
         let settings = makeSettings(organization: "org-7")
         var requests: [URLRequest] = []
