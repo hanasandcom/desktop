@@ -126,15 +126,46 @@ enum NativeVMProvisioningPolicy {
 
     static func canSelect(_ resources: NativeVMResources, forOperatingSystem os: String) -> Bool {
         os != "ubuntu-24.04-desktop" || resources == NativeVMProvisioningOptions.resourcePlans[2]
+            || isValidCustomAllocation(resources, minimumMemoryGiB: 8)
+    }
+
+    static func customAllocation(cpu: String, memoryGiB: String) -> NativeVMResources {
+        NativeVMResources(cpu: cpu, memory: "\(memoryGiB)GiB", disk: "40GiB")
+    }
+
+    static func resourceValidationError(
+        _ resources: NativeVMResources,
+        operatingSystem os: String,
+        services: Set<String>,
+        minecraftServerType: String,
+        hasGeneratedProject: Bool
+    ) -> String? {
+        let minimumMemory = minimumMemoryGiB(
+            operatingSystem: os,
+            minecraftServerType: minecraftServerType, hasGeneratedProject: hasGeneratedProject)
+        guard NativeVMProvisioningOptions.resourcePlans.contains(resources)
+                || isValidCustomAllocation(resources, minimumMemoryGiB: 1) else {
+            if resources.disk != "10GiB" && resources.disk != "20GiB" && resources.disk != "40GiB" {
+                return "Choose 1–10 vCPU and 1–64 GiB memory. Custom allocations use a 40 GiB disk."
+            }
+            return "Choose a supported preset or custom allocation (1–10 vCPU, 1–64 GiB, 40 GiB disk)."
+        }
+        guard let memory = Int(resources.memory.replacingOccurrences(of: "GiB", with: "")), memory >= minimumMemory else {
+            switch minimumMemory {
+            case 8: return "Ubuntu Desktop requires at least 8 GiB of memory."
+            case 4: return "This setup requires at least 4 GiB of memory."
+            default: return "Choose a supported resource allocation."
+            }
+        }
+        return nil
     }
 
     static func validated(_ input: NativeVMCreateInput) throws -> NativeVMCreateInput {
         guard input.name.range(of: #"^[a-z][a-z0-9-]{0,61}[a-z0-9]$"#, options: .regularExpression) != nil else {
             throw NativeVMProvisioningError.invalidInput("Use 2–63 lowercase letters, numbers or hyphens, starting with a letter.")
         }
-        guard NativeVMProvisioningOptions.operatingSystems.contains(input.os),
-              NativeVMProvisioningOptions.resourcePlans.contains(input.resources) else {
-            throw NativeVMProvisioningError.invalidInput("Choose a supported Ubuntu version and resource plan.")
+        guard NativeVMProvisioningOptions.operatingSystems.contains(input.os) else {
+            throw NativeVMProvisioningError.invalidInput("Choose a supported Ubuntu version.")
         }
         guard input.services.count <= NativeVMProvisioningOptions.services.count,
               Set(input.services).count == input.services.count,
@@ -144,9 +175,6 @@ enum NativeVMProvisioningPolicy {
         let minecraft = input.services.contains("minecraft-java")
         guard minecraft == (input.minecraft_eula_accepted == true) else {
             throw NativeVMProvisioningError.invalidInput("Accept the Minecraft EULA when Minecraft is selected.")
-        }
-        guard input.os != "ubuntu-24.04-desktop" || input.resources.memory == "8GiB" else {
-            throw NativeVMProvisioningError.invalidInput("Ubuntu Desktop requires the largest resource plan.")
         }
         guard input.minecraft_server_type == nil || (minecraft && NativeVMProvisioningOptions.minecraftTypes.contains(input.minecraft_server_type!)) else {
             throw NativeVMProvisioningError.invalidInput("Choose a supported Minecraft server type.")
@@ -162,10 +190,10 @@ enum NativeVMProvisioningPolicy {
               addons.allSatisfy(allowedAddons.contains) else {
             throw NativeVMProvisioningError.invalidInput("Choose add-ons supported by the selected Minecraft server software.")
         }
-        let requiresFourGiB = NativeVMProvisioningOptions.fourGiBServerTypes.contains(serverType ?? "")
-            || input.project_files?.isEmpty == false
-        guard !requiresFourGiB || input.resources.memory != "2GiB" else {
-            throw NativeVMProvisioningError.invalidInput("This Minecraft server type or generated project requires the standard 4 GiB plan or larger.")
+        if let resourceError = resourceValidationError(
+            input.resources, operatingSystem: input.os, services: Set(input.services),
+            minecraftServerType: serverType ?? "", hasGeneratedProject: input.project_files?.isEmpty == false) {
+            throw NativeVMProvisioningError.invalidInput(resourceError)
         }
         let packages = try validatePackages(input.custom_apt_packages ?? [])
         if input.website != nil && !input.services.contains("website") {
@@ -181,6 +209,23 @@ enum NativeVMProvisioningPolicy {
             minecraft_eula_accepted: input.minecraft_eula_accepted, minecraft_server_type: input.minecraft_server_type,
             minecraft_addons: input.minecraft_addons == nil ? nil : addons,
             website: website, project_files: projectFiles, organization_id: input.organization_id)
+    }
+
+    private static func minimumMemoryGiB(
+        operatingSystem: String,
+        minecraftServerType: String,
+        hasGeneratedProject: Bool
+    ) -> Int {
+        if operatingSystem == "ubuntu-24.04-desktop" { return 8 }
+        if hasGeneratedProject || NativeVMProvisioningOptions.fourGiBServerTypes.contains(minecraftServerType) { return 4 }
+        return 1
+    }
+
+    private static func isValidCustomAllocation(_ resources: NativeVMResources, minimumMemoryGiB: Int) -> Bool {
+        resources.cpu.range(of: #"^(?:[1-9]|10)$"#, options: .regularExpression) != nil
+            && resources.memory.range(of: #"^(?:[1-9]|[1-5][0-9]|6[0-4])GiB$"#, options: .regularExpression) != nil
+            && resources.disk == "40GiB"
+            && (Int(resources.memory.replacingOccurrences(of: "GiB", with: "")) ?? 0) >= minimumMemoryGiB
     }
 
     static func minecraftAddonKey(_ serverType: String?) -> String? {

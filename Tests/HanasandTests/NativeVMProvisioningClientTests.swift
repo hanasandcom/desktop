@@ -128,6 +128,45 @@ final class NativeVMProvisioningClientTests: XCTestCase {
         XCTAssertEqual(body["minecraft_eula_accepted"] as? Bool, true)
     }
 
+    func testCreateEncodesCustomResourceAllocationExactly() async throws {
+        let client = try makeClient { request in
+            self.requests.append(request)
+            if request.url?.path == "/api/vms/fixture-user" { return self.reply(request, status: 200, json: "[]") }
+            return self.reply(request, status: 201, json: #"{"name":"fixture-vm","owner":"fixture-user"}"#)
+        }
+        let authorization = try await client.loadCreationAuthorization()
+        let input = NativeVMCreateInput(
+            name: "fixture-vm", os: "ubuntu-24.04",
+            resources: NativeVMResources(cpu: "10", memory: "64GiB", disk: "40GiB"), services: ["python"])
+
+        _ = try await client.create(input, authorization: authorization)
+
+        let request = try XCTUnwrap(requests.last)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual(body["resources"] as? [String: String], ["cpu": "10", "memory": "64GiB", "disk": "40GiB"])
+        XCTAssertEqual(requests.filter { $0.httpMethod == "POST" }.count, 1)
+    }
+
+    func testInvalidCustomAllocationIsRejectedBeforeAnyRequest() async throws {
+        let client = try makeClient { request in
+            self.requests.append(request)
+            return self.reply(request, status: 500, json: "{}")
+        }
+        let input = NativeVMCreateInput(
+            name: "fixture-vm", os: "ubuntu-24.04",
+            resources: NativeVMResources(cpu: "11", memory: "64GiB", disk: "40GiB"), services: [])
+        let authorization = NativeVMProvisioningAuthorization(scope: "unused", capturedAt: Date(), organizationID: "personal")
+
+        do {
+            _ = try await client.create(input, authorization: authorization)
+            XCTFail("Expected invalid custom allocation to be rejected.")
+        } catch {
+            guard let provisioningError = error as? NativeVMProvisioningError else { return XCTFail("Unexpected error: \(error)") }
+            if case .invalidInput = provisioningError {} else { XCTFail("Unexpected error: \(provisioningError)") }
+        }
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testDefiniteClientRejectionIsNotReportedAsAnUncertainProvisioningTimeout() async throws {
         let client = try makeClient { request in
             self.requests.append(request)

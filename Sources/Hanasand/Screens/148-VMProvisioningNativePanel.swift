@@ -9,6 +9,9 @@ struct VMProvisioningNativePanel: View {
     @State private var name = ""
     @State private var os = "ubuntu-24.04"
     @State private var resources = NativeVMProvisioningOptions.resourcePlans[0]
+    @State private var usesCustomResources = false
+    @State private var customCPU = "2"
+    @State private var customMemoryGiB = "4"
     @State private var services: Set<String> = []
     @State private var packageText = ""
     @State private var minecraftType = "PAPER"
@@ -32,6 +35,19 @@ struct VMProvisioningNativePanel: View {
     }
 
     private var canSubmit: Bool { authorization != nil && model.hasHanasandAuth && !model.isProfileIdentityImpersonating && !isWorking }
+
+    private var selectedResources: NativeVMResources {
+        usesCustomResources
+            ? NativeVMProvisioningPolicy.customAllocation(cpu: customCPU, memoryGiB: customMemoryGiB)
+            : resources
+    }
+
+    private var resourceError: String? {
+        NativeVMProvisioningPolicy.resourceValidationError(
+            selectedResources, operatingSystem: os, services: services,
+            minecraftServerType: services.contains("minecraft-java") ? minecraftType : "",
+            hasGeneratedProject: !projectFiles.isEmpty)
+    }
 
     var body: some View {
         NativeGroupPanel(title: resumeName == nil ? "Create virtual machine" : "Resume setup: \(resumeName!)",
@@ -60,6 +76,9 @@ struct VMProvisioningNativePanel: View {
                         if os != option {
                             os = option
                             resources = NativeVMProvisioningPolicy.resources(afterSelectingOperatingSystem: option, current: resources)
+                            if option == "ubuntu-24.04-desktop" {
+                                usesCustomResources = false
+                            }
                             clearAppliedPlan()
                         }
                     }
@@ -68,11 +87,43 @@ struct VMProvisioningNativePanel: View {
             Text("Resource plan").font(.caption.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(NativeVMProvisioningOptions.resourcePlans, id: \.cpu) { plan in
-                    FilterChip(title: "\(plan.cpu) CPU · \(plan.memory) · \(plan.disk)", active: resources == plan,
+                    FilterChip(title: "\(plan.cpu) CPU · \(plan.memory) · \(plan.disk)", active: !usesCustomResources && resources == plan,
                                disabled: !NativeVMProvisioningPolicy.canSelect(plan, forOperatingSystem: os)) {
+                        usesCustomResources = false
                         resources = plan
                     }
                 }
+                FilterChip(
+                    title: "Custom allocation",
+                    active: usesCustomResources
+                ) {
+                    usesCustomResources = true
+                    if os == "ubuntu-24.04-desktop" {
+                        customCPU = "4"
+                        customMemoryGiB = "8"
+                    }
+                }
+            }
+            if usesCustomResources {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)], alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("vCPU · 1–10").font(.caption).foregroundStyle(theme.textSecondary)
+                        TextField("vCPU", text: $customCPU).textFieldStyle(.roundedBorder).frame(maxWidth: 220).disabled(!canSubmit)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Memory · \(minimumMemoryGiB)–64 GiB").font(.caption).foregroundStyle(theme.textSecondary)
+                        TextField("Memory in GiB", text: $customMemoryGiB).textFieldStyle(.roundedBorder).frame(maxWidth: 220).disabled(!canSubmit)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Disk").font(.caption).foregroundStyle(theme.textSecondary)
+                        Text("40 GiB").font(.system(size: 13, weight: .medium)).frame(height: 28, alignment: .leading)
+                    }
+                }
+                Text("Custom allocations use a fixed 40 GiB disk.")
+                    .font(.caption).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let resourceError {
+                Text(resourceError).font(.caption).foregroundStyle(theme.danger).fixedSize(horizontal: false, vertical: true)
             }
             Text("Services").font(.caption.bold())
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 8) {
@@ -173,13 +224,13 @@ struct VMProvisioningNativePanel: View {
             if isWorking { ProgressView("Sending VM setup request…") }
             ActionButton(title: resumeName == nil ? "Review VM creation" : "Review resumed setup", icon: "checkmark.circle") {
                 pendingConfirmation = true
-            }.disabled(!canSubmit || !isInputReady)
+            }.disabled(!canSubmit || !isInputReady || resourceError != nil)
         }
         .confirmationDialog(resumeName == nil ? "Create this virtual machine?" : "Resume this VM setup?", isPresented: $pendingConfirmation, titleVisibility: .visible) {
             Button(resumeName == nil ? "Create VM" : "Resume setup", role: .destructive) { Task { await submit() } }
             Button("Cancel", role: .cancel) { pendingConfirmation = false }
         } message: {
-            Text("\(name) · \(os) · \(resources.cpu) CPU / \(resources.memory) RAM / \(resources.disk) disk. \(services.sorted().joined(separator: ", ").isEmpty ? "Base system" : services.sorted().joined(separator: ", ")). The server queues provisioning; acceptance does not mean the VM is running. A timeout can leave provisioning in progress, so refresh inventory before retrying.")
+            Text("\(name) · \(os) · \(selectedResources.cpu) CPU / \(selectedResources.memory) RAM / \(selectedResources.disk) disk. \(services.sorted().joined(separator: ", ").isEmpty ? "Base system" : services.sorted().joined(separator: ", ")). The server queues provisioning; acceptance does not mean the VM is running. A timeout can leave provisioning in progress, so refresh inventory before retrying.")
         }
         .confirmationDialog("Generate setup plan?", isPresented: $pendingPlanConfirmation, titleVisibility: .visible) {
             Button("Generate suggestion") { Task { await generatePlan() } }
@@ -194,6 +245,12 @@ struct VMProvisioningNativePanel: View {
 
     private var isInputReady: Bool {
         !name.isEmpty && (resumeName == nil || nameConfirmation == resumeName)
+    }
+
+    private var minimumMemoryGiB: Int {
+        if os == "ubuntu-24.04-desktop" { return 8 }
+        if !projectFiles.isEmpty || services.contains("minecraft-java") && NativeVMProvisioningOptions.fourGiBServerTypes.contains(minecraftType) { return 4 }
+        return 1
     }
 
     private func galleryField(_ index: Int, keyPath: WritableKeyPath<NativeVMWebsitePlan.GalleryImage, String>) -> Binding<String> {
@@ -247,10 +304,17 @@ struct VMProvisioningNativePanel: View {
             if NativeVMProvisioningOptions.fourGiBServerTypes.contains(minecraftType), resources.memory == "2GiB" {
                 resources = NativeVMProvisioningOptions.resourcePlans[1]
             }
+            if NativeVMProvisioningOptions.fourGiBServerTypes.contains(minecraftType), usesCustomResources,
+                (Int(customMemoryGiB) ?? 0) < 4 {
+                customMemoryGiB = "4"
+            }
             acceptedEULA = false
             projectFiles = plan.projectFiles ?? []
             if !projectFiles.isEmpty, resources.memory == "2GiB" {
                 resources = NativeVMProvisioningOptions.resourcePlans[1]
+            }
+            if !projectFiles.isEmpty, usesCustomResources, (Int(customMemoryGiB) ?? 0) < 4 {
+                customMemoryGiB = "4"
             }
             appliedPlanKey = "\(os):\(prompt.trimmingCharacters(in: .whitespacesAndNewlines))"
             planSummary = plan.summary + "\nReview every selected service, package, website field and generated file before creating the VM."
@@ -279,6 +343,10 @@ struct VMProvisioningNativePanel: View {
         if NativeVMProvisioningOptions.fourGiBServerTypes.contains(value), resources.memory == "2GiB" {
             resources = NativeVMProvisioningOptions.resourcePlans[1]
         }
+        if NativeVMProvisioningOptions.fourGiBServerTypes.contains(value), usesCustomResources,
+            (Int(customMemoryGiB) ?? 0) < 4 {
+            customMemoryGiB = "4"
+        }
     }
 
     @MainActor private func submit() async {
@@ -287,7 +355,7 @@ struct VMProvisioningNativePanel: View {
         pendingConfirmation = false
         defer { isWorking = false }
         let packages = packageText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        let input = NativeVMCreateInput(name: name, os: os, resources: resources, services: services.sorted(),
+        let input = NativeVMCreateInput(name: name, os: os, resources: selectedResources, services: services.sorted(),
             custom_apt_packages: packages.isEmpty ? nil : packages,
             minecraft_eula_accepted: services.contains("minecraft-java") ? acceptedEULA : nil,
             minecraft_server_type: services.contains("minecraft-java") ? minecraftType : nil,

@@ -9,7 +9,7 @@ final class NativeVMProvisioningWorkflowTests: XCTestCase {
         XCTAssertTrue(NativeVMProvisioningOptions.services.contains("website"))
     }
 
-    func testSelectingUbuntuDesktopUsesAndRequiresLargestResourcePlan() {
+    func testSelectingUbuntuDesktopRequiresAtLeastEightGiB() {
         let plans = NativeVMProvisioningOptions.resourcePlans
         XCTAssertEqual(
             NativeVMProvisioningPolicy.resources(afterSelectingOperatingSystem: "ubuntu-24.04-desktop", current: plans[0]),
@@ -18,7 +18,35 @@ final class NativeVMProvisioningWorkflowTests: XCTestCase {
         XCTAssertTrue(NativeVMProvisioningPolicy.canSelect(plans[2], forOperatingSystem: "ubuntu-24.04-desktop"))
         XCTAssertFalse(NativeVMProvisioningPolicy.canSelect(plans[0], forOperatingSystem: "ubuntu-24.04-desktop"))
         XCTAssertFalse(NativeVMProvisioningPolicy.canSelect(plans[1], forOperatingSystem: "ubuntu-24.04-desktop"))
+        XCTAssertTrue(NativeVMProvisioningPolicy.canSelect(.init(cpu: "1", memory: "8GiB", disk: "40GiB"), forOperatingSystem: "ubuntu-24.04-desktop"))
+        XCTAssertFalse(NativeVMProvisioningPolicy.canSelect(.init(cpu: "1", memory: "7GiB", disk: "40GiB"), forOperatingSystem: "ubuntu-24.04-desktop"))
         XCTAssertTrue(NativeVMProvisioningPolicy.canSelect(plans[0], forOperatingSystem: "ubuntu-24.04"))
+    }
+
+    func testCustomResourceAllocationsMatchWebsiteBoundsAndExistingMinimums() throws {
+        let minimum = NativeVMProvisioningPolicy.customAllocation(cpu: "1", memoryGiB: "1")
+        let maximum = NativeVMProvisioningPolicy.customAllocation(cpu: "10", memoryGiB: "64")
+        XCTAssertEqual(minimum, NativeVMResources(cpu: "1", memory: "1GiB", disk: "40GiB"))
+        XCTAssertNoThrow(try NativeVMProvisioningPolicy.validated(.init(name: "fixture-vm", os: "ubuntu-24.04", resources: minimum, services: [])))
+        XCTAssertNoThrow(try NativeVMProvisioningPolicy.validated(.init(name: "fixture-vm", os: "ubuntu-24.04", resources: maximum, services: [])))
+        XCTAssertNoThrow(try NativeVMProvisioningPolicy.validated(.init(name: "fixture-vm", os: "ubuntu-24.04-desktop", resources: .init(cpu: "1", memory: "8GiB", disk: "40GiB"), services: [])))
+
+        let invalidAllocations = [
+            NativeVMResources(cpu: "0", memory: "4GiB", disk: "40GiB"),
+            NativeVMResources(cpu: "11", memory: "4GiB", disk: "40GiB"),
+            NativeVMResources(cpu: "2", memory: "0GiB", disk: "40GiB"),
+            NativeVMResources(cpu: "2", memory: "65GiB", disk: "40GiB"),
+            NativeVMResources(cpu: "3", memory: "4GiB", disk: "20GiB"),
+        ]
+        for allocation in invalidAllocations {
+            XCTAssertThrowsError(try NativeVMProvisioningPolicy.validated(.init(name: "fixture-vm", os: "ubuntu-24.04", resources: allocation, services: [])))
+        }
+        XCTAssertThrowsError(try NativeVMProvisioningPolicy.validated(.init(name: "fixture-vm", os: "ubuntu-24.04-desktop", resources: .init(cpu: "1", memory: "7GiB", disk: "40GiB"), services: [])))
+
+        let modded = NativeVMCreateInput(name: "fixture-vm", os: "ubuntu-24.04", resources: .init(cpu: "10", memory: "3GiB", disk: "40GiB"), services: ["minecraft-java"], minecraft_eula_accepted: true, minecraft_server_type: "FORGE")
+        XCTAssertThrowsError(try NativeVMProvisioningPolicy.validated(modded))
+        let generated = NativeVMCreateInput(name: "fixture-vm", os: "ubuntu-24.04", resources: .init(cpu: "2", memory: "3GiB", disk: "40GiB"), services: ["nodejs"], project_files: [.init(path: "package.json", content: #"{"dependencies":{"next":"1","react":"1","react-dom":"1"},"scripts":{"build":"next build","start":"next start --hostname 0.0.0.0 --port 3000"}}"#)])
+        XCTAssertThrowsError(try NativeVMProvisioningPolicy.validated(generated))
     }
 
     func testCreateValidationEnforcesNameResourcesAndEULA() throws {
