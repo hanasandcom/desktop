@@ -8,6 +8,7 @@ struct DocumentScannerNativePanel: View {
     @StateObject private var camera = DocumentScannerCamera()
     @State private var scans = DocumentScanSession()
     @State private var showingClearConfirmation = false
+    @State private var pagePendingDeletion: DocumentScanPage.ID?
     @State private var exportedPDFURL: URL?
     @State private var exportError: String?
 
@@ -89,7 +90,7 @@ struct DocumentScannerNativePanel: View {
                                 Button("Down") { scans.move(page.id, by: 1) }
                                     .disabled(index == scans.pages.count - 1)
                                 Spacer()
-                                Button("Delete", role: .destructive) { scans.remove(page.id) }
+                                Button("Delete", role: .destructive) { pagePendingDeletion = page.id }
                             }
                             .buttonStyle(.plain)
                             .font(.system(size: 11, weight: .bold))
@@ -115,6 +116,19 @@ struct DocumentScannerNativePanel: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes all \(scans.pageCount) captured pages from this scan.")
+        }
+        .confirmationDialog("Delete page?", isPresented: Binding(
+            get: { pagePendingDeletion != nil },
+            set: { if !$0 { pagePendingDeletion = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let pagePendingDeletion { scans.remove(pagePendingDeletion) }
+                pagePendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pagePendingDeletion = nil }
+        } message: {
+            let pageNumber = scans.pages.firstIndex { $0.id == pagePendingDeletion }.map { $0 + 1 }
+            Text(pageNumber.map { "Page \($0) will be removed from this scan." } ?? "This page will be removed from this scan.")
         }
     }
 
