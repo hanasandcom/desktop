@@ -76,11 +76,12 @@ HANASAND_DESKTOP_SMOKE_OUT=/tmp/hanasand-smoke scripts/smoke-screenshots.sh
 HANASAND_DESKTOP_AGENT_URL=https://localhost:45731 scripts/smoke-screenshots.sh
 HANASAND_DESKTOP_SMOKE_SCOPE=core scripts/smoke-screenshots.sh
 HANASAND_DESKTOP_SMOKE_SCOPE=dashboard scripts/smoke-screenshots.sh
+HANASAND_DESKTOP_SMOKE_WINDOW_WIDTHS=1080,1512 scripts/smoke-screenshots.sh
 HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect scripts/smoke-screenshots.sh
 HANASAND_DESKTOP_SMOKE_CAPTURE_RECT=80,70,1340,900 scripts/smoke-screenshots.sh
 ```
 
-The default `full` pass captures Control, Server, Mail, Documents, Images, Dashboard, Settings, and every registered native dashboard route. The script checks route-command coverage before capture. Use `core` for a short shell pass or `dashboard` for dashboard route coverage. Screenshots use the visible Hanasand window ID by default. Set `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect` to capture a rectangle, or use `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=screen` and clear `HANASAND_DESKTOP_SMOKE_CAPTURE_RECT` for a full-screen capture.
+The default `full` pass captures Control, Server, Mail, Documents, Images, Dashboard, Settings, and every registered native dashboard route. The script checks route-command coverage before capture. Use `core` for a short shell pass or `dashboard` for dashboard route coverage. Screenshots use the visible Hanasand window ID by default. `HANASAND_DESKTOP_SMOKE_WINDOW_WIDTHS` accepts comma-separated window widths in points; it defaults to `1340`, and `1080,1512` captures each route at both widths. Screenshot labels include the width. Each manifest entry records the requested `layout_points` separately from `dimensions`, which retains the screenshot's actual pixel dimensions. Set `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=rect` to capture a rectangle, or use `HANASAND_DESKTOP_SMOKE_CAPTURE_MODE=screen` and clear `HANASAND_DESKTOP_SMOKE_CAPTURE_RECT` for a full-screen capture.
 
 ## Legacy C++ loopback helper
 

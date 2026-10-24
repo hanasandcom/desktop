@@ -14,16 +14,41 @@ WAIT_SECONDS="${HANASAND_DESKTOP_SMOKE_WAIT:-1.4}"
 CAPTURE_MODE="${HANASAND_DESKTOP_SMOKE_CAPTURE_MODE:-window}"
 CAPTURE_RECT="${HANASAND_DESKTOP_SMOKE_CAPTURE_RECT:-80,70,1340,900}"
 SMOKE_SCOPE="${HANASAND_DESKTOP_SMOKE_SCOPE:-full}"
+WINDOW_HEIGHT="900"
+IFS=',' read -r -a WINDOW_WIDTHS <<< "${HANASAND_DESKTOP_SMOKE_WINDOW_WIDTHS:-1340}"
+CURRENT_WINDOW_WIDTH=""
+SEEN_WINDOW_WIDTHS="|"
 STARTED_PID=""
 LABELS=()
 COMMANDS=()
 PATHS=()
 DIMENSIONS=()
+LAYOUT_POINTS=()
 unset SESSION_USER_ID SESSION_TOKEN
 SESSION_USER_ID=""
 SESSION_TOKEN=""
 
 mkdir -p "${OUT_DIR}"
+
+if [[ ${#WINDOW_WIDTHS[@]} -eq 0 ]]; then
+  printf '[desktop-smoke] HANASAND_DESKTOP_SMOKE_WINDOW_WIDTHS must contain at least one width\n' >&2
+  exit 2
+fi
+for index in "${!WINDOW_WIDTHS[@]}"; do
+  width="${WINDOW_WIDTHS[$index]}"
+  if [[ ! "${width}" =~ ^[0-9]+$ ]] || (( 10#${width} <= 80 )); then
+    printf '[desktop-smoke] invalid window width %q; expected an integer greater than 80 points\n' "${width}" >&2
+    exit 2
+  fi
+  width="$((10#${width}))"
+  if [[ "${SEEN_WINDOW_WIDTHS}" == *"|${width}|"* ]]; then
+    printf '[desktop-smoke] duplicate window width %s\n' "${width}" >&2
+    exit 2
+  fi
+  SEEN_WINDOW_WIDTHS+="${width}|"
+  WINDOW_WIDTHS[$index]="${width}"
+done
+CURRENT_WINDOW_WIDTH="${WINDOW_WIDTHS[0]}"
 
 log() {
   printf '[desktop-smoke] %s\n' "$*"
@@ -121,7 +146,7 @@ tell application "System Events"
   tell process "${APP_NAME}"
     if exists window 1 then
       set position of window 1 to {80, 70}
-      set size of window 1 to {1340, 900}
+      set size of window 1 to {${CURRENT_WINDOW_WIDTH}, ${WINDOW_HEIGHT}}
     end if
   end tell
 end tell
@@ -238,8 +263,8 @@ add_manifest_entry() {
     printf ',\n' >>"${OUT_DIR}/manifest.json"
   fi
   first=0
-  printf '    {"label":"%s","command":"%s","path":"%s","dimensions":"%s"}' \
-    "${label}" "${command}" "${path}" "${dimensions}" >>"${OUT_DIR}/manifest.json"
+  printf '    {"label":"%s","command":"%s","path":"%s","layout_points":{"width":%s,"height":%s},"dimensions":"%s"}' \
+    "${label}" "${command}" "${path}" "${CURRENT_WINDOW_WIDTH}" "${WINDOW_HEIGHT}" "${dimensions}" >>"${OUT_DIR}/manifest.json"
 }
 
 image_dimensions() {
@@ -334,18 +359,20 @@ write_report() {
   <main>
 HTML
 
-  local i label command path file dimensions
+  local i label command path file dimensions layout_points
   for ((i = 0; i < ${#LABELS[@]}; i += 1)); do
     label="$(html_escape "${LABELS[$i]}")"
     command="$(html_escape "${COMMANDS[$i]}")"
     path="${PATHS[$i]}"
     file="$(basename "${path}")"
     dimensions="$(html_escape "${DIMENSIONS[$i]}")"
+    layout_points="$(html_escape "${LAYOUT_POINTS[$i]}")"
     cat >>"${report}" <<HTML
     <article>
       <div class="meta">
         <div class="label">${label}</div>
         <code>${command}</code>
+        <div class="dims">Layout: ${layout_points}</div>
         <div class="dims">${dimensions}</div>
       </div>
       <img src="${file}" alt="${label}">
@@ -361,7 +388,7 @@ HTML
 }
 
 run_step() {
-  local label="$1"
+  local label="${CURRENT_WINDOW_WIDTH}pt-$1"
   local command="$2"
   log "${label}: ${command}"
   send_command "${command}"
@@ -374,6 +401,7 @@ run_step() {
   COMMANDS+=("${command}")
   PATHS+=("${shot}")
   DIMENSIONS+=("${dimensions}")
+  LAYOUT_POINTS+=("${CURRENT_WINDOW_WIDTH} × ${WINDOW_HEIGHT} pt")
   add_manifest_entry "${label}" "${command}" "${shot}" "${dimensions}"
 }
 
@@ -474,23 +502,28 @@ assert_dashboard_smoke_covers_loopback_commands() {
 
 assert_dashboard_smoke_covers_loopback_commands
 
-case "${SMOKE_SCOPE}" in
-  core)
-    run_core_smoke
-    ;;
-  dashboard)
-    run_step "00-dashboard" "open_section_dashboard"
-    run_dashboard_smoke
-    ;;
-  full)
-    run_core_smoke
-    run_dashboard_smoke
-    ;;
-  *)
-    log "unknown HANASAND_DESKTOP_SMOKE_SCOPE=${SMOKE_SCOPE}; expected core, dashboard, or full"
-    exit 2
-    ;;
-esac
+for width in "${WINDOW_WIDTHS[@]}"; do
+  CURRENT_WINDOW_WIDTH="${width}"
+  activate_app
+  log "capturing ${CURRENT_WINDOW_WIDTH} × ${WINDOW_HEIGHT} point window"
+  case "${SMOKE_SCOPE}" in
+    core)
+      run_core_smoke
+      ;;
+    dashboard)
+      run_step "00-dashboard" "open_section_dashboard"
+      run_dashboard_smoke
+      ;;
+    full)
+      run_core_smoke
+      run_dashboard_smoke
+      ;;
+    *)
+      log "unknown HANASAND_DESKTOP_SMOKE_SCOPE=${SMOKE_SCOPE}; expected core, dashboard, or full"
+      exit 2
+      ;;
+  esac
+done
 
 printf '\n  ]\n}\n' >>"${OUT_DIR}/manifest.json"
 write_report
