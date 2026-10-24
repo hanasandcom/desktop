@@ -8,6 +8,7 @@ struct ThreatFindingsNativePanel: View {
     @State private var priorCursors: [String?] = []
     @State private var query = ""
     @State private var needsReview = false
+    @State private var localPage = 0
     @State private var selectedID = ""
     @State private var evidencePage = 0
     @State private var isLoading = false
@@ -23,6 +24,11 @@ struct ThreatFindingsNativePanel: View {
         (page?.alerts ?? []).filter { $0.contains(query) && (!needsReview || $0.needsReview) }
             .sorted { (Date.ISO8601($0.observedAt) ?? .distantPast) > (Date.ISO8601($1.observedAt) ?? .distantPast) }
     }
+    private var visibleFindings: [ThreatFinding] {
+        let pageIndex = min(localPage, max(0, (findings.count - 1) / 20))
+        return Array(findings.dropFirst(pageIndex * 20).prefix(20))
+    }
+    private var currentLocalPage: Int { min(localPage, max(0, (findings.count - 1) / 20)) }
     private var selected: ThreatFinding? { findings.first { $0.id == selectedID } }
     private var selectedCaseURL: URL? {
         guard let selected else { return nil }
@@ -39,12 +45,16 @@ struct ThreatFindingsNativePanel: View {
             NativeGroupPanel(title: "Findings", subtitle: model.selectedOrganizationID.isEmpty ? "Personal monitoring" : "Organization monitoring") {
                 HStack(spacing: 8) {
                     SearchFieldRow(placeholder: "Company, domain, or actor", text: $query)
+                        .onChange(of: query) { _, value in
+                            if value.count > 120 { query = String(value.prefix(120)) }
+                            localPage = 0
+                        }
                     ActionButton(title: isLoading ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load(reset: true) } }
                         .disabled(isLoading)
                 }
                 HStack(spacing: 8) {
-                    FilterChip(title: "All findings", active: !needsReview) { needsReview = false }
-                    FilterChip(title: "Needs review", active: needsReview) { needsReview = true }
+                    FilterChip(title: "All findings", active: !needsReview) { needsReview = false; localPage = 0 }
+                    FilterChip(title: "Needs review", active: needsReview) { needsReview = true; localPage = 0 }
                 }
                 if let page {
                     Text("\(findings.count) match in \(page.alerts.count) loaded findings · \(page.total) server records before local filters")
@@ -69,14 +79,25 @@ struct ThreatFindingsNativePanel: View {
 
             if selected == nil, page != nil {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                    ForEach(findings) { item in
+                    ForEach(visibleFindings) { item in
                         NativeGroupPanel(title: item.title, subtitle: "\(item.severity.isEmpty ? "Severity not recorded" : item.severity.capitalized) · \(item.reviewState.isEmpty ? "Review state not recorded" : item.reviewState.replacingOccurrences(of: "_", with: " ").capitalized)") {
                             Text("Matched \(item.matchedTerm)").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary).lineLimit(2).textSelection(.enabled)
                             Text(item.summary).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).lineLimit(4).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                             Text("\(item.observation) · \(item.observedAt.isEmpty ? "Time not recorded" : item.observedAt) · \(item.evidence.count) evidence records")
                                 .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).lineLimit(2)
                             ActionButton(title: "Investigate", icon: "arrow.right") { selectedID = item.id; evidencePage = 0 }
+                                .disabled(isLoading)
                         }
+                    }
+                }
+                if findings.count > 20 {
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Previous loaded results", icon: "chevron.left") { localPage = max(0, currentLocalPage - 1) }
+                            .disabled(currentLocalPage == 0)
+                        ActionButton(title: "Next loaded results", icon: "chevron.right") { localPage = min((findings.count - 1) / 20, currentLocalPage + 1) }
+                            .disabled((currentLocalPage + 1) * 20 >= findings.count)
+                        Text("\(currentLocalPage * 20 + 1)–\(min((currentLocalPage + 1) * 20, findings.count)) of \(findings.count) loaded matches")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
                     }
                 }
                 if findings.isEmpty, let page, !page.alerts.isEmpty {
@@ -89,6 +110,11 @@ struct ThreatFindingsNativePanel: View {
                         ActionButton(title: "Next server page", icon: "chevron.right") { Task { await next() } }.disabled(isLoading || page.nextCursor == nil || priorCursors.count >= 200)
                     }
                     if priorCursors.count >= 200 { Text("Reached the 200-page browsing limit. Refresh to start again.").font(.system(size: 11)).foregroundStyle(theme.textTertiary) }
+                }
+                if let organizationID = page?.organization?.id {
+                    ActionButton(title: "Monitored actors", icon: "person.2") {
+                        model.openNativeDashboard(path: "/ti/profiles", label: "Monitored actors", query: ["organizationId": organizationID])
+                    }.disabled(isLoading)
                 }
             }
         }
@@ -109,6 +135,13 @@ struct ThreatFindingsNativePanel: View {
             Text(item.recommendedAction.isEmpty ? "No recommended action was recorded." : item.recommendedAction)
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
             if !item.actor.isEmpty { Text("Actor: \(item.actor)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled) }
+            if !item.actor.isEmpty {
+                ActionButton(title: "Search actor", icon: "magnifyingglass") {
+                    var query = [String: String]()
+                    if let organizationID = item.organizationID { query["organizationId"] = organizationID }
+                    model.openNativeDashboard(path: "/ti/profiles", label: "Actor profile: \(item.actor)", detailID: item.actor, query: query)
+                }
+            }
             if let caseURL = selectedCaseURL {
                 ActionButton(title: "Open case", icon: "arrow.up.right") {
                     model.openURL(caseURL.absoluteString, label: "Linked case")
@@ -157,7 +190,7 @@ struct ThreatFindingsNativePanel: View {
         loadEpoch += 1
         let requestedEpoch = loadEpoch
         let requestedWorkspace = workspaceKey
-        if reset { cursor = nil; priorCursors = []; selectedID = "" }
+        if reset { cursor = nil; priorCursors = []; selectedID = ""; localPage = 0; page = nil }
         isLoading = true; error = ""
         defer { if loadEpoch == requestedEpoch { isLoading = false } }
         do {
@@ -175,13 +208,13 @@ struct ThreatFindingsNativePanel: View {
     @MainActor private func next() async {
         guard let next = page?.nextCursor, !isLoading, priorCursors.count < 200 else { return }
         guard !priorCursors.contains(where: { $0 == next }) else { error = "The next page repeated an earlier cursor. Refresh to start again."; return }
-        priorCursors.append(cursor); cursor = next; selectedID = ""
+        priorCursors.append(cursor); cursor = next; selectedID = ""; localPage = 0
         await load(reset: false)
     }
 
     @MainActor private func previous() async {
         guard !isLoading, let previous = priorCursors.popLast() else { return }
-        cursor = previous; selectedID = ""
+        cursor = previous; selectedID = ""; localPage = 0
         await load(reset: false)
     }
 }

@@ -70,4 +70,13 @@ final class ThreatFindingsTests: XCTestCase {
         XCTAssertFalse(resolved.needsReview)
         XCTAssertFalse(resolved.contains("missing"))
     }
+
+    func testWorkflowNarrativeUsesNeutralGeneratedSummaryLikeMobile() throws {
+        let response = #"{"id":"f3","tenantId":"user","company":"Example","sourceFamily":"darkweb_metadata","matchedTerm":{"value":"example.test"},"observedMatchSummary":"The alert was reviewed by a parser candidate worker.","evidence":[]}"#
+        let finding = try JSONDecoder().decode(ThreatFinding.self, from: Data(response.utf8))
+        XCTAssertEqual(finding.summary, "Example was mentioned in darkweb metadata intelligence. Investigate the retained evidence for its source and timing.")
+
+        let analystSummary = #"{"id":"f4","tenantId":"user","company":"Example","matchedTerm":{"value":"example.test"},"observedMatchSummary":"A public report mentions Example.","evidence":[]}"#
+        XCTAssertEqual(try JSONDecoder().decode(ThreatFinding.self, from: Data(analystSummary.utf8)).summary, "A public report mentions Example.")
+    }
 }

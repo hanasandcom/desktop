@@ -171,7 +171,8 @@ struct ThreatFinding: Decodable, Identifiable {
         let structuredSummary = observed.contains("{") || observed.contains("[") || observed.range(of: #"["'][A-Za-z0-9_ -]+["']\s*:"#, options: .regularExpression) != nil
         let sourceFamily = Self.clean(try c.decodeIfPresent(String.self, forKey: .sourceFamily) ?? "threat").replacingOccurrences(of: "_", with: " ")
         let generatedFallback = "\(title) was mentioned in \(sourceFamily) intelligence. Investigate the retained evidence for its source and timing."
-        summary = observed.isEmpty || structuredSummary ? generatedFallback : observed
+        let workflowText = observed.range(of: #"\b(reviewed|corroborated|parser|candidate|queue|worker|governance|evidence boundary)\b"#, options: .regularExpression) != nil
+        summary = observed.isEmpty || structuredSummary || workflowText ? generatedFallback : observed
         let timing = try c.decodeIfPresent(MatchTiming.self, forKey: .matchTiming)?.kind
         observation = timing == "new_evidence" ? "New observation" : timing == "historical_backfill" ? "Historical match" : "Observation"
         let evidenceSummary = try c.decodeIfPresent(EvidenceSummary.self, forKey: .evidenceSummary)?.lastObservedAt
