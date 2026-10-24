@@ -19,6 +19,15 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/users/person-44")?.detailID, "person-44")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/user")?.path, "/users")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/management/users")?.path, "/users")
+        let managementUser = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/management/users/user-45")
+        XCTAssertEqual(managementUser?.path, "/users")
+        XCTAssertEqual(managementUser?.detailID, "user-45")
+        let dashboardManagementUser = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/management/users/user-46")
+        XCTAssertEqual(dashboardManagementUser?.path, "/users")
+        XCTAssertEqual(dashboardManagementUser?.detailID, "user-46")
+        let nestedVM = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/vms/cluster-1/node-2")
+        XCTAssertEqual(nestedVM?.path, "/vms")
+        XCTAssertEqual(nestedVM?.detailID, "cluster-1/node-2")
     }
 
     func testInternalWebsiteURLsResolveToNativeRoutesOrNativeFallbacks() {
@@ -35,6 +44,8 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
             "/mail"
         )
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://status.hanasand.com/api/status?history=true")?.path, "/status")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://status.hanasand.com/api/status?history=true")?.section, "history")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/status/incidents")?.section, "incidents")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://support.hanasand.com/tickets")?.path, "/support")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://scanner.hanasand.com/api")?.path, "/scanner")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://identity.hanasand.com")?.path, "/profile")

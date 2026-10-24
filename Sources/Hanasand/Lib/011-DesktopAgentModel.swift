@@ -129,7 +129,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var profileIdentityLoaded = false; @Published var isLoadingProfileIdentity = false; @Published var isSavingProfileIdentity = false
     @Published var profileIdentityError: String?; @Published var profileIdentityNotice: String?
 
-    @Published var users: [DashboardUser] = []; @Published var selectedUserID = ""; @Published var selectedUserRoles: [DashboardUserRoleAssignment] = []; @Published var roles: [DashboardRole] = []
+    @Published var users: [DashboardUser] = []; @Published var selectedUserID = ""; @Published var selectedUserProfileID = ""; @Published var selectedUserProfile: DashboardUser?; @Published var isLoadingSelectedUserProfile = false; @Published var selectedUserRoles: [DashboardUserRoleAssignment] = []; @Published var roles: [DashboardRole] = []
 
     @Published var roleDraftID = ""; @Published var roleDraftName = ""; @Published var roleDraftDescription = ""; @Published var selectedRoleID = ""
 

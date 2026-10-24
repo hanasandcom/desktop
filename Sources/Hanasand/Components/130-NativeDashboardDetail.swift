@@ -86,7 +86,10 @@ struct NativeDashboardDetail: View {
         case "/monitor":
             NativeDomainMonitorPanel()
         case "/status":
-            PublicStatusNativePanel(incidentID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
+            PublicStatusNativePanel(
+                incidentID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID,
+                selectedSection: model.selectedNativeDashboardQuery["section"]
+            )
         case "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings", "/privacy", "/terms", "/reserved-usernames", "/pricing", "/solutions/scanner", "/solutions/security-monitoring":
             if let page = NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "/") {
                 NativePublicInfoPanel(page: page) { route in

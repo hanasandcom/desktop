@@ -51,8 +51,46 @@ extension DesktopAgentModel {
     func openUserProfile(_ user: DashboardUser) {
         guard let userID = NativeRouteSelection.resolve(user.id, among: users.map(\.id)) else { return }
         selectedUserID = userID
-        openNativeDashboard(path: "/management", label: user.displayName)
-        Task { await loadSelectedUserRoles() }
+        selectedUserProfileID = userID
+        selectedUserProfile = nil
+        Task { await loadSelectedUserProfile() }
+    }
+
+    func loadSelectedUserProfile() async {
+        guard hasHanasandAuth,
+              selectedUserProfileID.range(of: "^[A-Za-z0-9._-]{1,128}$", options: .regularExpression) != nil else {
+            selectedUserProfile = nil
+            return
+        }
+        let profileID = selectedUserProfileID
+        let actorID = userIDForRequests
+        let token = authTokenForRequests
+        guard let encodedID = profileID.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))) else {
+            nativeDashboardStatus = "The selected user ID is invalid."
+            return
+        }
+        isLoadingSelectedUserProfile = true
+        defer { isLoadingSelectedUserProfile = false }
+        do {
+            let profile: DashboardUser = try await requestJSON(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/\(encodedID)"),
+                authenticated: true
+            )
+            guard selectedUserProfileID == profileID, userIDForRequests == actorID,
+                  authTokenForRequests == token, profile.id == profileID else {
+                throw DashboardUserProfileError.accountMismatch
+            }
+            selectedUserProfile = profile
+        } catch {
+            guard selectedUserProfileID == profileID, userIDForRequests == actorID else { return }
+            selectedUserProfile = nil
+            nativeDashboardStatus = error.localizedDescription
+        }
+    }
+
+    func closeSelectedUserProfile() {
+        selectedUserProfileID = ""
+        selectedUserProfile = nil
     }
 
     func selectDashboardUser(_ user: DashboardUser) {
@@ -261,4 +299,9 @@ extension DesktopAgentModel {
         roleEditName = role.name ?? role.id
         roleEditDescription = role.description ?? ""
     }
+}
+
+private enum DashboardUserProfileError: LocalizedError {
+    case accountMismatch
+    var errorDescription: String? { "The user service returned a profile for a different account." }
 }

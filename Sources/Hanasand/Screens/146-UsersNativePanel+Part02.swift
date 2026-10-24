@@ -63,6 +63,8 @@ extension UsersNativePanel {
             [
                 user.id,
                 user.name ?? "",
+                user.username ?? "",
+                user.email ?? "",
                 user.highestRoleName ?? "",
                 user.highestRoleID ?? "",
             ].joined(separator: " ").lowercased().contains(query)

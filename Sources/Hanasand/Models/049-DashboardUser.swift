@@ -10,11 +10,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct DashboardUserOrganization: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let slug: String
+    let status: String
+}
+
 struct DashboardUser: Decodable, Identifiable {
     let id: String
     let name: String?
+    let username: String?
+    let email: String?
     let avatar: String?
     let active: Bool?
+    let createdAt: String?
+    let lastLoginAt: String?
+    let deletionScheduledAt: String?
     let deactivatedAt: String?
     let deactivatedBy: String?
     let highestRoleID: String?
@@ -22,12 +34,18 @@ struct DashboardUser: Decodable, Identifiable {
     let highestRolePriority: Int?
     let organization: String?
     let organizationIDs: String?
+    let organizations: [DashboardUserOrganization]
 
     enum CodingKeys: String, CodingKey {
         case id
         case name
+        case username
+        case email
         case avatar
         case active
+        case createdAt = "created_at"
+        case lastLoginAt = "last_login_at"
+        case deletionScheduledAt = "deletion_scheduled_at"
         case deactivatedAt = "deactivated_at"
         case deactivatedBy = "deactivated_by"
         case highestRoleID = "highest_role_id"
@@ -35,9 +53,32 @@ struct DashboardUser: Decodable, Identifiable {
         case highestRolePriority = "highest_role_priority"
         case organization
         case organizationIDs = "organization_ids"
+        case organizations = "organization_memberships"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        username = try values.decodeIfPresent(String.self, forKey: .username)
+        email = try values.decodeIfPresent(String.self, forKey: .email)
+        avatar = try values.decodeIfPresent(String.self, forKey: .avatar)
+        active = try values.decodeIfPresent(Bool.self, forKey: .active)
+        createdAt = try values.decodeIfPresent(String.self, forKey: .createdAt)
+        lastLoginAt = try values.decodeIfPresent(String.self, forKey: .lastLoginAt)
+        deletionScheduledAt = try values.decodeIfPresent(String.self, forKey: .deletionScheduledAt)
+        deactivatedAt = try values.decodeIfPresent(String.self, forKey: .deactivatedAt)
+        deactivatedBy = try values.decodeIfPresent(String.self, forKey: .deactivatedBy)
+        highestRoleID = try values.decodeIfPresent(String.self, forKey: .highestRoleID)
+        highestRoleName = try values.decodeIfPresent(String.self, forKey: .highestRoleName)
+        highestRolePriority = try values.decodeIfPresent(Int.self, forKey: .highestRolePriority)
+        organization = try values.decodeIfPresent(String.self, forKey: .organization)
+        organizationIDs = try values.decodeIfPresent(String.self, forKey: .organizationIDs)
+        organizations = try values.decodeIfPresent([DashboardUserOrganization].self, forKey: .organizations) ?? []
     }
 
     var displayName: String { name?.isEmpty == false ? name! : id }
+    var displayUsername: String { username?.isEmpty == false ? username! : id }
     var roleLabel: String { highestRoleName ?? highestRoleID ?? "No role" }
     var ownerPickerLabel: String {
         [displayName, organization, id].compactMap { value in

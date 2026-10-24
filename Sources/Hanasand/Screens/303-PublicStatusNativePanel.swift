@@ -11,12 +11,14 @@ struct PublicStatusNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @StateObject private var model = PublicStatusViewModel()
     private let incidentID: String?
+    private let selectedSection: String?
     @State private var section: PublicStatusSection
 
-    init(incidentID: String? = nil) {
+    init(incidentID: String? = nil, selectedSection: String? = nil) {
         let normalizedID = incidentID?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.incidentID = normalizedID?.isEmpty == false ? normalizedID : nil
-        _section = State(initialValue: normalizedID?.isEmpty == false ? .incidents : .overview)
+        self.selectedSection = selectedSection
+        _section = State(initialValue: Self.section(for: selectedSection, incidentID: normalizedID))
     }
 
     var body: some View {
@@ -68,6 +70,15 @@ struct PublicStatusNativePanel: View {
                 await model.refresh()
             }
         }
+        .onChange(of: selectedSection, initial: true) { _, value in
+            section = Self.section(for: value, incidentID: incidentID)
+        }
+    }
+
+    private static func section(for value: String?, incidentID: String?) -> PublicStatusSection {
+        if incidentID?.isEmpty == false || value?.lowercased() == "incidents" { return .incidents }
+        if value?.lowercased() == "history" || value?.lowercased() == "daily-history" { return .history }
+        return .overview
     }
 
     @ViewBuilder private func overview(_ payload: PublicStatusPayload) -> some View {

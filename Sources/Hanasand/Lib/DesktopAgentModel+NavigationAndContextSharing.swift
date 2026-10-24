@@ -61,7 +61,7 @@ extension DesktopAgentModel {
             case "/s": selectedShareID = detailID
             case "/content/articles": selectedArticleID = detailID
             case "/content/thoughts": selectedThoughtID = detailID
-            case "/users": selectedUserID = detailID
+            case "/users": selectedUserID = detailID; selectedUserProfileID = detailID; selectedUserProfile = nil
             case "/g":
                 linkDraftID = detailID
                 linkLookupID = detailID

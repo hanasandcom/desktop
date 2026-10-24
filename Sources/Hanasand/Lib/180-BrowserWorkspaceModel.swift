@@ -69,6 +69,7 @@ final class BrowserWorkspaceModel: ObservableObject {
         var detailID: String?
         var section: String?
         var caseContext: BrowserCaseHandoffContext?
+        var allowsCompositeDetailID = false
         switch host {
         case "cdn.hanasand.com": if path == "/" { path = "/images/library" }
         case "identity.hanasand.com": if path == "/" { path = "/profile" }
@@ -235,7 +236,25 @@ final class BrowserWorkspaceModel: ObservableObject {
             }
         }
 
-        if path == "/sandbox/_browser/browser" { path = "/sandbox" }
+        if parts.count > 2, parts[0] == "management" {
+            switch parts[1] {
+            case "users":
+                path = "/users"
+                if parts.count > 2 { detailID = parts.dropFirst(2).joined(separator: "/") }
+            case "organizations": path = "/organizations"
+            case "service-accounts": path = "/dashboard/management/service-accounts"
+            default: path = "/management"
+            }
+        } else if parts.count > 2, parts[0] == "dashboard", parts[1] == "management" {
+            switch parts[2] {
+            case "users":
+                path = "/users"
+                if parts.count > 3 { detailID = parts.dropFirst(3).joined(separator: "/") }
+            case "organizations": path = "/organizations"
+            case "service-accounts": path = "/dashboard/management/service-accounts"
+            default: path = "/management"
+            }
+        } else if path == "/sandbox/_browser/browser" { path = "/sandbox" }
         if path == "/sandbox/report" || path == "/_browser/browser/report" || path == "/sandbox/_browser/browser/report" {
             path = queryValue("run")?.isEmpty == false ? "/sandbox/report" : "/sandbox"
             detailID = queryValue("run")
@@ -295,11 +314,12 @@ final class BrowserWorkspaceModel: ObservableObject {
         } else if parts.count > 3, parts[0] == "dashboard", ["article", "articles", "thought", "thoughts"].contains(parts[1]) {
             path = parts[1] == "article" || parts[1] == "articles" ? "/content/articles" : "/content/thoughts"
             detailID = parts[2]
-        } else if parts.count > 3, parts[0] == "dashboard", ["vm", "vms", "management"].contains(parts[1]) {
+        } else if parts.count > 3, parts[0] == "dashboard", ["vm", "vms"].contains(parts[1]) {
             if ["vm", "vms"].contains(parts[1]), parts[3] == "console" {
                 path = "/vms/console"; detailID = parts[2]
             } else {
-                path = "/vms"; detailID = parts[2]
+                path = "/vms"; detailID = parts.dropFirst(2).joined(separator: "/")
+                allowsCompositeDetailID = true
             }
         } else if parts.count > 3, parts[0] == "dashboard", parts[1] == "system" {
             path = "/vms"; detailID = parts.dropFirst(2).joined(separator: "/")
@@ -354,6 +374,12 @@ final class BrowserWorkspaceModel: ObservableObject {
         if path == "/profile", url.path == "/dashboard/system/ssh-keys" {
             section = "ssh-keys"
         }
+        if path == "/status", url.path == "/status/incidents" {
+            section = "incidents"
+        }
+        if path == "/status", queryValue("history") == "true" {
+            section = "history"
+        }
         if path == "/system/hosts", url.path == "/dashboard/system/console" {
             detailID = queryValue("host")
         }
@@ -370,8 +396,14 @@ final class BrowserWorkspaceModel: ObservableObject {
             )
         }
         if let requestedDetailID = detailID {
-            guard let decodedID = requestedDetailID.removingPercentEncoding,
-                  NativeRouteSelection.resolve(decodedID, among: [decodedID]) != nil else { return nil }
+            guard let decodedID = requestedDetailID.removingPercentEncoding else { return nil }
+            if allowsCompositeDetailID {
+                let components = decodedID.split(separator: "/").map(String.init)
+                guard !components.isEmpty,
+                      components.allSatisfy({ NativeRouteSelection.resolve($0, among: [$0]) != nil }) else { return nil }
+            } else {
+                guard NativeRouteSelection.resolve(decodedID, among: [decodedID]) != nil else { return nil }
+            }
             detailID = decodedID
         }
         // Unknown owned routes still enter the native dashboard container, where its

@@ -25,7 +25,7 @@ extension UsersNativePanel {
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(theme.textSecondary)
-            SearchFieldRow(placeholder: "Filter users by name, id, or role", text: $searchText)
+            SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
 
             if model.users.isEmpty {
                 NativeEmptyState(title: "No users loaded", message: "Use Refresh from this dashboard or configure auth in Settings to load user administration data.")
@@ -113,9 +113,15 @@ extension UsersNativePanel {
             if let selectedUser {
                 userRolesPanel(selectedUser)
             }
+            if !model.selectedUserProfileID.isEmpty {
+                selectedUserProfilePanel
+            }
         }
         .task(id: model.selectedUserID) {
             await model.loadSelectedUserRoles()
+        }
+        .task(id: model.selectedUserProfileID) {
+            await model.loadSelectedUserProfile()
         }
         .alert(statusAlertTitle, isPresented: Binding(
             get: { pendingStatusUser != nil },
