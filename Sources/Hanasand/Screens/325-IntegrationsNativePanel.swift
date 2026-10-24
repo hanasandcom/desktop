@@ -4,6 +4,7 @@ struct IntegrationsNativePanel: View {
     var initialOrganizationID: String? = nil
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var page: IntegrationPage?
     @State private var draft: IntegrationDraft?
     @State private var search = ""
@@ -63,6 +64,17 @@ struct IntegrationsNativePanel: View {
             else { NativeEmptyState(title: model.hasHanasandAuth ? "Select an organization" : "Sign in required", message: model.hasHanasandAuth ? "Choose a workspace to review delivery destinations." : "Sign in to review integrations.") }
         }
         .task(id: "\(model.userIDForRequests):\(model.authTokenForRequests):\(scopeID):\(revision)") { await load() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                // Integration drafts contain destination URLs. Clear them when the app
+                // leaves the foreground and require a fresh permission read on return.
+                draft = nil
+                page = nil
+                refreshRequired = true
+            } else {
+                revision += 1
+            }
+        }
         .confirmationDialog(pendingAction?.title ?? "Confirm destination action", isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
             if let pendingAction {
                 Button(pendingAction.kind == .test ? "Send example message" : "Archive destination", role: pendingAction.kind == .archive ? .destructive : nil) { Task { await perform(pendingAction) } }
@@ -126,13 +138,22 @@ struct IntegrationsNativePanel: View {
 
     private func load() async {
         guard model.hasHanasandAuth else { page = nil; return }
+        let requestScope = scopeID
+        let requestUser = model.userIDForRequests
+        let requestToken = model.authTokenForRequests
         busy = true; error = ""; defer { busy = false }
         do {
             let client = try makeClient()
             let loaded = try await client.load()
-            guard scopeID.isEmpty || loaded.destinations.allSatisfy({ $0.orgId == (scopeID == "personal" ? model.userIDForRequests : scopeID) }) else { throw IntegrationClientError.invalidResponse }
+            guard scenePhase == .active, scopeID == requestScope,
+                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken else { return }
+            guard requestScope.isEmpty || loaded.destinations.allSatisfy({ $0.orgId == (requestScope == "personal" ? requestUser : requestScope) }) else { throw IntegrationClientError.invalidResponse }
             page = loaded; refreshRequired = false
-        } catch { page = nil; self.error = error.localizedDescription }
+        } catch {
+            guard scenePhase == .active, scopeID == requestScope,
+                  model.userIDForRequests == requestUser, model.authTokenForRequests == requestToken else { return }
+            page = nil; self.error = error.localizedDescription
+        }
     }
 
     private func save() async {
