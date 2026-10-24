@@ -141,6 +141,23 @@ struct ThoughtsClient {
             throw expectedStatus == 200 ? ThoughtsClientError.invalidResponse : ThoughtsClientError.unconfirmedMutation
         }
     }
+
+    func delete(id: String) async throws {
+        guard id.range(of: "^[A-Za-z0-9._-]{1,128}$", options: .regularExpression) != nil else {
+            throw ThoughtsClientError.invalidRequest
+        }
+        let url = apiBaseURL.appendingAPIPath("thought/\(id)")
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await send(makeRequest(url: url, method: "DELETE")) }
+        catch { throw ThoughtsClientError.uncertainMutation }
+        try validate(response, data: data, expectedStatus: 200)
+        do {
+            let receipt = try JSONDecoder().decode(ThoughtDeletionReceipt.self, from: data)
+            guard receipt.deleted, receipt.id == id else { throw ThoughtsClientError.unconfirmedMutation }
+        } catch let error as ThoughtsClientError { throw error }
+        catch { throw ThoughtsClientError.unconfirmedMutation }
+    }
 }
 
 private struct ThoughtMutation: Encodable {
@@ -150,6 +167,11 @@ private struct ThoughtMutation: Encodable {
 private struct ThoughtUpdateReceipt: Decodable {
     struct Result: Decodable { let rows: [DashboardThought] }
     let result: Result
+}
+
+private struct ThoughtDeletionReceipt: Decodable {
+    let deleted: Bool
+    let id: String
 }
 
 enum ThoughtsClientError: LocalizedError, Equatable {
@@ -186,19 +208,25 @@ enum ThoughtsClientError: LocalizedError, Equatable {
 
 struct ThoughtMutationSafety: Equatable {
     private(set) var requiresRefresh = false
+    private(set) var isReviewReady = false
+    private(set) var intent: ThoughtMutationIntent?
     private(set) var generation: UInt64 = 0
 
     var mayRetry: Bool { !requiresRefresh }
+    var mayAcknowledgeReview: Bool { requiresRefresh && isReviewReady }
 
-    mutating func recordFailure(_ error: Error) {
+    mutating func recordFailure(_ error: Error, action: String = "update", id: String? = nil, markdown: String? = nil) {
         if (error as? ThoughtsClientError)?.isUncertain == true {
             generation &+= 1
             requiresRefresh = true
+            isReviewReady = false
+            intent = ThoughtMutationIntent(action: action, id: id, markdown: markdown)
         }
     }
 
-    func beginRefresh(userID: String, organizationID: String, loadID: UUID) -> ThoughtsRefreshTicket {
-        ThoughtsRefreshTicket(generation: generation, userID: userID, organizationID: organizationID, loadID: loadID)
+    mutating func beginRefresh(userID: String, organizationID: String, loadID: UUID) -> ThoughtsRefreshTicket {
+        if requiresRefresh { isReviewReady = false }
+        return ThoughtsRefreshTicket(generation: generation, userID: userID, organizationID: organizationID, loadID: loadID)
     }
 
     func matchesCurrentRefresh(_ ticket: ThoughtsRefreshTicket, userID: String, organizationID: String,
@@ -211,8 +239,21 @@ struct ThoughtMutationSafety: Equatable {
                                          organizationID: String, loadID: UUID, isThoughtsPath: Bool) {
         guard matchesCurrentRefresh(ticket, userID: userID, organizationID: organizationID,
                                    loadID: loadID, isThoughtsPath: isThoughtsPath) else { return }
-        requiresRefresh = false
+        isReviewReady = true
     }
+
+    mutating func acknowledgeReviewedRefresh() {
+        guard mayAcknowledgeReview else { return }
+        requiresRefresh = false
+        isReviewReady = false
+        intent = nil
+    }
+}
+
+struct ThoughtMutationIntent: Equatable {
+    let action: String
+    let id: String?
+    let markdown: String?
 }
 
 struct ThoughtsRefreshTicket: Equatable {

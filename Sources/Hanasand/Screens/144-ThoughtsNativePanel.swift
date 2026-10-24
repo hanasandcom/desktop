@@ -48,6 +48,7 @@ struct ThoughtsNativePanel: View {
                         .frame(minHeight: 130, maxHeight: 200)
                         .background(theme.field)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .disabled(model.thoughtMutationNeedsRefresh)
                     MarkdownPreviewView(markdown: model.thoughtDraftTitle, theme: theme)
                     ActionButton(title: "Create", icon: "plus") {
                         Task { await model.createNativeThought() }
@@ -66,6 +67,7 @@ struct ThoughtsNativePanel: View {
                         .frame(minHeight: 170, maxHeight: 260)
                         .background(theme.field)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .disabled(model.thoughtMutationNeedsRefresh)
                     MarkdownPreviewView(markdown: model.thoughtEditTitle, theme: theme)
                     ActionButton(title: "Save", icon: "checkmark") {
                         Task { await model.updateSelectedThought() }
@@ -75,7 +77,42 @@ struct ThoughtsNativePanel: View {
             }
 
             if model.thoughtMutationNeedsRefresh {
-                NativeEmptyState(title: "Save needs review", message: "The server may have saved this Markdown, but Desktop did not receive a confirmation. Refresh Thoughts and review the list before trying again.")
+                NativeGroupPanel(title: "Thought change needs review", subtitle: "Uncertain result · no automatic retry") {
+                    Text(model.thoughtMutationSafety.intent?.action == "delete"
+                         ? "The server may have deleted this thought, but Desktop did not receive a confirmation. Refresh Thoughts, check whether the listed thought still exists, then acknowledge the review before another write."
+                         : "The server may have saved this Markdown, but Desktop did not receive a confirmation. Refresh Thoughts, compare the displayed list with the retained submitted text, then acknowledge the review before another write.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let intent = model.thoughtMutationSafety.intent {
+                        Text("Unconfirmed \(intent.action)\(intent.id.map { " · \($0)" } ?? "")")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.text)
+                        if let markdown = intent.markdown {
+                            ScrollView {
+                                Text(markdown)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 110)
+                            .padding(9)
+                            .background(theme.field)
+                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        }
+                    }
+                    ActionButton(title: "Acknowledge reviewed list and unlock", icon: "checkmark.shield") {
+                        model.thoughtMutationSafety.acknowledgeReviewedRefresh()
+                        model.nativeDashboardStatus = "Thought list reviewed. No save receipt was inferred."
+                    }
+                    .disabled(!model.thoughtMutationSafety.mayAcknowledgeReview || model.isLoadingNativeDashboard)
+                    if !model.thoughtMutationSafety.mayAcknowledgeReview {
+                        Text("Refresh the current Thoughts list before acknowledging.")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                }
             }
 
             if model.thoughts.isEmpty {
@@ -120,6 +157,7 @@ struct ThoughtsNativePanel: View {
                                     .buttonStyle(.plain)
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(theme.accent)
+                                    .disabled(model.thoughtMutationNeedsRefresh || model.isLoadingNativeDashboard)
 
                                     Button("Edit") {
                                         model.loadThoughtIntoEditor(thought)
@@ -127,6 +165,7 @@ struct ThoughtsNativePanel: View {
                                     .buttonStyle(.plain)
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(theme.textSecondary)
+                                    .disabled(model.thoughtMutationNeedsRefresh || model.isLoadingNativeDashboard)
 
                                     Button("Delete") {
                                         deletingThought = thought
@@ -134,6 +173,7 @@ struct ThoughtsNativePanel: View {
                                     .buttonStyle(.plain)
                                     .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(theme.danger)
+                                    .disabled(model.thoughtMutationNeedsRefresh || model.isLoadingNativeDashboard)
                                 }
                             }
                             .padding(13)

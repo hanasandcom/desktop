@@ -79,6 +79,39 @@ final class ThoughtsClientTests: XCTestCase {
         }
     }
 
+    func testDeleteThoughtUsesVerifiedReceiptAndMarksAmbiguousResponsesUncertain() async throws {
+        var captured: URLRequest?
+        let successClient = try client { request in
+            captured = request
+            return (Data(#"{"deleted":true,"id":"42"}"#.utf8), Self.response(request.url!, status: 200))
+        }
+        try await successClient.delete(id: "42")
+        XCTAssertEqual(captured?.httpMethod, "DELETE")
+        XCTAssertEqual(captured?.url?.path, "/api/thought/42")
+
+        let wrongReceipt = try client { request in
+            (Data(#"{"deleted":true,"id":"41"}"#.utf8), Self.response(request.url!, status: 200))
+        }
+        do {
+            try await wrongReceipt.delete(id: "42")
+            XCTFail("Expected mismatched deletion receipt")
+        } catch let error as ThoughtsClientError {
+            XCTAssertEqual(error, .unconfirmedMutation)
+            XCTAssertTrue(error.isUncertain)
+        }
+
+        let forbiddenClient = try client { request in
+            (Data(#"{"error":"forbidden"}"#.utf8), Self.response(request.url!, status: 403))
+        }
+        do {
+            try await forbiddenClient.delete(id: "42")
+            XCTFail("Expected permission error")
+        } catch let error as ThoughtsClientError {
+            XCTAssertEqual(error, .requestFailed(403))
+            XCTAssertFalse(error.isUncertain, "A definite permission denial must not require mutation review.")
+        }
+    }
+
     func testMutationSafetyBlocksRetryUntilRefreshAfterUncertainOutcome() {
         var state = ThoughtMutationSafety()
         XCTAssertTrue(state.mayRetry)
@@ -86,9 +119,24 @@ final class ThoughtsClientTests: XCTestCase {
         XCTAssertTrue(state.mayRetry)
         state.recordFailure(ThoughtsClientError.requestFailed(503))
         XCTAssertFalse(state.mayRetry)
+        XCTAssertEqual(state.intent, ThoughtMutationIntent(action: "update", id: nil, markdown: nil))
     }
 
-    func testOnlyCurrentPostFailureRefreshForSameScopeClearsMutationGate() {
+    func testUncertainDeleteRetainsIntentUntilFreshReviewIsAcknowledged() {
+        var state = ThoughtMutationSafety()
+        state.recordFailure(ThoughtsClientError.uncertainMutation, action: "delete", id: "42")
+        XCTAssertEqual(state.intent, ThoughtMutationIntent(action: "delete", id: "42", markdown: nil))
+        XCTAssertFalse(state.mayRetry)
+        let ticket = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: UUID())
+        state.recordSuccessfulRefresh(ticket, userID: "user-1", organizationID: "org-1", loadID: ticket.loadID, isThoughtsPath: true)
+        XCTAssertTrue(state.mayAcknowledgeReview)
+        XCTAssertFalse(state.mayRetry)
+        state.acknowledgeReviewedRefresh()
+        XCTAssertTrue(state.mayRetry)
+        XCTAssertNil(state.intent)
+    }
+
+    func testOnlyCurrentPostFailureRefreshForSameScopeEnablesReviewBeforeAcknowledgment() {
         var state = ThoughtMutationSafety()
         let originalLoadID = UUID()
         let inFlightBeforeFailure = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: originalLoadID)
@@ -97,6 +145,7 @@ final class ThoughtsClientTests: XCTestCase {
 
         state.recordSuccessfulRefresh(inFlightBeforeFailure, userID: "user-1", organizationID: "org-1", loadID: originalLoadID, isThoughtsPath: true)
         XCTAssertFalse(state.mayRetry, "A GET that began before the uncertain write must not clear the gate.")
+        XCTAssertFalse(state.mayAcknowledgeReview, "A GET that began before the uncertain write cannot enable review.")
 
         let freshLoadID = UUID()
         let postFailureRefresh = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: freshLoadID)
@@ -106,9 +155,21 @@ final class ThoughtsClientTests: XCTestCase {
         XCTAssertFalse(state.mayRetry, "A superseded GET must not clear the gate.")
         state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: false)
         XCTAssertFalse(state.mayRetry, "A response from a different route must not clear the gate.")
+        XCTAssertFalse(state.mayAcknowledgeReview, "A response from a different route cannot enable review.")
 
         state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: freshLoadID, isThoughtsPath: true)
-        XCTAssertTrue(state.mayRetry)
+        XCTAssertFalse(state.mayRetry, "A fresh list is review evidence, not a mutation receipt.")
+        XCTAssertTrue(state.mayAcknowledgeReview)
+        let retryLoadID = UUID()
+        let retryRefresh = state.beginRefresh(userID: "user-1", organizationID: "org-1", loadID: retryLoadID)
+        XCTAssertFalse(state.mayAcknowledgeReview, "A new refresh invalidates acknowledgment until it completes successfully.")
+        state.recordSuccessfulRefresh(postFailureRefresh, userID: "user-1", organizationID: "org-1", loadID: retryLoadID, isThoughtsPath: true)
+        XCTAssertFalse(state.mayAcknowledgeReview, "A superseded response cannot restore acknowledgment.")
+        state.recordSuccessfulRefresh(retryRefresh, userID: "user-1", organizationID: "org-1", loadID: retryLoadID, isThoughtsPath: true)
+        XCTAssertTrue(state.mayAcknowledgeReview)
+        state.acknowledgeReviewedRefresh()
+        XCTAssertTrue(state.mayRetry, "Only explicit acknowledgment unlocks subsequent writes.")
+        XCTAssertFalse(state.mayAcknowledgeReview)
     }
 
     func testAccountSwitchWithPersonalScopeCannotSendOrAcceptOldRefresh() {
@@ -125,7 +186,8 @@ final class ThoughtsClientTests: XCTestCase {
 
         let newAccountRefresh = state.beginRefresh(userID: "user-2", organizationID: "", loadID: UUID())
         state.recordSuccessfulRefresh(newAccountRefresh, userID: "user-2", organizationID: "", loadID: newAccountRefresh.loadID, isThoughtsPath: true)
-        XCTAssertTrue(state.mayRetry)
+        XCTAssertTrue(state.mayAcknowledgeReview)
+        XCTAssertFalse(state.mayRetry)
     }
 
     func testRejectsImpersonationAndEmptyMarkdownAndReportsDefiniteConflict() async throws {

@@ -159,7 +159,7 @@ extension DesktopAgentModel {
             append(meta: "Thought created", body: markdown, kind: .change)
             await loadNativeDashboardData()
         } catch {
-            thoughtMutationSafety.recordFailure(error)
+            thoughtMutationSafety.recordFailure(error, action: "create", markdown: markdown)
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Thought failed", body: error.localizedDescription, kind: .error)
         }

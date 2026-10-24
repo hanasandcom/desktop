@@ -42,7 +42,7 @@ extension DesktopAgentModel {
             append(meta: "Thought saved", body: selectedThoughtID, kind: .change)
             await loadNativeDashboardData()
         } catch {
-            thoughtMutationSafety.recordFailure(error)
+            thoughtMutationSafety.recordFailure(error, action: "update", id: selectedThoughtID, markdown: markdown)
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Thought save failed", body: error.localizedDescription, kind: .error)
         }
@@ -53,17 +53,17 @@ extension DesktopAgentModel {
             nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."
             return
         }
+        guard !thoughtMutationNeedsRefresh else {
+            nativeDashboardStatus = "Refresh Thoughts and review the earlier operation before deleting."
+            return
+        }
 
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Deleting thought"
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("thought/\(thought.id)"),
-                method: "DELETE",
-                authenticated: true
-            )
+            try await thoughtsClient().delete(id: thought.id)
             if selectedThoughtID == thought.id {
                 selectedThoughtID = ""
                 thoughtEditTitle = ""
@@ -72,6 +72,7 @@ extension DesktopAgentModel {
             append(meta: "Thought deleted", body: thought.id, kind: .change)
             await loadNativeDashboardData()
         } catch {
+            thoughtMutationSafety.recordFailure(error, action: "delete", id: thought.id)
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Thought delete failed", body: error.localizedDescription, kind: .error)
         }
