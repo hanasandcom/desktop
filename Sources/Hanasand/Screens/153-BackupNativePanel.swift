@@ -7,6 +7,9 @@ struct BackupNativePanel: View {
     @State private var dashboard: NativeBackupDashboard?
     @State private var access: NativeDatabaseAccess?
     @State private var selectedFileID = ""
+    @State private var archiveSearch = ""
+    @State private var archiveDateFilter = ""
+    @State private var archiveServiceFilter = ""
     @State private var isLoading = false
     @State private var isOperating = false
     @State private var reviewRequired = false
@@ -14,6 +17,9 @@ struct BackupNativePanel: View {
     @State private var operationMessage = ""
 
     private var selectedFile: NativeBackupFile? { dashboard?.files.first(where: { $0.id == selectedFileID }) }
+    private var filteredFiles: [NativeBackupFile] {
+        filterNativeBackupFiles(dashboard?.files ?? [], service: archiveServiceFilter, date: archiveDateFilter, search: archiveSearch)
+    }
     private var credentialScope: String {
         "\(model.settings.apiBaseURL)|\(model.settings.internalAPIBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.settings.selectedOrganizationID)"
     }
@@ -95,31 +101,47 @@ struct BackupNativePanel: View {
 
     @ViewBuilder
     private func archiveSection(_ value: NativeBackupDashboard) -> some View {
-        NativeGroupPanel(title: "Available backups", subtitle: "\(value.files.count) archives · \(value.backups.first?.storageTarget ?? "configured storage")") {
+        NativeGroupPanel(title: "Available backups", subtitle: "\(filteredFiles.count) of \(value.files.count) archives · \(value.backups.first?.storageTarget ?? "configured storage")") {
             if value.files.isEmpty {
                 Text("No archive exists. Run the first verified backup.").font(.system(size: 12))
             } else {
-                Picker("Archive", selection: $selectedFileID) {
-                    ForEach(value.files) { file in
-                        Text("\(file.file) · \(file.size ?? "size unknown") · \(file.verified ? "verified" : "unverified")").tag(file.id)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), alignment: .top)], alignment: .leading, spacing: 10) {
+                    TextField("Search archive names", text: $archiveSearch)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Date filter (YYYY-MM-DD)", text: $archiveDateFilter)
+                        .textFieldStyle(.roundedBorder)
+                    Picker("Service", selection: $archiveServiceFilter) {
+                        Text("All services").tag("")
+                        ForEach(Array(Set(value.files.map(\.service))).sorted(), id: \.self) { service in
+                            Text(service).tag(service)
+                        }
                     }
                 }
-                if let file = selectedFile {
-                    HStack(spacing: 10) {
-                        FeatureCard(title: "Created", value: formatDateText(file.mtime, fallback: "Unknown"), icon: "calendar")
-                        FeatureCard(title: "Size", value: file.size ?? "Unavailable", icon: "externaldrive")
-                        FeatureCard(title: "Verification", value: file.verified ? "Verified" : "Unverified", icon: file.verified ? "checkmark.shield" : "exclamationmark.shield")
-                    }
-                    CompactInfoCard(title: "Checksum", lines: [file.checksumSha256 ?? "Not recorded", file.verifiedAt.map { "Verified \(formatDateText($0, fallback: $0))" } ?? ""])
-                    HStack(spacing: 10) {
-                        ActionButton(title: "Verify archive", icon: "checkmark.shield") { Task { await runFileAction(.verify, file: file) } }
-                            .disabled(!writesEnabled)
-                        ActionButton(title: "Delete archive", icon: "trash", tone: .danger) { confirmDelete(file) }
-                            .disabled(!writesEnabled)
-                        ActionButton(title: "Restore drill", icon: "arrow.counterclockwise") {
-                            model.openNativeDashboard(path: "/db/restore", label: "Restore drill", query: ["file": file.file])
+                if filteredFiles.isEmpty {
+                    Text("No archives match these filters.").font(.system(size: 12)).foregroundStyle(.secondary)
+                } else {
+                    Picker("Archive", selection: $selectedFileID) {
+                        ForEach(filteredFiles) { file in
+                            Text("\(file.file) · \(file.size ?? "size unknown") · \(file.verified ? "verified" : "unverified")").tag(file.id)
                         }
-                        .disabled(!writesEnabled)
+                    }
+                    if let file = filteredFiles.first(where: { $0.id == selectedFileID }) {
+                        HStack(spacing: 10) {
+                            FeatureCard(title: "Created", value: formatDateText(file.mtime, fallback: "Unknown"), icon: "calendar")
+                            FeatureCard(title: "Size", value: file.size ?? "Unavailable", icon: "externaldrive")
+                            FeatureCard(title: "Verification", value: file.verified ? "Verified" : "Unverified", icon: file.verified ? "checkmark.shield" : "exclamationmark.shield")
+                        }
+                        CompactInfoCard(title: "Checksum", lines: [file.checksumSha256 ?? "Not recorded", file.verifiedAt.map { "Verified \(formatDateText($0, fallback: $0))" } ?? ""])
+                        HStack(spacing: 10) {
+                            ActionButton(title: "Verify archive", icon: "checkmark.shield") { Task { await runFileAction(.verify, file: file) } }
+                                .disabled(!writesEnabled)
+                            ActionButton(title: "Delete archive", icon: "trash", tone: .danger) { confirmDelete(file) }
+                                .disabled(!writesEnabled)
+                            ActionButton(title: "Restore drill", icon: "arrow.counterclockwise") {
+                                model.openNativeDashboard(path: "/db/restore", label: "Restore drill", query: ["file": file.file])
+                            }
+                            .disabled(!writesEnabled)
+                        }
                     }
                 }
             }

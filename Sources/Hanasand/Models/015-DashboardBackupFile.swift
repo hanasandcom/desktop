@@ -18,3 +18,11 @@ struct DashboardBackupFile: Decodable, Identifiable {
     let size: String?
     let location: String?
 }
+
+func filterNativeBackupFiles(_ files: [NativeBackupFile], service: String, date: String, search: String) -> [NativeBackupFile] {
+    files.filter { file in
+        (service.isEmpty || file.service == service) &&
+        (date.isEmpty || file.mtime?.hasPrefix(date) == true || file.file.localizedCaseInsensitiveContains(date)) &&
+        (search.isEmpty || file.file.localizedCaseInsensitiveContains(search))
+    }
+}
