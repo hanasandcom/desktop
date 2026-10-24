@@ -1,0 +1,176 @@
+{
+  "publishedArticles": [
+    {
+      "id": "bot.md",
+      "title": "How to create a scalable Discord bot specific to your needs?",
+      "size": 475,
+      "created": "2025-05-12T04:00:48+02:00",
+      "modified": "2025-05-12T06:10:16+02:00",
+      "content": "# How to create a scalable Discord bot specific to your needs?\n\nComing soon <3",
+      "metadata": {
+        "image": "/images/assets/city.jpg",
+        "description": "This article details how to create a custom, reliable Discord bot that you can use for role management, mirror game servers, create documentation pages on your wiki solutions, one click Infrastructure As Code deployment in multiple environments, and other things you might use a Discord Bot for. (It even updates itself without downtime!)",
+        "wordCount": 15,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "cache.md",
+      "title": "How to set up performant low latency caching?",
+      "size": 385,
+      "created": "2025-05-12T04:00:48+02:00",
+      "modified": "2025-05-13T06:07:54+02:00",
+      "content": "# How to set up performant low latency caching?\n\nComing soon <3",
+      "metadata": {
+        "image": "/images/assets/art.png",
+        "description": "I use NextJS, and even though its more than enough most of the time, sometimes NextJS' caching just doesnt cut it. This is a simple approach to a < 5ms cache setup that allows to be easily extended and modified to your needs, without complex logic or abstractions.",
+        "wordCount": 12,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "event.md",
+      "title": "How to create a event management React Native Application?",
+      "size": 474,
+      "created": "2025-05-12T04:00:48+02:00",
+      "modified": "2025-05-12T05:41:44+02:00",
+      "content": "# How to create a event management React Native Application?\n\nComing soon <3",
+      "metadata": {
+        "image": "/images/assets/project.jpg",
+        "description": "Maybe your organization hosts a lot of events? Football, running, bowling or any other social initiatives in your organization will quickly pile up and become difficult to keep track of. Thats why I created a simple application with notifications, dates and everything else you need to keep track of whats going on in your organization.",
+        "wordCount": 13,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "lsm.md",
+      "title": "Library Safety Manager",
+      "size": 588,
+      "created": "2025-05-12T06:10:23+02:00",
+      "modified": "2025-05-12T07:41:34+02:00",
+      "content": "# Library Safety Manager\nLibrary Safety Manager Open Source Plugin For Artifactory. Allow and block packages for JFrog Artifactory to prevent download of malicious or vulnerable code.\n\nSorry, the full thesis is finished but not published yet. It will be published in a month.",
+      "metadata": {
+        "image": "/images/assets/abstract.jpg",
+        "description": "Have you ever thought about blocking vulnerable dependencies proactively instead of retrospectively? If not, no worries, I got you! This article gives a brief overview of the application, and links to the full thesis detailing the entire application.",
+        "wordCount": 44,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "readme.md",
+      "title": "👋 Hey, I’m Eirik Hanasand",
+      "size": 2570,
+      "created": "2025-10-12T14:38:30+02:00",
+      "modified": "2025-10-12T14:38:30+02:00",
+      "content": "# 👋 Hey, I’m Eirik Hanasand\n\nI’m a **software engineer and security-minded developer** passionate about building tools that make development safer, faster, and more enjoyable. I love exploring the intersection of **software engineering, cybersecurity, and design** — where clean code meets practical impact. (Sorry for making GPT write this 😂, I would need more than 48 hours in a day to get everything I wanted done. I will write it meself at some point. Remember that this is a personal website, and only supposed to be half serious 🍹)\n\n---\n\n## 🧠 What Drives Me\n\nI’m motivated by curiosity and craftsmanship. Whether I’m hardening an API, improving a CI pipeline, or designing a React interface, I aim for **clarity, simplicity, and security by default**.\n\nI believe software should help people — and it should do so **without getting in their way**.\n\n---\n\n## 🧰 What I Build\n\nSome projects I’ve worked on recently:\n\n- 🧩 **Library Safety Manager (LSM)** — an Artifactory extension that scans packages for vulnerabilities and malware using the OSV database.  \n- 📱 **Event Management App** — a React Native app to simplify event coordination.  \n- 🤖 **Discord Bot for Infrastructure Automation** — combining IaC principles with developer community tools.  \n- 🌐 **Open Source Libraries** — small UI utilities, SSR/theming experiments in Next.js, and other contributions on [GitHub](https://github.com/eirikhanasand).\n\n---\n\n## 🛡️ My Focus Areas\n\n- Secure development & supply-chain protection  \n- JavaScript / TypeScript, React, and Next.js  \n- DevOps & automation (CI/CD, IaC)  \n- Developer experience (DX) and open-source tooling  \n\n---\n\n## 🌱 Currently Exploring\n\n- Software supply-chain security research  \n- Smarter mobile-web integrations for events and collaboration  \n- Writing technical deep-dives on security and performance  \n- Building small, opinionated tools to make developers’ lives easier  \n\n---\n\n## ✉️ Let’s Connect\n\nIf you’re working on something interesting — especially around **developer tools, app security, or automation** — I’d love to connect or collaborate.\n\n- **GitHub:** [github.com/eirikhanasand](https://github.com/eirikhanasand)  \n- **Website:** [hanasand.com](https://hanasand.com)",
+      "metadata": {
+        "quoteIcon": "/images/assets/chatgpt.png",
+        "quote": "Write a Readme.md (about me) for a about page article on my website. Please check https://github.com/eirikhanasand for inspiration. Look at my projects and interests, and use what you know about me based on all my previous queries.",
+        "image": "",
+        "description": "",
+        "wordCount": 322,
+        "estimatedMinutes": 5
+      }
+    },
+    {
+      "id": "theme.md",
+      "title": "How to create server side themes for NextJS?",
+      "size": 407,
+      "created": "2025-05-12T04:00:48+02:00",
+      "modified": "2025-05-12T05:41:44+02:00",
+      "content": "# How to create server side themes for NextJS?\n\nComing soon <3",
+      "metadata": {
+        "image": "/images/assets/abstract.jpg",
+        "description": "In this article I explain how to setup proper ssr themes for NextJS without FODT (Flash Of Default Theme) and other common problems when dealing with themes. It also integrates well with custom themes and does not rely on any library at all (although I use tailwind for preference).",
+        "wordCount": 12,
+        "estimatedMinutes": 1
+      }
+    }
+  ],
+  "fallbackArticles": [
+    {
+      "id": "bot",
+      "size": 1379,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "How to create a scalable Discord bot for your community",
+      "content": "# How to create a scalable Discord bot for your community\n\nStart with the smallest workflow the server actually needs. A useful bot usually begins as one dependable command, one permission model, and one background job rather than a large command catalogue.\n\nKeep configuration outside the code, store secrets in the deployment environment, and log moderation actions in a channel that trusted admins can audit. For larger servers, split event handling from slow work so message events stay responsive while jobs such as role sync, wiki updates, or game-server mirrors run in a queue.\n\nThe final check is operational: the bot should restart cleanly, explain failed commands to users, and give maintainers enough logs to diagnose permission or API-limit problems without reading the source.",
+      "metadata": {
+        "image": "/images/assets/city.jpg",
+        "description": "Custom Discord bot work for role management, game server mirrors, wiki pages, infrastructure automation, and self-updating deployments.",
+        "wordCount": 117,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "cache",
+      "size": 1258,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "How to set up performant low latency caching?",
+      "content": "# How to set up performant low latency caching\n\nCache the response that hurts users, not every response by default. A good first pass is to identify the route with repeated reads, define how stale the answer is allowed to be, and make invalidation explicit.\n\nFor Next.js and API services, keep the fast path boring: normalize cache keys, include the current user or tenant when data is private, and set short TTLs until the data model is stable. Add longer-lived edge or Redis caches only after the route has clear ownership and observability.\n\nProduction caching should be easy to turn off. Ship metrics for hit rate, latency, and stale responses so the cache can be treated as infrastructure rather than mystery state.",
+      "metadata": {
+        "image": "/images/assets/art.png",
+        "description": "A small Next.js-oriented cache setup for low-latency responses without heavy abstractions.",
+        "wordCount": 111,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "event",
+      "size": 1224,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "How to create an event management React Native application",
+      "content": "# How to create an event management React Native application\n\nThe useful version of an event app is not a calendar clone. It is a workflow for creating an event, inviting the right people, updating the schedule, and handling the awkward cases: cancellations, late changes, check-in, and reminders.\n\nBuild the first version around offline-tolerant reads and careful notification settings. People open event apps while moving, so screens should be fast, forms should save drafts, and the most important details should fit on a phone without digging.\n\nFor teams, add roles early. Organizers need editing rights, attendees need clear status, and admins need an audit trail when details change.",
+      "metadata": {
+        "image": "/images/assets/project.jpg",
+        "description": "React Native event management work for schedules, notifications, and organization activity flows.",
+        "wordCount": 103,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "lsm",
+      "size": 462,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "Library Safety Manager",
+      "content": "# Library Safety Manager\n\nLibrary Safety Manager is an open source plugin for Artifactory that helps allow and block packages to reduce malicious or vulnerable dependency downloads.",
+      "metadata": {
+        "image": "/images/assets/abstract.jpg",
+        "description": "An Artifactory extension for proactively blocking vulnerable or malicious package downloads.",
+        "wordCount": 27,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "readme",
+      "size": 1560,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "Hey, I’m Eirik Hanasand",
+      "content": "# Hey, I’m Eirik Hanasand\n\nPersonal readme and context for the older Hanasand portfolio, projects, security work, and developer tooling experiments.",
+      "metadata": {
+        "image": "",
+        "description": "Personal readme and context for Eirik Hanasand, older projects, and the personal side of the site.",
+        "wordCount": 22,
+        "estimatedMinutes": 1
+      }
+    },
+    {
+      "id": "theme",
+      "size": 1156,
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "title": "How to create server-side themes for Next.js",
+      "content": "# How to create server-side themes for Next.js\n\nTheme selection should be resolved before the page paints. Store the user preference in a cookie, read it on the server, and render the initial HTML with the correct class or data attribute so the interface does not flash through the wrong theme.\n\nKeep the theme tokens small and semantic: background, surface, foreground, muted text, accent, border, and danger are enough for most products. Components should consume those tokens instead of hard-coded color families, which keeps light, dark, and system themes aligned.\n\nThe browser can still update the theme instantly after a user changes it, but the server value is the source of truth for the next navigation.",
+      "metadata": {
+        "image": "/images/assets/abstract.jpg",
+        "description": "Notes on setting up server-side themes for Next.js without flash-of-default-theme problems.",
+        "wordCount": 113,
+        "estimatedMinutes": 1
+      }
+    }
+  ]
+}
