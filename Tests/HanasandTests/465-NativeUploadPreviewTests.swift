@@ -5,7 +5,9 @@ final class NativeUploadPreviewTests: XCTestCase {
     func testClassifiesSupportedImageAndVideoTypes() {
         XCTAssertEqual(NativeUploadPreviewKind(fileExtension: "png"), .image)
         XCTAssertEqual(NativeUploadPreviewKind(fileExtension: ".jpeg"), .image)
+        XCTAssertEqual(NativeUploadPreviewKind(fileExtension: "PNG"), .image)
         XCTAssertEqual(NativeUploadPreviewKind(fileExtension: "mp4"), .video)
+        XCTAssertEqual(NativeUploadPreviewKind(fileExtension: "MOV"), .video)
         XCTAssertEqual(NativeUploadPreviewKind(fileExtension: "mov"), .video)
     }
 
