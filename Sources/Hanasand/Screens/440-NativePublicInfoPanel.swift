@@ -7,7 +7,10 @@ struct NativePublicInfoPanel: View {
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @AppStorage("hanasand.desktop.optionalCookieConsent") private var optionalConsent = "unset"
+    @State private var cookieSettings: NativeCookieSettingsSnapshot?
+    @State private var consentMessage = ""
+    @State private var draftClearMessage = ""
+    @State private var confirmClearLocalDrafts = false
     @State private var contactName = ""
     @State private var contactEmail = ""
     @State private var contactCompany = ""
@@ -113,6 +116,15 @@ struct NativePublicInfoPanel: View {
                     }
                 }
             }
+        }
+        .task(id: page.kind) {
+            if page.kind == .cookieSettings { refreshCookieSettings() }
+        }
+        .confirmationDialog("Clear local IDE drafts?", isPresented: $confirmClearLocalDrafts, titleVisibility: .visible) {
+            Button("Clear IDE drafts", role: .destructive) { clearLocalDrafts() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes only allowlisted local IDE drafts from this Mac. Notes drafts, Keychain credentials, settings, appearance, identity, and workspace session preferences are kept.")
         }
     }
 
@@ -232,24 +244,120 @@ struct NativePublicInfoPanel: View {
     }
 
     private var cookieSettingsControls: some View {
-        NativeGroupPanel(title: "Optional app measurement", subtitle: optionalConsent == "optional" ? "Optional consent saved" : optionalConsent == "essential" ? "Essential only" : "No preference saved") {
-            Text("Required account and security functions remain enabled. This preference applies to the desktop app; it does not change website cookies or browser storage.")
-                .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    consentActions
+        let snapshot = cookieSettings ?? NativeCookieSettingsPolicy.snapshot(
+            sessionToken: model.authTokenForRequests,
+            impersonationToken: model.settings.impersonationToken
+        )
+        return VStack(alignment: .leading, spacing: 12) {
+            NativeGroupPanel(title: "Consent", subtitle: snapshot.consent.title) {
+                Text("Required account and security functions remain enabled. Optional measurement consent applies to this Desktop app.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                Text(consentUpdatedLabel(snapshot.consentUpdatedAt))
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { consentActions }
+                    VStack(alignment: .leading, spacing: 8) { consentActions }
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    consentActions
+                if !consentMessage.isEmpty { NativeNotice(message: consentMessage, tone: .success) }
+            }
+
+            NativeGroupPanel(title: "Account tokens", subtitle: "Presence only · token values are never shown") {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
+                        presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
+                    }
+                    VStack(spacing: 8) {
+                        presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
+                        presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
+                    }
                 }
+                ActionButton(title: "Open native sign out", icon: "rectangle.portrait.and.arrow.right") {
+                    model.openNativeDashboard(path: "/logout", label: "Sign out")
+                }
+            }
+
+            NativeGroupPanel(title: "Local Hanasand drafts", subtitle: "Saved only on this Mac") {
+                Text("This removes allowlisted local IDE drafts from this Mac. Notes drafts are preserved and managed from the Notes route.")
+                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                if snapshot.storedDraftKinds.isEmpty {
+                    NativeEmptyState(title: "No local IDE drafts found", message: "No allowlisted IDE draft data is stored.")
+                } else {
+                    ForEach(snapshot.storedDraftKinds) { kind in
+                        Label(kind.title, systemImage: "chevron.left.forwardslash.chevron.right")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                    }
+                }
+                NativeNotice(message: "Notes drafts are preserved. Manage them from the Notes route.", title: "Notes drafts are not cleared here", tone: .info)
+                if !draftClearMessage.isEmpty { NativeNotice(message: draftClearMessage, tone: .success) }
+                if model.pendingIDEEdit != nil {
+                    NativeNotice(message: "Finish or discard the pending IDE edit before clearing local drafts.", title: "Draft clearing paused", tone: .info)
+                } else if model.articleMutationSafety.isBlocked {
+                    NativeNotice(message: "Resolve the pending safety review before clearing local drafts.", title: "Draft clearing paused", tone: .info)
+                } else if !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty {
+                    NativeNotice(message: "Return to your own account before clearing account-scoped drafts.", title: "Draft clearing paused", tone: .info)
+                }
+                ActionButton(title: "Clear local drafts", icon: "trash", tone: .danger) {
+                    confirmClearLocalDrafts = true
+                }
+                .disabled(!snapshot.storedDraftKinds.contains(.ide) || !mayClearLocalDrafts)
             }
         }
     }
 
     @ViewBuilder private var consentActions: some View {
-        ActionButton(title: "Allow optional", icon: "checkmark.circle") { optionalConsent = "optional" }
-        ActionButton(title: "Essential only", icon: "lock.shield") { optionalConsent = "essential" }
-        ActionButton(title: "Reset choice", icon: "arrow.counterclockwise") { optionalConsent = "unset" }
+        ActionButton(title: "Allow optional", icon: "checkmark.circle") { updateConsent(.optional) }
+        ActionButton(title: "Essential only", icon: "lock.shield") { updateConsent(.essential) }
+        ActionButton(title: "Reset choice", icon: "arrow.counterclockwise") { updateConsent(.unset) }
+    }
+
+    private var mayClearLocalDrafts: Bool {
+        model.selectedSection != .ide
+            && model.pendingIDEEdit == nil
+            && !model.articleMutationSafety.isBlocked
+            && model.settings.impersonationToken.isEmpty
+            && model.settings.impersonatingUserID.isEmpty
+    }
+
+    private func presenceCard(title: String, present: Bool, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).foregroundStyle(present ? theme.accent : theme.textTertiary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                Text(present ? "Present" : "Not present").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func updateConsent(_ choice: NativeCookieSettingsSnapshot.Consent) {
+        NativeCookieSettingsPolicy.saveConsent(choice)
+        refreshCookieSettings()
+        consentMessage = choice == .unset ? "Consent choice reset." : "Consent choice saved."
+    }
+
+    private func consentUpdatedLabel(_ date: Date?) -> String {
+        guard let date else { return "No consent choice has been saved." }
+        return "Updated \(ISO8601DateFormatter().string(from: date))"
+    }
+
+    private func refreshCookieSettings() {
+        cookieSettings = NativeCookieSettingsPolicy.snapshot(
+            sessionToken: model.authTokenForRequests,
+            impersonationToken: model.settings.impersonationToken
+        )
+    }
+
+    private func clearLocalDrafts() {
+        guard mayClearLocalDrafts else { return }
+        let cleared = NativeCookieSettingsPolicy.clearSafeDrafts(
+            mayClearIDE: mayClearLocalDrafts
+        )
+        draftClearMessage = cleared.isEmpty ? "No IDE drafts were cleared." : "Cleared local IDE drafts."
+        refreshCookieSettings()
     }
 
     private var contactForm: some View {
