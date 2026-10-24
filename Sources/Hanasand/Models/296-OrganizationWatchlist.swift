@@ -85,3 +85,26 @@ struct OrganizationWatchlistMutationReceipt: Decodable {
     let operation: JSONValue?
     let dwmAlertBridge: JSONValue?
 }
+
+struct OrganizationCollectionRequest: Decodable, Identifiable, Equatable {
+    let requestId: String
+    let status: String
+    let captureCount: Int?
+    let alertCount: Int?
+    let errors: [String]?
+    var id: String { requestId }
+}
+
+struct OrganizationCollectionRequestEnvelope: Decodable {
+    let collectionRequest: OrganizationCollectionRequest?
+}
+
+struct OrganizationWatchlistCleanupReceipt: Decodable {
+    struct Cleanup: Decodable { let archivedCount: Int?; let skippedItemIds: [String]? }
+    let cleanup: Cleanup?
+}
+
+struct OrganizationWatchlistAlertRebuildReceipt: Decodable {
+    let savedAlertCount: Int?
+    let alertIds: [String]?
+}

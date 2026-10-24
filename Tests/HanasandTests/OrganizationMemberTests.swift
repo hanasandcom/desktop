@@ -2,17 +2,22 @@ import XCTest
 @testable import Hanasand
 
 final class OrganizationMemberTests: XCTestCase {
-    func testDecodesMemberAndPendingInviteWithoutAcceptanceSecrets() throws {
-        let members = #"{"organization":{"id":"org-one","name":"Example","lifecycleStatus":"active","role":"owner"},"members":[{"organizationId":"org-one","userId":"owner-1","name":"Owner","role":"owner","status":"active","joinedAt":"2026-10-22T12:00:00Z"}]}"#.data(using: .utf8)!
-        let invites = #"{"invites":[{"id":"invite-1","email":"person@example.com","role":"reader","status":"pending","expiresAt":"2026-11-05T12:00:00Z"}]}"#.data(using: .utf8)!
+    func testDecodesMemberEmailAndPendingInviteCopyLinkFields() throws {
+        let members = #"{"organization":{"id":"org-one","name":"Example","lifecycleStatus":"active","role":"owner"},"members":[{"organizationId":"org-one","userId":"owner-1","name":"Owner","email":"owner@example.com","role":"owner","status":"active","joinedAt":"2026-10-22T12:00:00Z"}]}"#.data(using: .utf8)!
+        let invites = #"{"invites":[{"id":"invite-1","email":"person@example.com","role":"reader","status":"pending","expiresAt":"2026-11-05T12:00:00Z","acceptanceUrl":"https://hanasand.test/invite/opaque"}]}"#.data(using: .utf8)!
 
         let memberPage = try JSONDecoder().decode(DashboardOrganizationMembersEnvelope.self, from: members)
         let invite = try JSONDecoder().decode(DashboardOrganizationInvitesEnvelope.self, from: invites).invites[0]
 
         XCTAssertEqual(memberPage.members[0].userId, "owner-1")
+        XCTAssertEqual(memberPage.members[0].email, "owner@example.com")
         XCTAssertEqual(memberPage.organization.role, "owner")
         XCTAssertEqual(invite.id, "invite-1")
         XCTAssertEqual(invite.status, "pending")
+        XCTAssertEqual(invite.acceptanceUrl, "https://hanasand.test/invite/opaque")
+
+        let legacyMember = #"{"organizationId":"org-one","userId":"member-1","name":"Member","role":"reader","status":"active"}"#.data(using: .utf8)!
+        XCTAssertNil(try JSONDecoder().decode(DashboardOrganizationMember.self, from: legacyMember).email)
     }
 
     func testManagementRequiresOwnActiveSelectedMembershipAndNoImpersonation() {

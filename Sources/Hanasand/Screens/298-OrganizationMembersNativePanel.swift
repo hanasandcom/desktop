@@ -34,6 +34,7 @@ struct OrganizationMembersNativePanel: View {
         guard !query.isEmpty else { return model.organizationMembersPage?.members ?? [] }
         return (model.organizationMembersPage?.members ?? []).filter {
             $0.name.localizedCaseInsensitiveContains(query)
+                || ($0.email ?? "").localizedCaseInsensitiveContains(query)
                 || $0.userId.localizedCaseInsensitiveContains(query)
                 || $0.role.localizedCaseInsensitiveContains(query)
                 || $0.status.localizedCaseInsensitiveContains(query)
@@ -171,6 +172,9 @@ struct OrganizationMembersNativePanel: View {
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textTertiary)
                 .textSelection(.enabled)
+            if let email = member.email, !email.isEmpty {
+                Text(email).font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+            }
             if let joinedAt = member.joinedAt, !joinedAt.isEmpty {
                 Text("Joined \(joinedAt)").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
             }
@@ -198,13 +202,50 @@ struct OrganizationMembersNativePanel: View {
             if let expiresAt = invite.expiresAt, !expiresAt.isEmpty {
                 Text("Expires \(expiresAt)").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
             }
-            HStack(spacing: 7) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) { inviteActions(invite) }
+                VStack(alignment: .leading, spacing: 7) { inviteActions(invite) }
+            }
+        }
+    }
+
+    @ViewBuilder private func inviteActions(_ invite: DashboardOrganizationInvite) -> some View {
+                if [invite.acceptanceUrl, invite.acceptancePath, invite.token].contains(where: { !($0 ?? "").isEmpty }) {
+                    ActionButton(title: "Copy link", icon: "doc.on.doc") { copyInviteLink(invite) }
+                        .disabled(model.isMutatingOrganizationMembers || invite.status != "pending")
+                }
                 ActionButton(title: "Resend", icon: "paperplane") { Task { await model.actOnOrganizationInvite(invite, action: "resend") } }
                     .disabled(model.isMutatingOrganizationMembers)
                 ActionButton(title: "Revoke", icon: "xmark.circle", tone: .danger) { pendingInviteRevoke = PendingOrganizationInviteRevoke(invite: invite) }
                     .disabled(model.isMutatingOrganizationMembers)
-            }
+    }
+
+    private func copyInviteLink(_ invite: DashboardOrganizationInvite) {
+        guard invite.status == "pending", let link = validatedInviteLink(invite) else {
+            model.organizationMembersStatus = "This invitation link is unavailable. Refresh invitations before copying."
+            return
         }
+        NSPasteboard.general.clearContents()
+        guard NSPasteboard.general.setString(link, forType: .string) else {
+            model.organizationMembersStatus = "Could not copy the invitation link."
+            return
+        }
+        model.organizationMembersStatus = "Invitation link copied for \(invite.email)."
+    }
+
+    private func validatedInviteLink(_ invite: DashboardOrganizationInvite) -> String? {
+        let base = model.settings.websiteBaseURL.normalizedBaseURL
+        if let raw = invite.acceptanceUrl, let url = URL(string: raw), url.scheme?.lowercased() == "https",
+           url.host?.lowercased() == base.host?.lowercased(), url.user == nil, url.password == nil,
+           url.fragment == nil { return url.absoluteString }
+        if let path = invite.acceptancePath, path.hasPrefix("/"), !path.hasPrefix("//"), !path.contains("\\"),
+           !path.split(separator: "/").contains(".."), let url = URL(string: path, relativeTo: base) {
+            return url.absoluteURL.absoluteString
+        }
+        if let token = invite.token, !token.isEmpty, token.range(of: "^[A-Za-z0-9._~-]{1,4096}$", options: .regularExpression) != nil {
+            return token
+        }
+        return nil
     }
 
     private func rolesAssignable(by actorRole: String, to targetRole: String) -> [String] {

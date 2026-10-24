@@ -4,6 +4,7 @@ struct DashboardOrganizationMember: Decodable, Identifiable, Equatable {
     let organizationId: String
     let userId: String
     let name: String
+    let email: String?
     let role: String
     let status: String
     let joinedAt: String?
@@ -11,7 +12,7 @@ struct DashboardOrganizationMember: Decodable, Identifiable, Equatable {
     var id: String { userId }
 
     enum CodingKeys: String, CodingKey {
-        case organizationId, userId, name, role, status, joinedAt
+        case organizationId, userId, name, email, role, status, joinedAt
     }
 }
 
@@ -21,9 +22,13 @@ struct DashboardOrganizationInvite: Decodable, Identifiable, Equatable {
     let role: String
     let status: String
     let expiresAt: String?
+    let createdAt: String?
+    let acceptanceUrl: String?
+    let acceptancePath: String?
+    let token: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, email, role, status, expiresAt
+        case id, email, role, status, expiresAt, createdAt, acceptanceUrl, acceptancePath, token
     }
 }
 

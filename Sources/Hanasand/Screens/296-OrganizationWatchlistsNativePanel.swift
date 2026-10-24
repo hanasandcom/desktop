@@ -28,6 +28,7 @@ struct OrganizationWatchlistsNativePanel: View {
     @State private var pending: PendingOrganizationWatchlistAction?
     @State private var initialOrganizationResolved = false
     @State private var initialOrganizationError = ""
+    @State private var cleanupSelection = Set<String>()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -83,6 +84,8 @@ struct OrganizationWatchlistsNativePanel: View {
                             }
                         }
                     }
+
+                    maintenancePanel
                 }
             }
         }
@@ -143,26 +146,102 @@ struct OrganizationWatchlistsNativePanel: View {
             if !item.notes.isEmpty { Text(item.notes).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled) }
             Text("Item \(item.id) · Updated \(item.updatedAt.isEmpty ? "not reported" : item.updatedAt)")
                 .font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
-            HStack(spacing: 8) {
-                if item.status != .archived {
-                    ActionButton(title: "Edit", icon: "pencil") { model.beginOrganizationWatchlistEdit(item) }
-                        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
-                }
-                if item.status == .active {
-                    ActionButton(title: "Pause", icon: "pause") { pending = PendingOrganizationWatchlistAction(item: item, action: "pause") }
-                        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
-                } else if item.status == .paused {
-                    ActionButton(title: "Resume", icon: "play") { Task { await model.changeOrganizationWatchlist(item, action: "resume") } }
-                        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
-                } else {
-                    ActionButton(title: "Restore", icon: "arrow.uturn.backward") { Task { await model.changeOrganizationWatchlist(item, action: "restore") } }
-                        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
-                }
-                if item.status != .archived {
-                    ActionButton(title: "Archive", icon: "archivebox") { pending = PendingOrganizationWatchlistAction(item: item, action: "archive") }
-                        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { itemActions(item) }
+                VStack(alignment: .leading, spacing: 8) { itemActions(item) }
             }
         }
+    }
+
+    @ViewBuilder private func itemActions(_ item: OrganizationWatchlistItem) -> some View {
+        if item.status != .archived {
+            ActionButton(title: "Edit", icon: "pencil") { model.beginOrganizationWatchlistEdit(item) }
+                .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        }
+        if item.status == .active {
+            ActionButton(title: "Pause", icon: "pause") { pending = PendingOrganizationWatchlistAction(item: item, action: "pause") }
+                .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        } else if item.status == .paused {
+            ActionButton(title: "Resume", icon: "play") { Task { await model.changeOrganizationWatchlist(item, action: "resume") } }
+                .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        } else {
+            ActionButton(title: "Restore", icon: "arrow.uturn.backward") { Task { await model.changeOrganizationWatchlist(item, action: "restore") } }
+                .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        }
+        if item.status != .archived {
+            ActionButton(title: "Archive", icon: "archivebox") { pending = PendingOrganizationWatchlistAction(item: item, action: "archive") }
+                .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        }
+    }
+
+    private var maintenancePanel: some View {
+        NativeGroupPanel(title: "Watchlist maintenance", subtitle: "Archive terms in a batch, rebuild events, or request a fresh source collection") {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { maintenanceActions }
+                VStack(alignment: .leading, spacing: 8) { maintenanceActions }
+            }
+            if let request = model.organizationWatchlistCollectionRequest {
+                HStack(spacing: 8) {
+                    Label("Fresh collection: \(request.status)", systemImage: request.status == "failed" ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath")
+                    Text("\(request.captureCount ?? 0) captures · \(request.alertCount ?? 0) events")
+                    if ["queued", "running"].contains(request.status.lowercased()) {
+                        ActionButton(title: "Check status", icon: "arrow.clockwise") { Task { await model.refreshOrganizationCollectionRequest() } }
+                            .disabled(model.isMutatingOrganizationWatchlists)
+                    }
+                }
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                if let error = request.errors?.first, !error.isEmpty { NativeNotice(message: error) }
+            }
+            DisclosureGroup("Archive selected terms (\(cleanupSelection.count))") {
+                Text("Choose up to 50 current terms. Archiving stops monitoring; archived terms can be restored later.")
+                    .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                if eligibleCleanupItems.isEmpty {
+                    NativeEmptyState(title: "No terms to archive", message: "All watchlist terms are already archived.")
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(eligibleCleanupItems) { item in
+                                Toggle(isOn: Binding(get: { cleanupSelection.contains(item.id) }, set: { selected in
+                                    if selected, cleanupSelection.count < 50 { cleanupSelection.insert(item.id) }
+                                    else { cleanupSelection.remove(item.id) }
+                                })) {
+                                    Text("\(item.value) · \(item.kind.rawValue)").font(.system(size: 11)).lineLimit(2)
+                                }
+                                .toggleStyle(.checkbox)
+                                .disabled(model.isMutatingOrganizationWatchlists || (!cleanupSelection.contains(item.id) && cleanupSelection.count >= 50))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Archive selected (\(cleanupSelection.count))", icon: "archivebox", tone: .danger) {
+                            let selected = cleanupSelection.sorted()
+                            cleanupSelection.removeAll()
+                            Task { await model.cleanupOrganizationWatchlists(itemIDs: selected) }
+                        }
+                        .disabled(cleanupSelection.isEmpty || !model.canCleanupSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+                        ActionButton(title: "Clear selection", icon: "xmark") { cleanupSelection.removeAll() }
+                            .disabled(cleanupSelection.isEmpty || model.isMutatingOrganizationWatchlists)
+                    }
+                }
+            }
+            .font(.system(size: 11, weight: .semibold))
+        }
+    }
+
+    @ViewBuilder private var maintenanceActions: some View {
+        ActionButton(title: model.isMutatingOrganizationWatchlists ? "Refreshing…" : "Rebuild events", icon: "arrow.clockwise") {
+            Task { await model.rebuildOrganizationWatchlistAlerts() }
+        }
+        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists)
+        ActionButton(title: model.isMutatingOrganizationWatchlists ? "Requesting…" : "Fresh collection", icon: "antenna.radiowaves.left.and.right") {
+            Task { await model.requestOrganizationFreshCollection() }
+        }
+        .disabled(!model.canWriteSelectedOrganizationWatchlists || model.isMutatingOrganizationWatchlists
+                  || !(model.organizationWatchlistPage?.watchlistItems.contains(where: { $0.status == .active }) ?? false))
+    }
+
+    private var eligibleCleanupItems: [OrganizationWatchlistItem] {
+        model.organizationWatchlistPage?.watchlistItems.filter { $0.status != .archived } ?? []
     }
 }

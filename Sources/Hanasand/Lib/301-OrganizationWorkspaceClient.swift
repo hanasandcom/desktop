@@ -71,6 +71,40 @@ struct OrganizationWorkspaceClient {
         return (eventRecords, cases.records, cases.warnings)
     }
 
+    func loadActivity(includeInvites: Bool = true) async throws -> OrganizationWorkspaceActivityPage {
+        async let members = try? request(path: "api/organizations/\(segment(organizationID))/members") as [String: JSONValue]
+        async let watchlists = try? request(path: "api/organizations/\(segment(organizationID))/watchlists", query: [URLQueryItem(name: "includeArchived", value: "true")]) as [String: JSONValue]
+        async let destinations = try? request(path: "api/organizations/\(segment(organizationID))/webhooks") as [String: JSONValue]
+        async let deliveries = try? request(path: "api/findings/webhooks/deliveries", query: [URLQueryItem(name: "organizationId", value: organizationID)]) as [String: JSONValue]
+        let (membersPayload, watchlistsPayload, destinationsPayload, deliveriesPayload) = await (members, watchlists, destinations, deliveries)
+        let invitesPayload: [String: JSONValue]? = includeInvites
+            ? try? await request(path: "api/organizations/\(segment(organizationID))/invites")
+            : nil
+        var payloads: [(String, [String: JSONValue]?)] = [
+            ("members", membersPayload), ("watchlists", watchlistsPayload),
+            ("destinations", destinationsPayload), ("deliveries", deliveriesPayload)
+        ]
+        if includeInvites { payloads.append(("invites", invitesPayload)) }
+        var rows: [OrganizationWorkspaceActivityEntry] = []
+        var warnings: [String] = []
+        for (source, payload) in payloads {
+            guard let payload else { warnings.append("Could not load organization \(source) activity."); continue }
+            let arrayKeys: [String]
+            switch source {
+            case "members": arrayKeys = ["members"]
+            case "invites": arrayKeys = ["invites"]
+            case "watchlists": arrayKeys = ["watchlistItems", "watchlists", "items"]
+            case "destinations": arrayKeys = ["destinations", "webhooks"]
+            default: arrayKeys = ["deliveries", "items", "results"]
+            }
+            guard let objects = arrayKeys.compactMap({ payload[$0]?.objectArray }).first else {
+                warnings.append("Organization \(source) activity returned an invalid response."); continue
+            }
+            rows += objects.compactMap { activityEntry($0, source: source, organizationID: organizationID) }
+        }
+        return OrganizationWorkspaceActivityPage(entries: rows.sorted { $0.occurredAt > $1.occurredAt }, warnings: warnings)
+    }
+
     func updateSettings(_ draft: OrganizationWorkspaceSettings,
                         contextIsCurrent: @MainActor () -> Bool = { true }) async throws -> OrganizationWorkspaceSettingsReceipt {
         guard isImpersonationClear else { throw OrganizationWorkspaceError.impersonationUnsupported }
@@ -142,6 +176,67 @@ struct OrganizationWorkspaceClient {
     }
     private struct OrganizationWorkspaceAPIError: Decodable { struct Detail: Decodable { let message: String }; let error: Detail }
 }
+
+private extension JSONValue {
+    var objectArray: [[String: JSONValue]]? {
+        guard case .array(let values) = self else { return nil }
+        return values.compactMap { if case .object(let object) = $0 { return object }; return nil }
+    }
+}
+
+private func activityEntry(_ row: [String: JSONValue], source: String, organizationID: String) -> OrganizationWorkspaceActivityEntry? {
+    func text(_ keys: String...) -> String? {
+        for key in keys {
+            guard let value = row[key] else { continue }
+            if case .string(let string) = value, !string.isEmpty { return string }
+            if case .number(let number) = value { return number.rounded() == number ? String(Int(number)) : String(number) }
+        }
+        return nil
+    }
+    let rowOrganization = text("organizationId", "organization_id", "orgId", "tenantId", "tenant_id")
+    if let rowOrganization, rowOrganization != organizationID { return nil }
+    guard let subjectID = text("id", "userId", "user_id", "inviteId", "requestId") else { return nil }
+    let status = text("status", "lifecycleStatus", "reviewState") ?? "unknown"
+    let occurredAt = text("attemptedAt", "updatedAt", "updated_at", "createdAt", "created_at", "joinedAt", "joined_at", "archivedAt", "archived_at") ?? ""
+    let title: String
+    let detail: String
+    let kind: OrganizationWorkspaceActivityKind
+    let path: String
+    var query = ["organizationId": organizationID]
+    var metadata: [String] = ["Status · \(status)"]
+    switch source {
+    case "members":
+        kind = .member; title = text("name", "email", "userId") ?? "Organization member"
+        let role = text("role") ?? "member"; let email = text("email")
+        detail = [role, status].joined(separator: " · ")
+        if let email { metadata.append("Email · \(email)") }
+        path = "/organizations/team"; query["memberId"] = subjectID; query["focus"] = "members"
+    case "invites":
+        kind = .invite; title = text("email") ?? "Organization invitation"
+        let role = text("role") ?? "member"; detail = "\(role) · \(status)"
+        if let expires = text("expiresAt", "expires_at") { metadata.append("Expires · \(expires)") }
+        path = "/organizations/team"; query["inviteId"] = subjectID; query["focus"] = "invites"
+    case "watchlists":
+        kind = .watchlist; title = text("value", "name") ?? "Watchlist term"
+        detail = "\(text("kind") ?? "term") · \(status)"
+        if let notes = text("notes") { metadata.append("Notes · \(notes)") }
+        path = "/watchlists"; query["watchlistId"] = subjectID
+    case "destinations":
+        kind = .destination; title = text("name") ?? "Webhook destination"
+        detail = "\(text("kind", "type") ?? "webhook") · \(status)"
+        if let hint = text("endpointHint", "endpoint_hint") { metadata.append("Endpoint · \(hint)") }
+        path = "/integrations"; query["destinationId"] = subjectID
+    default:
+        kind = .delivery; title = text("deliveryKind", "delivery_kind") == "test" || text("dryRun") == "true" ? "Destination tested" : "Event delivery"
+        detail = "\(status)\(text("alertId", "alert_id").map { " · Event \($0)" } ?? "")"
+        if let destination = text("destinationId", "destination_id") { metadata.append("Destination · \(destination)") }
+        if let alert = text("alertId", "alert_id") { metadata.append("Event · \(alert)"); query["alertId"] = alert }
+        path = "/dashboard/delivery-history"
+    }
+    return OrganizationWorkspaceActivityEntry(id: "\(source)-\(subjectID)", kind: kind, occurredAt: occurredAt,
+        title: title, detail: detail, status: status, subjectID: subjectID, contextPath: path, contextQuery: query, metadata: metadata)
+}
+
 
 enum OrganizationWorkspaceError: LocalizedError {
     case invalidBaseURL, signInRequired, invalidCredentials, scopeChanged, impersonationUnsupported

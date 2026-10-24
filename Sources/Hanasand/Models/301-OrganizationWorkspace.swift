@@ -108,6 +108,29 @@ struct OrganizationWorkspaceRecordPage: Decodable {
     var records: [OrganizationWorkspaceRecord] { cases.isEmpty ? items : cases }
 }
 
+enum OrganizationWorkspaceActivityKind: String, CaseIterable, Identifiable, Equatable {
+    case event = "Event", caseRecord = "Case", delivery = "Delivery", member = "Team", invite = "Invitation", watchlist = "Watchlist", destination = "Destination"
+    var id: String { rawValue }
+}
+
+struct OrganizationWorkspaceActivityEntry: Identifiable, Equatable {
+    let id: String
+    let kind: OrganizationWorkspaceActivityKind
+    let occurredAt: String
+    let title: String
+    let detail: String
+    let status: String
+    let subjectID: String
+    let contextPath: String
+    let contextQuery: [String: String]
+    let metadata: [String]
+}
+
+struct OrganizationWorkspaceActivityPage {
+    let entries: [OrganizationWorkspaceActivityEntry]
+    let warnings: [String]
+}
+
 struct OrganizationWorkspaceSettingsReceipt: Decodable {
     let organization: OrganizationWorkspaceSettingsPage.Organization?
     let settings: SettingsPayload?

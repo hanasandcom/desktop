@@ -33,6 +33,11 @@ extension DesktopAgentModel {
                                              isImpersonating: !settings.impersonationToken.isEmpty || !settings.impersonatingUserID.isEmpty)
     }
 
+    var canCleanupSelectedOrganizationWatchlists: Bool {
+        guard canWriteSelectedOrganizationWatchlists, let page = organizationWatchlistPage else { return false }
+        return page.sharedWatchlistContract.permissions.canCleanup
+    }
+
     func loadOrganizationWatchlists() async {
         let organizationID = selectedOrganizationID
         guard hasHanasandAuth, !organizationID.isEmpty,
@@ -184,6 +189,121 @@ extension DesktopAgentModel {
         }
     }
 
+    func cleanupOrganizationWatchlists(itemIDs: [String]) async {
+        guard canCleanupSelectedOrganizationWatchlists, !isMutatingOrganizationWatchlists,
+              let page = organizationWatchlistPage, !itemIDs.isEmpty, itemIDs.count <= 50,
+              Set(itemIDs).count == itemIDs.count,
+              itemIDs.allSatisfy({ id in page.watchlistItems.contains(where: { $0.id == id && $0.status != .archived }) }) else {
+            organizationWatchlistStatus = "Refresh and select 1–50 current, unarchived terms to archive."
+            return
+        }
+        let organizationID = page.organization.id
+        let userID = userIDForRequests
+        let token = authTokenForRequests
+        isMutatingOrganizationWatchlists = true
+        organizationWatchlistStatus = "Verifying selected watchlist terms…"
+        defer { isMutatingOrganizationWatchlists = false }
+        do {
+            let fresh: OrganizationWatchlistPage = try await requestJSON(organizationWatchlistURL(organizationID: organizationID, itemID: nil, suffix: "", query: [URLQueryItem(name: "includeArchived", value: "true")]), authenticated: true)
+            guard selectedOrganizationID == organizationID, userID == userIDForRequests, token == authTokenForRequests,
+                  settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty,
+                  fresh.organization.id == organizationID, fresh.sharedWatchlistContract.permissions.canCleanup,
+                  fresh.organization.lifecycleStatus == "active",
+                  itemIDs.allSatisfy({ id in fresh.watchlistItems.contains(where: { $0.id == id && $0.status != .archived }) }) else { throw OrganizationWatchlistError.scopeChanged }
+            let body = try JSONSerialization.data(withJSONObject: [
+                "itemIds": itemIDs,
+                "reason": "Selected organization watchlist terms archived from Hanasand Desktop.",
+                "requestId": "desktop-watchlist-cleanup-\(UUID().uuidString.lowercased())"
+            ])
+            let receipt: OrganizationWatchlistCleanupReceipt = try await requestJSON(organizationWatchlistURL(organizationID: organizationID, itemID: nil, suffix: "/cleanup", query: []), method: "POST", body: body, authenticated: true)
+            await loadOrganizationWatchlists()
+            let count = receipt.cleanup?.archivedCount ?? 0
+            let skipped = receipt.cleanup?.skippedItemIds?.count ?? 0
+            organizationWatchlistStatus = "Archived \(count) selected term\(count == 1 ? "" : "s")\(skipped > 0 ? "; \(skipped) skipped" : "")."
+        } catch {
+            let message = error.localizedDescription
+            await loadOrganizationWatchlists()
+            organizationWatchlistStatus = "Cleanup needs review: \(message). The current list was refreshed before you retry."
+        }
+    }
+
+    func rebuildOrganizationWatchlistAlerts() async {
+        guard canWriteSelectedOrganizationWatchlists, !isMutatingOrganizationWatchlists,
+              let page = organizationWatchlistPage else { return }
+        let organizationID = page.organization.id
+        let userID = userIDForRequests
+        let token = authTokenForRequests
+        isMutatingOrganizationWatchlists = true
+        organizationWatchlistStatus = "Refreshing events from retained captures…"
+        defer { isMutatingOrganizationWatchlists = false }
+        do {
+            let body = try JSONSerialization.data(withJSONObject: [
+                "organizationId": organizationID, "tenantId": organizationID,
+                "requestId": "desktop-org-events-\(UUID().uuidString.lowercased())"
+            ])
+            let receipt: OrganizationWatchlistAlertRebuildReceipt = try await requestJSON(settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/findings/alerts/rebuild"), method: "POST", body: body, authenticated: true)
+            guard selectedOrganizationID == organizationID, userID == userIDForRequests, token == authTokenForRequests,
+                  settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty else { throw OrganizationWatchlistError.scopeChanged }
+            await loadOrganizationWatchlists()
+            let count = receipt.savedAlertCount ?? receipt.alertIds?.count ?? 0
+            organizationWatchlistStatus = count == 0 ? "No matching events were found in retained captures." : "Refreshed \(count) event\(count == 1 ? "" : "s") from retained captures."
+        } catch {
+            organizationWatchlistStatus = "Could not refresh events: \(error.localizedDescription)"
+        }
+    }
+
+    func requestOrganizationFreshCollection() async {
+        guard canWriteSelectedOrganizationWatchlists, !isMutatingOrganizationWatchlists,
+              let page = organizationWatchlistPage, page.watchlistItems.contains(where: { $0.status == .active }) else {
+            organizationWatchlistStatus = "Add or resume an active watchlist term before requesting a fresh collection."
+            return
+        }
+        let organizationID = page.organization.id
+        let userID = userIDForRequests
+        let token = authTokenForRequests
+        if organizationWatchlistCollectionRequestIdempotencyKey.isEmpty {
+            organizationWatchlistCollectionRequestIdempotencyKey = "desktop-org-\(organizationID)-\(UUID().uuidString.lowercased())"
+        }
+        isMutatingOrganizationWatchlists = true
+        organizationWatchlistStatus = "Requesting a fresh source collection…"
+        defer { isMutatingOrganizationWatchlists = false }
+        do {
+            let body = try JSONSerialization.data(withJSONObject: ["organizationId": organizationID, "tenantId": organizationID])
+            let url = settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/organizations/\(encodedWatchlistPath(organizationID))/collection-requests")
+            var request = self.request(url, method: "POST", body: body, authenticated: true)
+            request.setValue(organizationWatchlistCollectionRequestIdempotencyKey, forHTTPHeaderField: "idempotency-key")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validateHTTP(response)
+            let receipt = try JSONDecoder().decode(OrganizationCollectionRequestEnvelope.self, from: data)
+            guard selectedOrganizationID == organizationID, userID == userIDForRequests, token == authTokenForRequests,
+                  settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty else { throw OrganizationWatchlistError.scopeChanged }
+            organizationWatchlistCollectionRequest = receipt.collectionRequest
+            organizationWatchlistCollectionRequestIdempotencyKey = ""
+            let next = receipt.collectionRequest
+            organizationWatchlistStatus = next.map { "Fresh collection \($0.status); \($0.captureCount ?? 0) captures and \($0.alertCount ?? 0) events reported." } ?? "Fresh collection request accepted."
+        } catch {
+            organizationWatchlistStatus = "Fresh collection outcome needs review: \(error.localizedDescription). Refresh request status before retrying."
+        }
+    }
+
+    func refreshOrganizationCollectionRequest() async {
+        guard let current = organizationWatchlistCollectionRequest, let page = organizationWatchlistPage,
+              !isMutatingOrganizationWatchlists else { return }
+        let organizationID = page.organization.id
+        isMutatingOrganizationWatchlists = true
+        defer { isMutatingOrganizationWatchlists = false }
+        do {
+            let url = settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/organizations/\(encodedWatchlistPath(organizationID))/collection-requests/\(encodedWatchlistPath(current.requestId))")
+            let envelope: OrganizationCollectionRequestEnvelope = try await requestJSON(url, authenticated: true)
+            guard selectedOrganizationID == organizationID else { throw OrganizationWatchlistError.scopeChanged }
+            organizationWatchlistCollectionRequest = envelope.collectionRequest ?? current
+            let next = organizationWatchlistCollectionRequest ?? current
+            organizationWatchlistStatus = "Fresh collection \(next.status); \(next.captureCount ?? 0) captures and \(next.alertCount ?? 0) events reported."
+        } catch {
+            organizationWatchlistStatus = "Could not refresh collection status: \(error.localizedDescription)"
+        }
+    }
+
     private func organizationWatchlistURL(organizationID: String, itemID: String?, suffix: String, query: [URLQueryItem]) -> URL {
         let pathSafe = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._:@")
         var path = "api/organizations/\(organizationID.addingPercentEncoding(withAllowedCharacters: pathSafe) ?? organizationID)/watchlists"
@@ -193,6 +313,11 @@ extension DesktopAgentModel {
         components?.queryItems = query.isEmpty ? nil : query
         return components?.url ?? settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath(path)
     }
+}
+
+private func encodedWatchlistPath(_ value: String) -> String {
+    let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._:@")
+    return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
 }
 
 private enum OrganizationWatchlistError: LocalizedError {

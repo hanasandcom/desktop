@@ -32,4 +32,14 @@ final class OrganizationWatchlistTests: XCTestCase {
         XCTAssertFalse(page.projectionSupported)
         XCTAssertTrue(page.sharedWatchlistContract.permissions.canWrite)
     }
+
+    func testDecodesCleanupAndFreshCollectionReceipts() throws {
+        let cleanup = try JSONDecoder().decode(OrganizationWatchlistCleanupReceipt.self, from: Data(#"{"cleanup":{"archivedCount":2,"skippedItemIds":["stale"]}}"#.utf8))
+        XCTAssertEqual(cleanup.cleanup?.archivedCount, 2)
+        XCTAssertEqual(cleanup.cleanup?.skippedItemIds, ["stale"])
+        let collection = try JSONDecoder().decode(OrganizationCollectionRequestEnvelope.self, from: Data(#"{"collectionRequest":{"requestId":"request-1","status":"running","captureCount":3,"alertCount":1}}"#.utf8))
+        XCTAssertEqual(collection.collectionRequest?.id, "request-1")
+        XCTAssertEqual(collection.collectionRequest?.status, "running")
+        XCTAssertEqual(collection.collectionRequest?.captureCount, 3)
+    }
 }

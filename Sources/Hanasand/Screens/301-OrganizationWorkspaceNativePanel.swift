@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct OrganizationWorkspaceNativePanel: View {
@@ -8,6 +9,7 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var draft: OrganizationWorkspaceSettings?
     @State private var events: [OrganizationWorkspaceRecord] = []
     @State private var cases: [OrganizationWorkspaceRecord] = []
+    @State private var activityPage = OrganizationWorkspaceActivityPage(entries: [], warnings: [])
     @State private var warnings: [String] = []
     @State private var isLoading = false
     @State private var isSaving = false
@@ -15,6 +17,9 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var status = ""
     @State private var confirmSave = false
     @State private var search = ""
+    @State private var activitySearch = ""
+    @State private var activityFilter = "All"
+    @State private var selectedActivityID = ""
 
     init(section: OrganizationWorkspaceSection = .overview) {
         _section = State(initialValue: section)
@@ -32,6 +37,25 @@ struct OrganizationWorkspaceNativePanel: View {
         let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return records.filter { needle.isEmpty || "\($0.title) \($0.status) \($0.severity) \($0.id)".localizedCaseInsensitiveContains(needle) }
             .sorted { ($0.updatedAt.isEmpty ? $0.createdAt : $0.updatedAt) > ($1.updatedAt.isEmpty ? $1.createdAt : $1.updatedAt) }
+    }
+    private var activityEntries: [OrganizationWorkspaceActivityEntry] {
+        let eventRows = events.map { record in
+            OrganizationWorkspaceActivityEntry(id: "event-\(record.id)", kind: .event, occurredAt: record.updatedAt,
+                title: record.title, detail: [record.severity, record.status].filter { !$0.isEmpty }.joined(separator: " · "), status: record.status,
+                subjectID: record.id, contextPath: "/ti/workbench", contextQuery: ["organizationId": organizationID, "alertId": record.id],
+                metadata: ["Severity · \(record.severity)", "Status · \(record.status)"])
+        }
+        let caseRows = cases.map { record in
+            OrganizationWorkspaceActivityEntry(id: "case-\(record.id)", kind: .caseRecord, occurredAt: record.updatedAt.isEmpty ? record.createdAt : record.updatedAt,
+                title: record.title, detail: [record.severity, record.status].filter { !$0.isEmpty }.joined(separator: " · "), status: record.status,
+                subjectID: record.id, contextPath: "/cases/\(record.id)", contextQuery: ["organizationId": organizationID],
+                metadata: ["Severity · \(record.severity)", "Status · \(record.status)"])
+        }
+        let needle = activitySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (activityPage.entries + eventRows + caseRows)
+            .filter { activityFilter == "All" || $0.kind.rawValue == activityFilter }
+            .filter { needle.isEmpty || "\($0.kind.rawValue) \($0.title) \($0.detail) \($0.status) \($0.subjectID) \($0.metadata.joined(separator: " "))".localizedCaseInsensitiveContains(needle) }
+            .sorted { $0.occurredAt > $1.occurredAt }
     }
 
     var body: some View {
@@ -56,11 +80,13 @@ struct OrganizationWorkspaceNativePanel: View {
                 settingsContent
             } else if section == .overview {
                 overviewContent
+            } else if section == .activity {
+                activityContent
             } else {
                 recordsContent
             }
         }
-        .task(id: organizationID) { await refresh() }
+        .task(id: "\(organizationID)|\(section.rawValue)") { await refresh() }
         .confirmationDialog("Save organization settings?", isPresented: $confirmSave, titleVisibility: .visible) {
             Button("Save settings", role: .none) { Task { await save() } }
             Button("Cancel", role: .cancel) {}
@@ -175,6 +201,85 @@ struct OrganizationWorkspaceNativePanel: View {
         }
     }
 
+    private var activityContent: some View {
+        NativeGroupPanel(title: "Organization activity", subtitle: "Team, watchlists, destinations, deliveries, events, and cases for the selected organization") {
+            SearchFieldRow(placeholder: "Search organization activity", text: $activitySearch)
+            Picker("Activity type", selection: $activityFilter) {
+                Text("All activity").tag("All")
+                ForEach(OrganizationWorkspaceActivityKind.allCases) { kind in Text(kind.rawValue).tag(kind.rawValue) }
+            }.pickerStyle(.menu)
+            if !activityPage.warnings.isEmpty {
+                ForEach(Array(activityPage.warnings.enumerated()), id: \.offset) { _, warning in NativeNotice(message: warning) }
+            }
+            if activityEntries.isEmpty && !isLoading {
+                NativeEmptyState(title: error.isEmpty ? "No matching activity" : "Activity is incomplete",
+                    message: error.isEmpty ? "Try another search or activity type." : "Some organization activity sources could not be loaded.")
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(spacing: 8) {
+                    ForEach(activityEntries.prefix(120)) { entry in
+                        activityTimelineRow(entry)
+                    }
+                }
+                if let selected = activityEntries.first(where: { $0.id == selectedActivityID }) ?? activityEntries.first {
+                    activityDetails(selected).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func activityTimelineRow(_ entry: OrganizationWorkspaceActivityEntry) -> some View {
+        let dateLabel = formatDateText(entry.occurredAt, fallback: entry.occurredAt)
+        let selected = selectedActivityID == entry.id
+        return Button { selectedActivityID = entry.id } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(entry.kind.rawValue.uppercased())
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.accent)
+                    Spacer(minLength: 0)
+                    Text(dateLabel).font(.system(size: 9)).foregroundColor(theme.textTertiary)
+                }
+                Text(entry.title).font(.system(size: 12, weight: .semibold)).foregroundColor(theme.text)
+                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                Text(entry.detail).font(.system(size: 10)).foregroundColor(theme.textSecondary)
+                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? theme.cardRaised : theme.backgroundElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }.buttonStyle(.plain)
+    }
+
+    private func activityDetails(_ entry: OrganizationWorkspaceActivityEntry) -> some View {
+        NativeGroupPanel(title: entry.title, subtitle: "\(entry.kind.rawValue) · \(entry.status)") {
+            Text(entry.detail).font(.system(size: 11)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            Text("Record \(entry.subjectID)").font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+            if !entry.occurredAt.isEmpty { Text("Updated \(entry.occurredAt)").font(.system(size: 10)).foregroundStyle(theme.textTertiary).textSelection(.enabled) }
+            ForEach(Array(entry.metadata.enumerated()), id: \.offset) { _, value in
+                Text(value).font(.system(size: 10)).foregroundStyle(theme.textSecondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) { activityActions(entry) }
+                VStack(alignment: .leading, spacing: 7) { activityActions(entry) }
+            }
+        }
+    }
+
+    @ViewBuilder private func activityActions(_ entry: OrganizationWorkspaceActivityEntry) -> some View {
+        ActionButton(title: "Open in Desktop", icon: "arrow.up.right.square") {
+            model.openNativeDashboard(path: entry.contextPath, label: entry.kind.rawValue, detailID: entry.subjectID, query: entry.contextQuery)
+        }
+        ActionButton(title: "Copy details", icon: "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(([entry.kind.rawValue, entry.title, entry.detail, entry.occurredAt] + entry.metadata).joined(separator: "\n"), forType: .string)
+        }
+        ActionButton(title: "Copy record ID", icon: "number") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(entry.subjectID, forType: .string)
+        }
+    }
+
     private func recordCard(_ record: OrganizationWorkspaceRecord) -> some View {
         NativeGroupPanel(title: record.title, subtitle: [record.status, record.severity].filter { !$0.isEmpty }.joined(separator: " · ")) {
             Text(record.id).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).lineLimit(2).textSelection(.enabled)
@@ -212,9 +317,12 @@ struct OrganizationWorkspaceNativePanel: View {
             async let page = client.loadSettings()
             async let rows = client.loadRecords()
             let (loadedPage, loadedRows) = try await (page, rows)
+            let canViewInvites = ["owner", "admin"].contains(loadedPage.organization.role?.lowercased() ?? "")
+            let loadedActivity = section == .activity ? try? await client.loadActivity(includeInvites: canViewInvites) : nil
             guard requestedOrganization == organizationID else { return }
             settingsPage = loadedPage; draft = loadedPage.settings
             events = loadedRows.events; cases = loadedRows.cases; warnings = loadedRows.warnings
+            if let loadedActivity { activityPage = loadedActivity }
             status = "Loaded settings, \(events.count) events, and \(cases.count) cases."
         } catch {
             guard requestedOrganization == organizationID else { return }

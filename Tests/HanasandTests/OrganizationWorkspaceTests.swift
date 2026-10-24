@@ -77,6 +77,38 @@ final class OrganizationWorkspaceTests: XCTestCase {
         XCTAssertEqual(URLComponents(url: cases.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org/a")
     }
 
+    func testActivityLoadIncludesOrganizationSourcesAndProducesNativeContextRows() async throws {
+        let recorder = OrganizationWorkspaceRequestRecorder()
+        let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
+            recorder.append(request)
+            let path = request.url?.path ?? ""
+            let body: String
+            if path.hasSuffix("/members") {
+                body = #"{"members":[{"userId":"member-1","organizationId":"org/a","name":"Person","email":"person@example.com","role":"reader","status":"active","joinedAt":"2026-10-22T12:00:00Z"}]}"#
+            } else if path.hasSuffix("/invites") {
+                body = #"{"invites":[{"id":"invite-1","organizationId":"org/a","email":"new@example.com","role":"reader","status":"pending","createdAt":"2026-10-23T12:00:00Z"}]}"#
+            } else if path.hasSuffix("/watchlists") {
+                body = #"{"watchlistItems":[{"id":"watch-1","organizationId":"org/a","value":"example.org","kind":"domain","status":"active","updatedAt":"2026-10-23T12:00:00Z"}]}"#
+            } else if path.hasSuffix("/webhooks") {
+                body = #"{"destinations":[{"id":"dest-1","orgId":"org/a","name":"Alerts","kind":"webhook","status":"active","endpointHint":"example.test/hook"}]}"#
+            } else {
+                body = #"{"deliveries":[{"id":"delivery-1","organizationId":"org/a","status":"delivered","alertId":"event-1","attemptedAt":"2026-10-24T12:00:00Z"}]}"#
+            }
+            return self.http(body, request: request)
+        }
+        let page = try await client.loadActivity()
+        XCTAssertEqual(page.entries.count, 5)
+        XCTAssertTrue(page.warnings.isEmpty)
+        for kind in [OrganizationWorkspaceActivityKind.delivery, .member, .invite, .watchlist, .destination] {
+            XCTAssertTrue(page.entries.contains(where: { $0.kind == kind }))
+        }
+        XCTAssertTrue(page.entries.first(where: { $0.kind == .member })?.detail.contains("active") == true)
+        XCTAssertEqual(page.entries.first(where: { $0.kind == .watchlist })?.contextPath, "/watchlists")
+        XCTAssertEqual(page.entries.first(where: { $0.kind == .destination })?.contextPath, "/integrations")
+        XCTAssertEqual(recorder.requests.count, 5)
+        XCTAssertTrue(recorder.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token_abc-123" })
+    }
+
     func testSettingsWriteRechecksServerPermissionAndValidatesReceipt() async throws {
         var requests: [URLRequest] = []
         let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
