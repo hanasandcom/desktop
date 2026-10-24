@@ -71,8 +71,7 @@ final class PublicArticleNativePanelTests: XCTestCase {
             XCTAssertNotNil(
                 Bundle.module.url(
                     forResource: asset.resourceName,
-                    withExtension: asset.fileExtension,
-                    subdirectory: "images/assets"
+                    withExtension: asset.fileExtension
                 ),
                 "Missing bundled cover resource for \(asset.rawValue)"
             )

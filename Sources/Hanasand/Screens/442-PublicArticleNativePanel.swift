@@ -106,8 +106,7 @@ struct PublicArticleNativePanel: View {
         if let asset = article.coverAsset,
            let url = Bundle.module.url(
                 forResource: asset.resourceName,
-                withExtension: asset.fileExtension,
-                subdirectory: "images/assets"
+                withExtension: asset.fileExtension
            ),
            let image = NSImage(contentsOf: url) {
             Image(nsImage: image)
