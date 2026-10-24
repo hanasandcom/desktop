@@ -2,6 +2,7 @@ import Foundation
 
 struct SandboxStoredReport: Identifiable {
     let id: String
+    let exportData: Data
     let target: String
     let finalURL: String
     let status: String

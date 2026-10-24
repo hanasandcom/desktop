@@ -38,6 +38,12 @@ struct SandboxStoredReportNativePanel: View {
             }
             if let report {
                 reportHeader(report)
+                HStack {
+                    ActionButton(title: "Export JSON", icon: "square.and.arrow.down") {
+                        exportReport(report)
+                    }
+                    .disabled(report.exportData.isEmpty)
+                }
                 if report.availableRuns.count > 1 {
                     HStack {
                         Text("Run")
@@ -131,6 +137,25 @@ struct SandboxStoredReportNativePanel: View {
             labeledValue("Target", report.target)
             if report.finalURL != report.target { labeledValue("Final URL", report.finalURL) }
             if !report.exportedAt.isEmpty { labeledValue("Saved", report.exportedAt) }
+        }
+    }
+
+    @MainActor
+    private func exportReport(_ report: SandboxStoredReport) {
+        guard !report.exportData.isEmpty else { return }
+        let panel = NSSavePanel()
+        let fileID = report.id.range(of: "^[A-Za-z0-9._-]{1,128}$", options: .regularExpression) != nil ? report.id : "report"
+        panel.nameFieldStringValue = "browser-sandbox-\(fileID).json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try report.exportData.write(to: url, options: .atomic)
+                Task { @MainActor in message = "Report exported to \(url.lastPathComponent)." }
+            } catch {
+                Task { @MainActor in message = "Could not export the report: \(error.localizedDescription)" }
+            }
         }
     }
 

@@ -91,10 +91,10 @@ struct SandboxStoredReportClient {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw data.count > SandboxStoredReportLimits.responseBytes ? SandboxStoredReportError.responseTooLarge : SandboxStoredReportError.invalidResponse
         }
-        return try Self.decode(root, fallbackID: result.isEmpty ? run : selectedRun.isEmpty ? run : selectedRun)
+        return try Self.decode(root, fallbackID: result.isEmpty ? run : selectedRun.isEmpty ? run : selectedRun, exportData: data)
     }
 
-    private static func decode(_ root: [String: Any], fallbackID: String) throws -> SandboxStoredReport {
+    private static func decode(_ root: [String: Any], fallbackID: String, exportData: Data) throws -> SandboxStoredReport {
         guard let target = root["target"] as? String, target.utf8.count <= SandboxStoredReportLimits.fieldBytes else {
             throw SandboxStoredReportError.invalidResponse
         }
@@ -125,6 +125,7 @@ struct SandboxStoredReportClient {
         }
         return SandboxStoredReport(
             id: boundedString(root["runId"]).isEmpty ? fallbackID : boundedString(root["runId"]),
+            exportData: exportData,
             target: target,
             finalURL: boundedString(root["finalUrl"]).isEmpty ? target : boundedString(root["finalUrl"]),
             status: boundedString(status["run"]),

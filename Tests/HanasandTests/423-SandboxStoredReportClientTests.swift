@@ -18,6 +18,7 @@ final class SandboxStoredReportClientTests: XCTestCase {
         XCTAssertEqual(query?.first(where: { $0.name == "token" })?.value, "share-token")
         XCTAssertNil(captured?.value(forHTTPHeaderField: "Authorization"))
         XCTAssertEqual(report.id, "run-9")
+        XCTAssertEqual(report.exportData, Data(Self.reportJSON.utf8))
         XCTAssertEqual(report.target, "https://example.test")
         XCTAssertEqual(report.verdict, "suspicious")
         XCTAssertEqual(report.indicators, ["new domain"])
@@ -41,6 +42,7 @@ final class SandboxStoredReportClientTests: XCTestCase {
         XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
         XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
         XCTAssertEqual(result.id, "run-2")
+        XCTAssertTrue(String(data: result.exportData, encoding: .utf8)?.contains("\"evidenceEvents\"") == true)
         XCTAssertEqual(result.status, "completed")
         XCTAssertEqual(result.evidence.count, 2)
     }
