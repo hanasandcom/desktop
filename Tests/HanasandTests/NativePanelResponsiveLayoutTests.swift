@@ -50,8 +50,9 @@ final class NativePanelResponsiveLayoutTests: XCTestCase {
 
     func testVMCardMetricsAdaptToAvailableWidth() {
         XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 248), 1)
-        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 348), 2)
-        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 428), 3)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 348), 1)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 428), 2)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 568), 3)
         XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 0), 1)
         XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: .infinity), 1)
     }

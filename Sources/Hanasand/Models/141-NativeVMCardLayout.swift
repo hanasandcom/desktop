@@ -1,7 +1,8 @@
 import SwiftUI
 
 enum NativeVMCardLayout {
-    static let metricMinimumWidth: CGFloat = 132
+    // Keep status/value text readable in card columns at compact and wide widths.
+    static let metricMinimumWidth: CGFloat = 180
     static let metricSpacing: CGFloat = 8
 
     static var metricColumns: [GridItem] {
