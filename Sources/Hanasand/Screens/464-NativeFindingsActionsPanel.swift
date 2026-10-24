@@ -1,14 +1,45 @@
 import SwiftUI
 
+struct NativeFindingsActionsPanelState {
+    var input = NativeFindingsActionInput()
+    var selectedAction: NativeFindingsAction = .saveWatchlist
+    var receipt: NativeFindingsActionReceipt?
+    var error = ""
+    var busy = false
+    private(set) var operationID = UUID()
+
+    mutating func resetForWorkspaceChange() {
+        operationID = UUID()
+        input = NativeFindingsActionInput()
+        selectedAction = .saveWatchlist
+        receipt = nil
+        error = ""
+        busy = false
+    }
+
+    mutating func begin(_ action: NativeFindingsAction) -> UUID {
+        selectedAction = action
+        receipt = nil
+        error = ""
+        busy = true
+        operationID = UUID()
+        return operationID
+    }
+
+    @discardableResult
+    mutating func finish(operationID expectedID: UUID, receipt: NativeFindingsActionReceipt?, error: String?) -> Bool {
+        guard operationID == expectedID else { return false }
+        self.receipt = receipt
+        self.error = error ?? ""
+        busy = false
+        return true
+    }
+}
+
 struct NativeFindingsActionsPanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @State private var input = NativeFindingsActionInput()
-    @State private var selectedAction: NativeFindingsAction = .saveWatchlist
-    @State private var receipt: NativeFindingsActionReceipt?
-    @State private var error = ""
-    @State private var busy = false
-    @State private var operationID = UUID()
+    @State private var state = NativeFindingsActionsPanelState()
 
     private var workspaceKey: String {
         [model.settings.websiteBaseURL, model.userIDForRequests, model.settings.authToken,
@@ -32,11 +63,11 @@ struct NativeFindingsActionsPanel: View {
                 } else if model.selectedOrganizationID.isEmpty {
                     NativeNotice(message: "Choose a workspace before running actions.")
                 }
-                if !error.isEmpty {
-                    Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger)
+                if !state.error.isEmpty {
+                    Text(state.error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger)
                         .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 }
-                if let receipt {
+                if let receipt = state.receipt {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(receipt.message).font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(receipt.isWarning ? theme.textSecondary : theme.text)
@@ -47,7 +78,7 @@ struct NativeFindingsActionsPanel: View {
 
             NativeGroupPanel(title: "Watchlist and collection", subtitle: "Changes apply to the selected workspace") {
                 Text("Watchlist terms").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary)
-                TextEditor(text: $input.terms).font(.system(size: 11)).frame(minHeight: 76, maxHeight: 120)
+                TextEditor(text: $state.input.terms).font(.system(size: 11)).frame(minHeight: 76, maxHeight: 120)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.divider, lineWidth: 1))
                 Text("One term per line. Duplicate terms are removed when saved.")
                     .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
@@ -58,7 +89,7 @@ struct NativeFindingsActionsPanel: View {
             }
 
             NativeGroupPanel(title: "Webhook delivery", subtitle: "Test records a dry run. Sending queued findings may notify configured destinations.") {
-                TextField("HTTPS webhook URL (optional for queued delivery)", text: $input.webhookURL)
+                TextField("HTTPS webhook URL (optional for queued delivery)", text: $state.input.webhookURL)
                     .textFieldStyle(.roundedBorder)
                 HStack(spacing: 8) {
                     runButton(.testWebhook, icon: "checkmark.shield")
@@ -68,16 +99,16 @@ struct NativeFindingsActionsPanel: View {
             }
 
             NativeGroupPanel(title: "Source intake", subtitle: "Public Telegram channels only") {
-                TextField("@channel or https://t.me/channel", text: $input.telegramTarget)
+                TextField("@channel or https://t.me/channel", text: $state.input.telegramTarget)
                     .textFieldStyle(.roundedBorder)
                 runButton(.submitTelegramSource, icon: "tray.and.arrow.down")
             }
 
             NativeGroupPanel(title: "Public advisory evidence", subtitle: "Submit public, source-backed incident information") {
-                TextField("Actor or source", text: $input.actor).textFieldStyle(.roundedBorder)
-                TextField("Affected company", text: $input.company).textFieldStyle(.roundedBorder)
-                TextField("Exposure details", text: $input.claimedData, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder)
-                TextField("HTTPS source URL", text: $input.sourceURL).textFieldStyle(.roundedBorder)
+                TextField("Actor or source", text: $state.input.actor).textFieldStyle(.roundedBorder)
+                TextField("Affected company", text: $state.input.company).textFieldStyle(.roundedBorder)
+                TextField("Exposure details", text: $state.input.claimedData, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder)
+                TextField("HTTPS source URL", text: $state.input.sourceURL).textFieldStyle(.roundedBorder)
                 runButton(.ingestAdvisory, icon: "doc.text.magnifyingglass")
                 NativeNotice(message: "Evidence is submitted for review; this action does not confirm the claim is accurate.")
             }
@@ -90,12 +121,7 @@ struct NativeFindingsActionsPanel: View {
         }
         .padding(16)
         .onChange(of: workspaceKey) { _, _ in
-            operationID = UUID()
-            input = NativeFindingsActionInput()
-            selectedAction = .saveWatchlist
-            receipt = nil
-            error = ""
-            busy = false
+            state.resetForWorkspaceChange()
         }
     }
 
@@ -105,32 +131,24 @@ struct NativeFindingsActionsPanel: View {
     }
 
     @ViewBuilder private func runButton(_ action: NativeFindingsAction, icon: String) -> some View {
-        ActionButton(title: busy && selectedAction == action ? "Working…" : action.title, icon: icon) {
+        ActionButton(title: state.busy && state.selectedAction == action ? "Working…" : action.title, icon: icon) {
             Task { await perform(action) }
-        }.disabled(busy || !model.hasHanasandAuth || readOnly || model.selectedOrganizationID.isEmpty)
+        }.disabled(state.busy || !model.hasHanasandAuth || readOnly || model.selectedOrganizationID.isEmpty)
     }
 
     @MainActor private func perform(_ action: NativeFindingsAction) async {
-        guard !busy else { return }
-        busy = true
-        selectedAction = action
-        receipt = nil
-        error = ""
-        let currentOperation = UUID()
-        operationID = currentOperation
+        guard !state.busy else { return }
+        let currentOperation = state.begin(action)
         let settings = model.settings
         do {
             let client = try NativeFindingsActionsClient(settings: settings)
-            let outcome = try await client.perform(action, input: input) {
+            let outcome = try await client.perform(action, input: state.input) {
                 settings == model.settings && !Task.isCancelled
             }
             guard settings == model.settings else { throw NativeFindingsActionsError.invalidScope }
-            guard operationID == currentOperation else { return }
-            receipt = outcome
+            state.finish(operationID: currentOperation, receipt: outcome, error: nil)
         } catch {
-            guard operationID == currentOperation else { return }
-            self.error = error.localizedDescription
+            state.finish(operationID: currentOperation, receipt: nil, error: error.localizedDescription)
         }
-        if operationID == currentOperation { busy = false }
     }
 }

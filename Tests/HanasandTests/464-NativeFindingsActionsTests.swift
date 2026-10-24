@@ -77,6 +77,29 @@ final class NativeFindingsActionsTests: XCTestCase {
         XCTAssertEqual(sends, 0)
     }
 
+    func testWorkspaceResetClearsDraftAndDiscardsOldOperationResult() {
+        var state = NativeFindingsActionsPanelState()
+        state.input = NativeFindingsActionInput(terms: "Old org", webhookURL: "https://old.example/hook",
+            telegramTarget: "@old_channel", actor: "Old actor", company: "Old company",
+            claimedData: "Old details", sourceURL: "https://old.example/report")
+        let oldOperation = state.begin(.openCase)
+        state.resetForWorkspaceChange()
+
+        XCTAssertEqual(state.input, NativeFindingsActionInput())
+        XCTAssertEqual(state.selectedAction, .saveWatchlist)
+        XCTAssertNil(state.receipt)
+        XCTAssertEqual(state.error, "")
+        XCTAssertFalse(state.busy)
+
+        let acceptedLateResult = state.finish(operationID: oldOperation,
+            receipt: NativeFindingsActionReceipt(action: .openCase, message: "Old workspace case", detail: nil, isWarning: false),
+            error: nil)
+        XCTAssertFalse(acceptedLateResult)
+        XCTAssertNil(state.receipt)
+        XCTAssertEqual(state.error, "")
+        XCTAssertFalse(state.busy)
+    }
+
     func testAmbiguousServerFailureRequiresRefreshAndAdvisoryCaseUsesDurableWorkflow() async throws {
         let client = try NativeFindingsActionsClient(settings: makeSettings()) { request in
             (Data("{}".utf8), self.response(for: request, status: 503))
