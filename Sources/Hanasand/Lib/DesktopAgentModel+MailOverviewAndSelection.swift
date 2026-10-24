@@ -53,7 +53,7 @@ enum MailMessageSafety {
               let encodedMessage = message.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")) else {
             throw MailMessageSafetyError.invalidRequest
         }
-        let route = baseURL.normalizedBaseURL.appendingAPIPath("mail/message")
+        let route = baseURL.appendingAPIPath("mail/message")
         guard var components = URLComponents(url: route, resolvingAgainstBaseURL: false) else {
             throw MailMessageSafetyError.invalidRequest
         }
@@ -153,7 +153,7 @@ extension DesktopAgentModel {
 
     func loadMailMessageReputation(messageID: String, mailboxUser: String, html: String,
                                    attachmentIDs: Set<String>) async throws -> MailMessageReputationEnvelope {
-        let url = try MailMessageSafety.makeRequestURL(baseURL: settings.apiBaseURL, mailboxUser: mailboxUser, messageID: messageID)
+        let url = try MailMessageSafety.makeRequestURL(baseURL: settings.apiBaseURL.normalizedBaseURL, mailboxUser: mailboxUser, messageID: messageID)
         let response: MailMessageReputationEnvelope = try await requestJSON(url, authenticated: true)
         return try MailMessageSafety.validated(response, expectedMessageID: messageID, html: html, attachmentIDs: attachmentIDs)
     }
