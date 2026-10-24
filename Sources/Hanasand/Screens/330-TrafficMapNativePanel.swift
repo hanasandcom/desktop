@@ -132,7 +132,7 @@ struct TrafficMapNativePanel: View {
             ViewThatFits(in: .horizontal) {
                 mapToolbar
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Country markers show approximate country centers; borders are not shown.")
+                    Text("Country outlines provide geographic context; markers show approximate country centers.")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -146,6 +146,26 @@ struct TrafficMapNativePanel: View {
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
                         .fill(theme.card)
                     Canvas { context, canvasSize in
+                        let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                        context.translateBy(x: center.x + mapOffset.width, y: center.y + mapOffset.height)
+                        context.scaleBy(x: mapZoom, y: mapZoom)
+                        context.translateBy(x: -center.x, y: -center.y)
+
+                        for feature in TrafficWorldGeometry.features {
+                            var outline = Path()
+                            for ring in feature {
+                                let points = ring.coordinates.map {
+                                    TrafficWorldGeometry.projectedPoint($0, size: canvasSize)
+                                }
+                                guard let first = points.first else { continue }
+                                outline.move(to: first)
+                                outline.addLines(Array(points.dropFirst()))
+                                outline.closeSubpath()
+                            }
+                            context.fill(outline, with: .color(theme.accent.opacity(0.08)), style: FillStyle(eoFill: true))
+                            context.stroke(outline, with: .color(theme.accent.opacity(0.48)), lineWidth: 0.65)
+                        }
+
                         var grid = Path()
                         for longitude in stride(from: -150.0, through: 150.0, by: 30.0) {
                             let x = (longitude + 180) / 360 * canvasSize.width
@@ -416,11 +436,8 @@ struct TrafficMapNativePanel: View {
     }
 
     private func displayedPoint(iso: String, size: CGSize) -> CGPoint? {
-        guard let point = TrafficMapGeography.point(iso: iso, size: size) else { return nil }
-        return CGPoint(
-            x: (point.x - size.width / 2) * mapZoom + size.width / 2 + mapOffset.width,
-            y: (point.y - size.height / 2) * mapZoom + size.height / 2 + mapOffset.height
-        )
+        guard let coordinate = TrafficMapGeography.centroids[iso] else { return nil }
+        return TrafficWorldGeometry.displayedPoint(coordinate, size: size, zoom: mapZoom, offset: mapOffset)
     }
 
     private func clampedOffset(_ value: CGSize, size: CGSize) -> CGSize {

@@ -9,7 +9,7 @@ final class TrafficMapModelTests: XCTestCase {
             record(id: 2, iso: "NO", timestamp: "2026-10-23T10:03:00Z"),
             record(id: 3, iso: "US", timestamp: "2026-10-23T10:02:00Z"),
             record(id: 4, iso: nil, timestamp: "2026-10-23T10:04:00Z"),
-            record(id: 5, iso: "X1", timestamp: "2026-10-23T10:05:00Z"),
+            record(id: 5, iso: "ZZ", timestamp: "2026-10-23T10:05:00Z"),
         ]
 
         let countries = TrafficMapCountry.summarize(records)
@@ -38,6 +38,28 @@ final class TrafficMapModelTests: XCTestCase {
         XCTAssertEqual(TrafficMapGeography.capitalNames["NO"], "Oslo")
         XCTAssertEqual(TrafficMapGeography.distanceFromNorwayKilometers(iso: "NO"), 0)
         XCTAssertNil(TrafficMapGeography.distanceFromNorwayKilometers(iso: "X1"))
+    }
+
+    func testBundledWorldGeometryHasClosedCountryRings() {
+        XCTAssertEqual(TrafficWorldGeometry.features.count, 177)
+        let rings = TrafficWorldGeometry.features.flatMap { $0 }
+        XCTAssertGreaterThan(rings.count, 150)
+        XCTAssertTrue(rings.allSatisfy { ring in
+            ring.coordinates.count >= 4 && ring.coordinates.first == ring.coordinates.last
+        })
+    }
+
+    func testWorldGeometryProjectionAndCountryMarkersSharePanZoomTransform() throws {
+        let size = CGSize(width: 1_000, height: 500)
+        let norway = try XCTUnwrap(TrafficMapGeography.centroids["NO"])
+        let projected = TrafficWorldGeometry.projectedPoint(norway, size: size)
+        XCTAssertEqual(projected.x, 527.7777777777778, accuracy: 1e-9)
+        XCTAssertEqual(projected.y, 77.77777777777777, accuracy: 1e-9)
+
+        let offset = CGSize(width: 40, height: -20)
+        let displayed = TrafficWorldGeometry.displayedPoint(norway, size: size, zoom: 2, offset: offset)
+        XCTAssertEqual(displayed.x, (projected.x - size.width / 2) * 2 + size.width / 2 + offset.width, accuracy: 1e-9)
+        XCTAssertEqual(displayed.y, (projected.y - size.height / 2) * 2 + size.height / 2 + offset.height, accuracy: 1e-9)
     }
 
     func testBuildsSecureAuthenticatedLiveTrafficRequest() throws {
