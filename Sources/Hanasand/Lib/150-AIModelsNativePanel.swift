@@ -36,6 +36,11 @@ private struct AIMetricsNativeContent: View {
                 HStack { Text("AI operations").font(.system(size: 21, weight: .bold)); Spacer(); Button("Refresh") { metrics.refresh(manual: true) }.disabled(metrics.state.loading || metrics.promptPhase == .connecting || metrics.promptPhase == .running) }
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                     metricCard("Live clients", "\(metrics.state.clients.count)", "\(metrics.state.liveState) · \(metrics.state.participants.map(String.init) ?? "—") viewers")
+                    metricCard("RAM load", metric(summary.ramLoad.map { $0 * 100 }, suffix: "%", decimals: 0), "Average across connected clients")
+                    metricCard("CPU load", metric(summary.cpuLoad.map { $0 * 100 }, suffix: "%", decimals: 0), "Average across connected clients")
+                    metricCard("GPU load", metric(summary.gpuLoad.map { $0 * 100 }, suffix: "%", decimals: 0), "Average across connected clients")
+                    metricCard("Throughput", metric(summary.throughput, suffix: " TPS"), "Mean generation rate across connected clients")
+                    metricCard("Lane capacity", laneCapacityValue, laneCapacityDetail)
                     metricCard("Typical first output", metric(metrics.state.economics?.firstOutputP50, suffix: " ms"), "P95 \(metric(metrics.state.economics?.firstOutputP95, suffix: " ms")) · \(metric(metrics.state.economics?.sampleCount, suffix: " runs", decimals: 0))")
                     metricCard("GPU energy", metric(totalWatts, suffix: " W"), "Reported monthly \(metric(totalKWh, suffix: " kWh"))")
                 }
@@ -52,6 +57,15 @@ private struct AIMetricsNativeContent: View {
         .onAppear { metrics.start() }
         .onDisappear { metrics.stop() }
         .onChange(of: settings) { _, newValue in metrics.update(settings: newValue) }
+    }
+    private var summary: AIMetricSummary { AIMetricSummary(clients: metrics.state.clients) }
+    private var laneCapacityValue: String {
+        guard let active = summary.activeRequests, let available = summary.availableRequests else { return "Unavailable" }
+        return "\(metric(active, decimals: 0)) active · \(metric(available, decimals: 0)) available"
+    }
+    private var laneCapacityDetail: String {
+        guard let maximum = summary.maximumRequests, let laneCount = summary.laneCount else { return "Lane telemetry unavailable" }
+        return "\(metric(maximum, decimals: 0)) maximum across \(laneCount) lanes"
     }
     private var totalWatts: Double? { sum(metrics.state.clients.map(\.watts)) }
     private var totalKWh: Double? { sum(metrics.state.clients.map(\.monthlyKwh)) }

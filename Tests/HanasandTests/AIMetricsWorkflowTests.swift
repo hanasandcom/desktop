@@ -2,6 +2,41 @@ import XCTest
 @testable import Hanasand
 
 final class AIMetricsWorkflowTests: XCTestCase {
+    func testSummaryAveragesClientLoadsAndAggregatesKnownLaneCapacity() throws {
+        let first = try AIMetricsValidation.client([
+            "name": "client-a", "ram": [["load": 0.2], ["load": 0.4]],
+            "cpu": [["load": 0.1]], "gpu": [["load": 0.2]], "model": ["tps": 2.0],
+            "lanes": [["activeRequests": 1, "availableRequests": 2, "maxRequests": 3]]
+        ])
+        let second = try AIMetricsValidation.client([
+            "name": "client-b", "ram": [["load": 0.8]], "cpu": [["load": 0.5]],
+            "gpu": [["load": 0.6]], "model": ["tps": 4.0],
+            "lanes": [["activeRequests": 2, "availableRequests": 1, "maxRequests": 4]]
+        ])
+
+        let summary = AIMetricSummary(clients: [first, second])
+        XCTAssertEqual(summary.ramLoad ?? -1, 0.55, accuracy: 0.0001)
+        XCTAssertEqual(summary.cpuLoad ?? -1, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(summary.gpuLoad ?? -1, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(summary.throughput ?? -1, 3, accuracy: 0.0001)
+        XCTAssertEqual(summary.activeRequests, 3)
+        XCTAssertEqual(summary.availableRequests, 3)
+        XCTAssertEqual(summary.maximumRequests, 7)
+        XCTAssertEqual(summary.laneCount, 2)
+    }
+
+    func testSummaryKeepsPartialTelemetryUnavailable() throws {
+        let first = try AIMetricsValidation.client(["name": "client-a", "ram": [["load": 0.2]], "lanes": []])
+        let second = try AIMetricsValidation.client(["name": "client-b", "ram": [["load": NSNull()]]])
+
+        let summary = AIMetricSummary(clients: [first, second])
+        XCTAssertNil(summary.ramLoad, "Unknown readings must not be displayed as zero or averaged away")
+        XCTAssertNil(summary.activeRequests)
+        XCTAssertNil(summary.availableRequests)
+        XCTAssertNil(summary.maximumRequests)
+        XCTAssertNil(summary.laneCount)
+    }
+
     func testPromptBoundsHistoryAndExactExplicitTargetWireShape() throws {
         let prior = [AIMetricPromptMessage(role: "assistant", content: "prior")]
         let messages = try AIMetricsValidation.prompt("  test this model  ", history: prior)

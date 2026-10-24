@@ -34,6 +34,60 @@ struct AIMetricsSnapshot: Equatable {
     var clients: [AIMetricClient] = []; var economics: AIMetricEconomics?; var containers: AIMetricContainers?
     var errors: [String] = []; var liveState = "Disconnected"; var participants: Int?; var lastRead = ""; var loading = false
 }
+
+struct AIMetricSummary: Equatable {
+    let ramLoad: Double?
+    let cpuLoad: Double?
+    let gpuLoad: Double?
+    let throughput: Double?
+    let activeRequests: Double?
+    let availableRequests: Double?
+    let maximumRequests: Double?
+    let laneCount: Int?
+
+    init(clients: [AIMetricClient]) {
+        ramLoad = Self.averageClientLoad(clients.map(\.ram))
+        cpuLoad = Self.averageClientLoad(clients.map(\.cpu))
+        gpuLoad = Self.averageClientLoad(clients.map(\.gpu))
+        throughput = Self.mean(clients.map(\.model.tps))
+
+        guard !clients.isEmpty, clients.allSatisfy({ $0.lanes != nil }) else {
+            activeRequests = nil
+            availableRequests = nil
+            maximumRequests = nil
+            laneCount = nil
+            return
+        }
+        let lanes = clients.flatMap { $0.lanes ?? [] }
+        activeRequests = Self.sum(lanes.map(\.active))
+        availableRequests = Self.sum(lanes.map(\.available))
+        maximumRequests = Self.sum(lanes.map(\.maximum))
+        laneCount = lanes.count
+    }
+
+    private static func averageClientLoad(_ groups: [[AIMetricSensor]?]) -> Double? {
+        guard !groups.isEmpty else { return nil }
+        let clientAverages = groups.compactMap { group -> Double? in
+            guard let group, !group.isEmpty else { return nil }
+            return mean(group.map(\.load))
+        }
+        guard clientAverages.count == groups.count else { return nil }
+        return mean(clientAverages.map(Optional.some))
+    }
+
+    private static func mean(_ values: [Double?]) -> Double? {
+        guard !values.isEmpty, values.allSatisfy({ $0 != nil }) else { return nil }
+        let result = values.compactMap { $0 }.reduce(0, +) / Double(values.count)
+        return result.isFinite ? result : nil
+    }
+
+    private static func sum(_ values: [Double?]) -> Double? {
+        guard values.allSatisfy({ $0 != nil }) else { return nil }
+        let result = values.compactMap { $0 }.reduce(0, +)
+        return result.isFinite ? result : nil
+    }
+}
+
 enum AIMetricPromptPhase: Equatable { case ready, connecting, running, completed, failed, uncertain }
 struct AIMetricPromptMessage: Codable, Equatable { let role: String; let content: String }
 struct AIMetricReviewGate: Equatable {
@@ -67,7 +121,8 @@ enum AIMetricsValidation {
         return number.doubleValue
     }
     static func integer(_ value: Double?) -> Int? {
-        guard let value, value <= Double(Int.max), value >= Double(Int.min) else { return nil }
+        // Double(Int.max) rounds up to 2^63 on 64-bit platforms, which Int cannot represent.
+        guard let value, value < Double(Int.max), value >= Double(Int.min) else { return nil }
         return Int(value)
     }
     static func text(_ value: Any?, limit: Int = 300) -> String { String((value as? String ?? "").prefix(limit)) }

@@ -2,6 +2,12 @@ import XCTest
 @testable import Hanasand
 
 final class AIMetricsClientTests: XCTestCase {
+    func testIntegerConversionRejectsDoubleRoundedIntUpperBound() {
+        let roundedUpperBound = Double(Int.max)
+        XCTAssertNil(AIMetricsValidation.integer(roundedUpperBound))
+        XCTAssertEqual(AIMetricsValidation.integer(roundedUpperBound.nextDown), Int(roundedUpperBound.nextDown))
+    }
+
     func testAuthenticatedEndpointTargetsMatchExpoContract() async throws {
         let settings = HanasandDesktopSettings()
         let client = await MainActor.run { AIMetricsClient(settings: settings) }
