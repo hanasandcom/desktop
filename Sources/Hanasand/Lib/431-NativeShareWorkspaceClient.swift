@@ -65,11 +65,78 @@ struct NativeShareWorkspaceClient {
         guard Self.validIdentifier(id), name.utf8.count <= NativeShareWorkspaceLimits.fieldBytes,
               path.utf8.count <= NativeShareWorkspaceLimits.fieldBytes,
               content.utf8.count <= NativeShareWorkspaceLimits.contentBytes else { throw NativeShareWorkspaceError.invalidRoute }
-        let saved: NativeShareWorkspaceFile = try await request("share/\(segment(id))", method: "PUT", body: [
+        let saved: NativeShareWorkspaceFile = try await mutationRequest("save", "share/\(segment(id))", method: "PUT", body: [
             "name": name, "path": path, "content": content,
         ])
+        guard saved.id == id, saved.name == name, saved.path == path, saved.content == content else {
+            throw NativeShareWorkspaceError.mutationUncertain("save")
+        }
         try saved.validate()
         return saved
+    }
+
+    func updateMetadata(id: String, name: String? = nil, path: String? = nil) async throws -> NativeShareWorkspaceFile {
+        guard !userID.isEmpty else { throw NativeShareWorkspaceError.signInRequired }
+        guard Self.validIdentifier(id), name != nil || path != nil,
+              (name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true),
+              (path?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true),
+              (name?.utf8.count ?? 0) <= NativeShareWorkspaceLimits.fieldBytes,
+              (path?.utf8.count ?? 0) <= NativeShareWorkspaceLimits.fieldBytes else {
+            throw NativeShareWorkspaceError.invalidRoute
+        }
+        var body: [String: Any] = [:]
+        if let name { body["name"] = name }
+        if let path { body["path"] = path }
+        let saved: NativeShareWorkspaceFile = try await mutationRequest("rename or move", "share/\(segment(id))", method: "PUT", body: body)
+        guard saved.id == id, name == nil || saved.name == name, path == nil || saved.path == path else {
+            throw NativeShareWorkspaceError.mutationUncertain("rename or move")
+        }
+        try saved.validate()
+        return saved
+    }
+
+    func deleteItem(id: String) async throws -> Int {
+        guard !userID.isEmpty else { throw NativeShareWorkspaceError.signInRequired }
+        guard Self.validIdentifier(id) else { throw NativeShareWorkspaceError.invalidRoute }
+        let receipt: NativeShareWorkspaceDeleteReceipt = try await mutationRequest("delete", "share/\(segment(id))", method: "DELETE")
+        guard receipt.deleted > 0 else { throw NativeShareWorkspaceError.mutationUncertain("delete") }
+        return receipt.deleted
+    }
+
+    func resumeDuplicate(_ plan: NativeShareWorkspaceDuplicatePlan, context: NativeShareWorkspaceContext) async throws -> NativeShareWorkspace {
+        guard !userID.isEmpty else { throw NativeShareWorkspaceError.signInRequired }
+        guard !plan.entries.isEmpty, plan.entries.count <= NativeShareWorkspaceLimits.treeItems,
+              plan.entries.first?.id == plan.rootID else { throw NativeShareWorkspaceError.invalidRoute }
+
+        let freshContext = NativeShareWorkspaceContext(alias: context.alias, fileID: nil, isProject: context.isProject,
+                                                       initialChatOpen: false, createIfMissing: false)
+        let current = try await load(context: freshContext)
+        let existing = Self.flatten(current.tree)
+        var completed = Set<String>()
+        for entry in plan.entries {
+            guard Self.validIdentifier(entry.id), Self.validIdentifier(entry.sourceID), Self.validIdentifier(entry.parentID),
+                  ["file", "folder"].contains(entry.type), !entry.name.isEmpty,
+                  entry.name.utf8.count <= NativeShareWorkspaceLimits.fieldBytes else {
+                throw NativeShareWorkspaceError.invalidRoute
+            }
+            if let item = existing[entry.id] {
+                guard item.name == entry.name, item.type == entry.type, item.parent == entry.parentID else {
+                    throw NativeShareWorkspaceError.mutationUncertain("duplicate recovery")
+                }
+                completed.insert(entry.id)
+            }
+        }
+
+        var contents: [String: String] = [:]
+        for entry in plan.entries where entry.type == "file" && !completed.contains(entry.id) {
+            let source = try await loadFile(id: entry.sourceID)
+            guard source.type == nil || source.type == "file" else { throw NativeShareWorkspaceError.invalidResponse }
+            contents[entry.id] = source.content ?? ""
+        }
+        for entry in plan.entries where !completed.contains(entry.id) {
+            try await createDuplicate(entry, content: contents[entry.id] ?? "")
+        }
+        return try await load(context: freshContext)
     }
 
     func loadFile(id: String) async throws -> NativeShareWorkspaceFile {
@@ -143,6 +210,31 @@ struct NativeShareWorkspaceClient {
         catch { throw NativeShareWorkspaceError.invalidResponse }
     }
 
+    private func mutationRequest<T: Decodable>(_ action: String, _ path: String, method: String,
+                                               body: [String: Any]? = nil) async throws -> T {
+        do {
+            return try await request(path, method: method, body: body)
+        } catch let error as NativeShareWorkspaceError {
+            if case let .requestFailed(status) = error, (400..<500).contains(status) { throw error }
+            throw NativeShareWorkspaceError.mutationUncertain(action)
+        } catch {
+            throw NativeShareWorkspaceError.mutationUncertain(action)
+        }
+    }
+
+    private func createDuplicate(_ entry: NativeShareWorkspaceDuplicateEntry, content: String) async throws {
+        guard content.utf8.count <= NativeShareWorkspaceLimits.contentBytes else { throw NativeShareWorkspaceError.invalidResponse }
+        let created: NativeShareWorkspaceFile = try await mutationRequest("duplicate", "share", method: "POST", body: [
+            "id": entry.id, "name": entry.name, "content": content,
+            "parent": entry.parentID, "type": entry.type, "includeTree": false,
+        ])
+        guard created.id == entry.id, created.name == entry.name,
+              created.type == entry.type, created.parent == entry.parentID else {
+            throw NativeShareWorkspaceError.mutationUncertain("duplicate")
+        }
+        try created.validate()
+    }
+
     private func segment(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? ""
     }
@@ -160,6 +252,15 @@ struct NativeShareWorkspaceClient {
         guard tree.count <= NativeShareWorkspaceLimits.treeItems else { throw NativeShareWorkspaceError.invalidResponse }
         var count = 0
         for item in tree { try item.validate(count: &count) }
+    }
+
+    private static func flatten(_ tree: [NativeShareWorkspaceTreeItem]) -> [String: NativeShareWorkspaceTreeItem] {
+        var result: [String: NativeShareWorkspaceTreeItem] = [:]
+        func visit(_ items: [NativeShareWorkspaceTreeItem]) {
+            for item in items { result[item.id] = item; visit(item.children ?? []) }
+        }
+        visit(tree)
+        return result
     }
 
     private static func sendBounded(_ request: URLRequest) async throws -> (Data, URLResponse) {
@@ -209,4 +310,8 @@ private struct CreatedWorkspaceResponse: Decodable {
         )
         tree = try container.decodeIfPresent([NativeShareWorkspaceTreeItem].self, forKey: .tree)
     }
+}
+
+private struct NativeShareWorkspaceDeleteReceipt: Decodable {
+    let deleted: Int
 }
