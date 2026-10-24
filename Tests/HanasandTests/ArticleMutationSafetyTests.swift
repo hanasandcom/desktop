@@ -76,4 +76,45 @@ final class ArticleMutationSafetyTests: XCTestCase {
         XCTAssertFalse(ArticleMutationSafety.isDefiniteRejection(status: 408))
         XCTAssertFalse(ArticleMutationSafety.isDefiniteRejection(status: 500))
     }
+
+    func testWorkspaceScopeMustMatchBeforeReviewCanUnlock() {
+        var state = ArticleMutationSafety()
+        let pending = ArticleMutationIntent(
+            id: UUID(), action: .update, articleID: "notes.md", content: "draft",
+            actorID: "user-1", apiBaseURL: "https://api.example.test", createdAt: Date(), organizationID: "org-1"
+        )
+        state.begin(pending)
+        state.recordFreshReview(ArticleMutationReview(
+            intentID: pending.id, fetchedAt: Date(), serverArticleExists: true,
+            serverContent: "other workspace", serverTitle: "Other", serverContentDigest: nil, organizationID: "org-2"
+        ))
+        XCTAssertFalse(state.mayAcknowledge)
+        XCTAssertTrue(state.isBlocked)
+
+        state.recordFreshReview(ArticleMutationReview(
+            intentID: pending.id, fetchedAt: Date(), serverArticleExists: true,
+            serverContent: "same workspace", serverTitle: "Notes", serverContentDigest: nil, organizationID: "org-1"
+        ))
+        XCTAssertTrue(state.mayAcknowledge)
+    }
+
+    func testLegacyIntentDecodesAndDoesNotAssumeUnknownUpdateWorkspace() throws {
+        let legacy = intent(.update)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as? [String: Any])
+        object.removeValue(forKey: "organizationID")
+        object.removeValue(forKey: "workspaceScopeKnown")
+        let data = try JSONSerialization.data(withJSONObject: ["intent": object])
+        var restored = try JSONDecoder().decode(ArticleMutationSafety.self, from: data)
+        let pending = try XCTUnwrap(restored.intent)
+
+        XCTAssertEqual(pending.articleID, legacy.articleID)
+        XCTAssertFalse(pending.workspaceScopeKnown)
+        XCTAssertFalse(restored.mayAcknowledge)
+        restored.recordFreshReview(ArticleMutationReview(
+            intentID: pending.id, fetchedAt: Date(), serverArticleExists: true,
+            serverContent: "found", serverTitle: "Notes", serverContentDigest: nil, organizationID: "org-1"
+        ))
+        XCTAssertEqual(restored.intent?.organizationID, "org-1")
+        XCTAssertTrue(restored.mayAcknowledge)
+    }
 }

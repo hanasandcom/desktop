@@ -76,7 +76,7 @@ struct ArticlesNativePanel: View {
             if let intent = model.articleMutationSafety.intent {
                 mutationReviewPanel(intent)
             }
-            NativeGroupPanel(title: "Create article", subtitle: "Markdown article through the API") {
+            NativeGroupPanel(title: "Create article", subtitle: "Markdown article · \(workspaceLabel)") {
                 TextField("article-id.md or heading slug", text: $model.articleDraftID)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .bold))
@@ -94,19 +94,17 @@ struct ArticlesNativePanel: View {
                     .background(theme.field)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                HStack {
-                    Text(model.articleDraftContent.isEmpty ? "Start with a markdown heading." : "\(model.articleDraftContent.count) chars")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                    Spacer()
-                    ActionButton(title: "Create", icon: "plus") {
+                statusActionRow(
+                    status: model.articleDraftContent.isEmpty ? "Start with a markdown heading." : "\(model.articleDraftContent.count) chars",
+                    title: "Create",
+                    icon: "plus",
+                    disabled: model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked
+                ) {
                         Task { await model.createNativeArticle() }
-                    }
-                    .disabled(model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked)
                 }
             }
 
-            NativeGroupPanel(title: "Edit article", subtitle: model.selectedArticleID.isEmpty ? "Choose an article from the list." : model.selectedArticleID) {
+            NativeGroupPanel(title: "Edit article", subtitle: model.selectedArticleID.isEmpty ? "Choose an article from the list · \(workspaceLabel)." : "\(model.selectedArticleID) · \(workspaceLabel)") {
                 TextField("Article id", text: $model.articleEditID)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -124,36 +122,68 @@ struct ArticlesNativePanel: View {
                     .background(theme.field)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                HStack {
-                    Text(model.selectedArticleID.isEmpty ? "No article selected." : "\(model.articleEditContent.count) chars")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                    Spacer()
-                    ActionButton(title: "Save", icon: "checkmark") {
+                statusActionRow(
+                    status: model.selectedArticleID.isEmpty ? "No article selected." : "\(model.articleEditContent.count) chars",
+                    title: "Save",
+                    icon: "checkmark",
+                    disabled: model.selectedArticleID.isEmpty || model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked
+                ) {
                         Task { await model.updateSelectedArticle() }
-                    }
-                    .disabled(model.selectedArticleID.isEmpty || model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked)
                 }
             }
         }
     }
 
+    private var workspaceLabel: String {
+        let organizationID = ArticleWorkspacePolicy.organizationID(model.selectedOrganizationID)
+        guard let organizationID else { return "Personal workspace" }
+        return model.selectedOrganizationName ?? organizationID
+    }
+
+    private func statusActionRow(
+        status: String,
+        title: String,
+        icon: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                statusLabel(status)
+                Spacer()
+                ActionButton(title: title, icon: icon, action: action)
+                    .disabled(disabled)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                statusLabel(status)
+                ActionButton(title: title, icon: icon, action: action)
+                    .disabled(disabled)
+            }
+        }
+    }
+
+    private func statusLabel(_ value: String) -> some View {
+        Text(value)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(theme.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func mutationReviewPanel(_ intent: ArticleMutationIntent) -> some View {
-        NativeGroupPanel(title: "Article change needs review", subtitle: "\(intent.action.rawValue.capitalized) · \(intent.articleID)") {
+        let scope = intent.workspaceScopeKnown ? (intent.organizationID ?? "Personal workspace") : "Workspace not recorded"
+        return NativeGroupPanel(title: "Article change needs review", subtitle: "\(intent.action.rawValue.capitalized) · \(intent.articleID) · \(scope)") {
             Text("The request may have reached the server, but Desktop did not receive a verifiable receipt. The service has no idempotency key or revision check, so repeating a request can conflict, overwrite, or remove newer content. Refresh and review the server state before unlocking article changes.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack {
-                Text("Submitted \(intent.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.textTertiary)
-                Spacer()
-                ActionButton(title: "Refresh server article", icon: "arrow.clockwise") {
-                    Task { await model.reviewUncertainArticleMutation() }
-                }
-                .disabled(model.isLoadingNativeDashboard)
+            statusActionRow(
+                status: "Submitted \(intent.createdAt.formatted(date: .abbreviated, time: .shortened))",
+                title: "Refresh server article",
+                icon: "arrow.clockwise",
+                disabled: model.isLoadingNativeDashboard
+            ) {
+                Task { await model.reviewUncertainArticleMutation() }
             }
 
             if let review = model.articleMutationSafety.review, review.intentID == intent.id {
@@ -199,10 +229,11 @@ struct ArticlesNativePanel: View {
                     Text("Reviewed at \(review.fetchedAt.formatted(date: .abbreviated, time: .shortened)). Acknowledging clears the barrier; it does not claim whether the original request committed.")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(theme.textTertiary)
-                    ActionButton(title: "Acknowledge reviewed state and unlock", icon: "checkmark.shield") {
+                    ActionButton(title: "Acknowledge and unlock", icon: "checkmark.shield") {
                         model.acknowledgeReviewedArticleMutation()
                     }
                     .disabled(!model.articleMutationSafety.mayAcknowledge)
+                    .accessibilityLabel("Acknowledge reviewed state and unlock article changes")
                 }
                 .padding(10)
                 .background(theme.card)
@@ -221,22 +252,29 @@ struct ArticlesNativePanel: View {
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(theme.textSecondary)
-            HStack {
-                Text(model.articles.isEmpty ? "No articles loaded yet." : "Published articles")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.textTertiary)
-                Spacer()
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") {
-                    Task { await model.loadNativeDashboardData() }
-                }
+            statusActionRow(
+                status: model.articles.isEmpty ? "No articles loaded yet." : "Published articles",
+                title: "Refresh",
+                icon: "arrow.clockwise",
+                disabled: model.isLoadingNativeDashboard
+            ) {
+                Task { await model.loadNativeDashboardData() }
             }
 
-            HStack(spacing: 10) {
-                TextField("Search titles or IDs", text: Binding(get: { search }, set: { search = $0; page = 0 }))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Search article titles or IDs")
-                ActionButton(title: sortByTitle ? "Sort: title" : "Sort: newest", icon: "arrow.up.arrow.down") {
-                    sortByTitle.toggle(); page = 0
+            Label(workspaceLabel, systemImage: "building.2")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    searchField
+                    sortButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    sortButton
                 }
             }
             Text("\(filteredArticles.count) of \(model.articles.count) articles · page \(currentPage + 1) of \(pageCount)")
@@ -316,6 +354,18 @@ struct ArticlesNativePanel: View {
             }
         }
     }
+
+    private var searchField: some View {
+        TextField("Search titles or IDs", text: Binding(get: { search }, set: { search = $0; page = 0 }))
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("Search article titles or IDs")
+    }
+
+    private var sortButton: some View {
+        ActionButton(title: sortByTitle ? "Sort: title" : "Sort: newest", icon: "arrow.up.arrow.down") {
+            sortByTitle.toggle(); page = 0
+        }
+    }
 }
 
 private struct NativeArticlePreviewSheet: View {
@@ -366,27 +416,32 @@ private struct NativeArticlePreviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @MainActor private func load() async {
+        let context = model.articleWorkspaceRequestContext(organizationID: article.organizationID ?? "")
+        guard model.isCurrentArticleWorkspaceRequest(context), model.articleWorkspaceRowsContext == context else {
+            error = "Refresh the selected publishing workspace before opening this article."
+            return
+        }
         if let content = article.content {
             self.content = content
             return
         }
-        guard NativeRouteSelection.resolve(article.id, among: [article.id]) != nil,
-              let id = article.id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) else {
+        guard (try? ArticleWorkspacePolicy.articleID(article.id)) == article.id else {
             error = "The article identifier is invalid."
             return
         }
         do {
-            let loaded: DashboardArticle = try await model.requestJSON(
-                model.settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("article/\(id)"),
-                authenticated: false
-            )
-            guard loaded.id == article.id, let content = loaded.content else {
+            let loaded = try await model.articleWorkspaceClient(organizationID: article.organizationID ?? "").detail(article.id)
+            guard model.isCurrentArticleWorkspaceRequest(context),
+                  loaded.id == article.id, loaded.organizationID == article.organizationID,
+                  let content = loaded.content else {
                 error = "The article did not include readable content."
                 return
             }
             self.content = content
         } catch {
-            self.error = error.localizedDescription
+            if model.isCurrentArticleWorkspaceRequest(context) {
+                self.error = error.localizedDescription
+            }
         }
     }
 }

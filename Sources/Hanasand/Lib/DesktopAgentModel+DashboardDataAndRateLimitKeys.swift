@@ -43,6 +43,17 @@ extension DesktopAgentModel {
             ? thoughtMutationSafety.beginRefresh(userID: userIDForRequests, organizationID: selectedOrganizationID, loadID: loadID)
             : nil
         let thoughtsRefreshScope = thoughtsRefreshTicket?.organizationID
+        let articleRefreshScope = path == "/content/articles" ? selectedOrganizationID : nil
+        let articleRefreshContext = articleRefreshScope.map { articleWorkspaceRequestContext(organizationID: $0) }
+        if let articleRefreshContext {
+            if let previousContext = articleWorkspaceRowsContext, previousContext != articleRefreshContext {
+                articles = []
+                selectedArticleID = ""
+                articleEditID = ""
+                articleEditContent = ""
+            }
+            articleWorkspaceRowsContext = articleRefreshContext
+        }
         if path == "/traffic" {
             await loadHanasandTrafficMetrics(loadID: loadID)
             return
@@ -89,7 +100,11 @@ extension DesktopAgentModel {
 
         do {
             let text: String
-            if path == "/content/thoughts" {
+            if path == "/content/articles" {
+                let rows = try await articleWorkspaceClient(organizationID: articleRefreshScope ?? "").list()
+                let data = try JSONEncoder().encode(rows)
+                text = String(data: data, encoding: .utf8) ?? "[]"
+            } else if path == "/content/thoughts" {
                 guard let thoughtsRefreshTicket,
                       thoughtMutationSafety.matchesCurrentRefresh(
                         thoughtsRefreshTicket,
@@ -114,7 +129,9 @@ extension DesktopAgentModel {
             let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
             let thoughtsUserIsCurrent = thoughtsRefreshTicket.map { $0.userID == userIDForRequests } ?? true
             guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path,
-                  thoughtsScopeIsCurrent, thoughtsUserIsCurrent else { return }
+                  thoughtsScopeIsCurrent, thoughtsUserIsCurrent,
+                  articleRefreshScope.map({ $0 == selectedOrganizationID }) ?? true,
+                  articleRefreshContext.map(isCurrentArticleWorkspaceRequest) ?? true else { return }
             if let thoughtsRefreshTicket {
                 thoughtMutationSafety.recordSuccessfulRefresh(
                     thoughtsRefreshTicket,
@@ -126,6 +143,14 @@ extension DesktopAgentModel {
             }
             nativeDashboardStatus = "Loaded \(endpoint.label)"
             nativeDashboardPayload = text.isEmpty ? "No data returned." : String(text.prefix(24_000))
+            if path == "/content/articles",
+               let rows = try? JSONDecoder().decode([DashboardArticle].self, from: Data(text.utf8)),
+               !selectedArticleID.isEmpty,
+               !rows.contains(where: { $0.id == selectedArticleID }) {
+                selectedArticleID = ""
+                articleEditID = ""
+                articleEditContent = ""
+            }
             updateTypedDashboardState(from: text, path: path)
             if path == "/profile" {
                 await loadProfileIdentity()
@@ -141,7 +166,18 @@ extension DesktopAgentModel {
             let thoughtsUserIsCurrent = thoughtsRefreshTicket.map { $0.userID == userIDForRequests } ?? true
             let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
             guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path,
-                  thoughtsUserIsCurrent, thoughtsScopeIsCurrent else { return }
+                  thoughtsUserIsCurrent, thoughtsScopeIsCurrent,
+                  articleRefreshScope.map({ $0 == selectedOrganizationID }) ?? true,
+                  articleRefreshContext.map(isCurrentArticleWorkspaceRequest) ?? true else { return }
+            if path == "/content/articles",
+               let articleError = error as? ArticleWorkspaceError,
+               articleError.statusCode == 401 || articleError.statusCode == 403 {
+                articles = []
+                selectedArticleID = ""
+                articleEditID = ""
+                articleEditContent = ""
+                articleWorkspaceRowsContext = nil
+            }
             if path == "/notes", notes.isEmpty {
                 restoreLatestNoteDraft()
             }

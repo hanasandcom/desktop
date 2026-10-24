@@ -22,6 +22,40 @@ struct ArticleMutationIntent: Codable, Equatable, Identifiable {
     let actorID: String
     let apiBaseURL: String
     let createdAt: Date
+    var organizationID: String? = nil
+    var workspaceScopeKnown: Bool = true
+
+    init(id: UUID, action: ArticleMutationAction, articleID: String, content: String?, actorID: String,
+         apiBaseURL: String, createdAt: Date, organizationID: String? = nil, workspaceScopeKnown: Bool = true) {
+        self.id = id
+        self.action = action
+        self.articleID = articleID
+        self.content = content
+        self.actorID = actorID
+        self.apiBaseURL = apiBaseURL
+        self.createdAt = createdAt
+        self.organizationID = organizationID
+        self.workspaceScopeKnown = workspaceScopeKnown
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, action, articleID, content, actorID, apiBaseURL, createdAt, organizationID, workspaceScopeKnown
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        action = try values.decode(ArticleMutationAction.self, forKey: .action)
+        articleID = try values.decode(String.self, forKey: .articleID)
+        content = try values.decodeIfPresent(String.self, forKey: .content)
+        actorID = try values.decode(String.self, forKey: .actorID)
+        apiBaseURL = try values.decode(String.self, forKey: .apiBaseURL)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        organizationID = try values.decodeIfPresent(String.self, forKey: .organizationID)
+        // Older create intents were always sent to the personal lane. Older
+        // updates/deletes could target any row because their list was unscoped.
+        workspaceScopeKnown = try values.decodeIfPresent(Bool.self, forKey: .workspaceScopeKnown) ?? (action == .create)
+    }
 
     var contentDigest: String? {
         guard let content else { return nil }
@@ -40,6 +74,7 @@ struct ArticleMutationReview: Equatable {
     let serverContent: String?
     let serverTitle: String?
     let serverContentDigest: String?
+    var organizationID: String? = nil
 
     func matches(_ intent: ArticleMutationIntent) -> Bool? {
         guard intentID == intent.id, let submitted = intent.contentDigest,
@@ -54,7 +89,10 @@ struct ArticleMutationSafety: Codable, Equatable {
 
     var isBlocked: Bool { intent != nil }
     var canStartMutation: Bool { intent == nil }
-    var mayAcknowledge: Bool { intent != nil && review?.intentID == intent?.id }
+    var mayAcknowledge: Bool {
+        guard let intent, intent.workspaceScopeKnown, let review else { return false }
+        return review.intentID == intent.id && review.organizationID == intent.organizationID
+    }
 
     static func isDefiniteRejection(status: Int) -> Bool {
         (400...499).contains(status) && status != 408
@@ -89,7 +127,14 @@ struct ArticleMutationSafety: Codable, Equatable {
     }
 
     mutating func recordFreshReview(_ newReview: ArticleMutationReview) {
-        guard newReview.intentID == intent?.id else { return }
+        guard var current = intent, newReview.intentID == current.id else { return }
+        if !current.workspaceScopeKnown {
+            guard current.action != .create, newReview.serverArticleExists else { return }
+            current.organizationID = newReview.organizationID
+            current.workspaceScopeKnown = true
+            intent = current
+        }
+        guard newReview.organizationID == current.organizationID else { return }
         review = newReview
     }
 

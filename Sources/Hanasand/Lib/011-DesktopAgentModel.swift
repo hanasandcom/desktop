@@ -117,6 +117,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var shareDraftName = ""; @Published var shareDraftContent = ""; @Published var selectedShareID = ""; @Published var shareEditName = ""
 
     @Published var shareEditPath = ""; @Published var shareEditContent = ""; @Published var shareTrees: [String: [DashboardShareTreeItem]] = [:]; @Published var articles: [DashboardArticle] = []
+    var articleWorkspaceRowsContext: ArticleWorkspaceRequestContext?
 
     @Published var articleDraftID = ""; @Published var articleDraftContent = ""; @Published var selectedArticleID = ""; @Published var articleEditID = ""
 

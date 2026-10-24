@@ -13,11 +13,13 @@ import WebKit
 extension DesktopAgentModel {
 
     func deleteSelectedArticle(_ article: DashboardArticle) async {
+        let requestContext = articleWorkspaceRequestContext(organizationID: selectedOrganizationID)
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Deleting article"
         defer { isLoadingNativeDashboard = false }
 
-        if await performArticleMutation(.delete, articleID: article.id) {
+        if await performArticleMutation(.delete, articleID: article.id, original: article) {
+            guard isCurrentArticleWorkspaceRequest(requestContext) else { return }
             if selectedArticleID == article.id {
                 selectedArticleID = ""
                 articleEditID = ""
@@ -27,7 +29,7 @@ extension DesktopAgentModel {
             append(meta: "Article deleted", body: article.id, kind: .change)
             await loadNativeDashboardData()
         } else {
-            append(meta: "Article outcome needs review", body: nativeDashboardStatus, kind: .error)
+            recordArticleMutationFailure()
         }
     }
 
