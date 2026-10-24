@@ -38,6 +38,8 @@ struct PublicStatusNativePanel: View {
 
             if model.isLoading && model.payload == nil {
                 NativeEmptyState(title: "Loading public status", message: "Retrieving the latest verified checks and service history.")
+            } else if model.payload == nil, model.selectedIncident != nil {
+                incidents(.empty)
             } else if let error = model.errorMessage, model.payload == nil {
                 NativeEmptyState(title: "Status unavailable", message: error)
                 Button("Try again") { Task { await model.refresh() } }

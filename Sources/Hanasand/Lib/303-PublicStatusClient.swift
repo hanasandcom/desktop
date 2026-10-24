@@ -62,9 +62,15 @@ final class PublicStatusViewModel: ObservableObject {
     @Published private(set) var incidentError: String?
 
     private let client: PublicStatusClient
+    private let snapshotStore: PublicStatusSnapshotStore
 
-    init(client: PublicStatusClient = PublicStatusClient()) {
+    init(
+        client: PublicStatusClient = PublicStatusClient(),
+        snapshotStore: PublicStatusSnapshotStore = PublicStatusSnapshotStore()
+    ) {
         self.client = client
+        self.snapshotStore = snapshotStore
+        payload = snapshotStore.load()
     }
 
     func refresh() async {
@@ -72,7 +78,9 @@ final class PublicStatusViewModel: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            payload = try await client.dashboard()
+            let freshPayload = try await client.dashboard()
+            payload = freshPayload
+            snapshotStore.save(freshPayload)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -94,7 +102,6 @@ final class PublicStatusViewModel: ObservableObject {
         }
         do {
             let detail = try await client.incident(id: requestedID)
-            payload = detail
             selectedIncident = detail.incidents.first(where: {
                 $0.id == requestedID || $0.aliases?.contains(requestedID) == true
             }) ?? detail.incidents.first

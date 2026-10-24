@@ -19,6 +19,14 @@ private actor PublicStatusFixtureTransport {
     func requests() -> [URLRequest] { capturedRequests }
 }
 
+private final class PublicStatusSnapshotFixture {
+    var data: Data?
+
+    var store: PublicStatusSnapshotStore {
+        PublicStatusSnapshotStore(readData: { self.data }, writeData: { self.data = $0 })
+    }
+}
+
 final class PublicStatusTests: XCTestCase {
     private let dashboardJSON = Data(#"""
     {
@@ -173,7 +181,13 @@ final class PublicStatusTests: XCTestCase {
         XCTAssertNil(emptyError)
 
         let failedTransport = PublicStatusFixtureTransport(responses: [(Data("{}".utf8), 503)])
-        let failedModel = await MainActor.run { PublicStatusViewModel(client: PublicStatusClient(send: { request in try await failedTransport.send(request) })) }
+        let failedStorage = PublicStatusSnapshotFixture()
+        let failedModel = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in try await failedTransport.send(request) }),
+                snapshotStore: failedStorage.store
+            )
+        }
         await failedModel.refresh()
         let failedPayload = await failedModel.payload
         let failedError = await failedModel.errorMessage
@@ -181,6 +195,114 @@ final class PublicStatusTests: XCTestCase {
         XCTAssertNil(failedPayload)
         XCTAssertEqual(failedError, "The public status service returned HTTP 503.")
         XCTAssertFalse(isLoading)
+    }
+
+    func testVerifiedDashboardSnapshotPersistsAndRestoresBeforeOfflineRefresh() async throws {
+        let storage = PublicStatusSnapshotFixture()
+        let successfulModel = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in
+                    (self.dashboardJSON, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }),
+                snapshotStore: storage.store
+            )
+        }
+
+        await successfulModel.refresh()
+        let savedData = try XCTUnwrap(storage.data)
+        XCTAssertLessThanOrEqual(savedData.count, PublicStatusSnapshotStore.maximumSnapshotBytes)
+        let expected = await successfulModel.payload
+        XCTAssertEqual(expected?.lastVerifiedAt, "2026-10-23T09:59:00Z")
+
+        let offlineModel = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { _ in throw URLError(.notConnectedToInternet) }),
+                snapshotStore: storage.store
+            )
+        }
+        let restoredBeforeRefresh = await offlineModel.payload
+        XCTAssertEqual(restoredBeforeRefresh, expected)
+
+        await offlineModel.refresh()
+
+        let retained = await offlineModel.payload
+        let error = await offlineModel.errorMessage
+        XCTAssertEqual(retained?.lastVerifiedAt, "2026-10-23T09:59:00Z")
+        XCTAssertEqual(retained?.checks.first?.checkName, "Browser Web")
+        XCTAssertNotNil(error)
+        XCTAssertEqual(storage.data, savedData)
+    }
+
+    func testSnapshotStoreRejectsCorruptAndIdentifierBearingSnapshots() throws {
+        let storage = PublicStatusSnapshotFixture()
+        let store = storage.store
+
+        storage.data = Data("not-json".utf8)
+        XCTAssertNil(store.load())
+        XCTAssertNil(storage.data)
+
+        storage.data = Data(#"{"overall":"up","monitoring":"live","last_verified_at":"2026-10-23T09:59:00Z","checks":[{"service":"docker","check_name":"Browser Worker Flatten 2ee166a healthcheck","status":"down"}],"incidents":[],"history":[]}"#.utf8)
+        XCTAssertNil(store.load())
+        XCTAssertNil(storage.data)
+
+        storage.data = Data(repeating: 0x20, count: PublicStatusSnapshotStore.maximumSnapshotBytes + 1)
+        XCTAssertNil(store.load())
+        XCTAssertNil(storage.data)
+    }
+
+    func testIncidentDetailNeverReplacesFullDashboardSnapshot() async throws {
+        let storage = PublicStatusSnapshotFixture()
+        let dashboardModel = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in
+                    (self.dashboardJSON, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }),
+                snapshotStore: storage.store
+            )
+        }
+        await dashboardModel.refresh()
+        let savedFullDashboard = try XCTUnwrap(storage.data)
+        let incidentModel = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in
+                    (self.detailJSON, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }),
+                snapshotStore: storage.store
+            )
+        }
+
+        await incidentModel.loadIncident(id: "incident-42")
+
+        let payload = await incidentModel.payload
+        let selected = await incidentModel.selectedIncident
+        XCTAssertEqual(payload?.checks.first?.checkName, "Browser Web")
+        XCTAssertEqual(payload, try JSONDecoder().decode(PublicStatusPayload.self, from: dashboardJSON))
+        XCTAssertEqual(selected?.updates.first?.message, "The team is checking the upstream service.")
+        XCTAssertEqual(storage.data, savedFullDashboard)
+    }
+
+    func testFreshVerifiedSnapshotReplacesOlderCache() async throws {
+        let storage = PublicStatusSnapshotFixture()
+        let store = storage.store
+        let oldPayload = try JSONDecoder().decode(PublicStatusPayload.self, from: dashboardJSON)
+        store.save(oldPayload)
+        let freshFixture = Data(#"{"overall":"up","monitoring":"live","generated_at":"2026-10-24T11:00:00Z","last_verified_at":"2026-10-24T10:59:00Z","checks":[{"service":"docker","check_name":"Discord Bot","status":"up","checked_at":"2026-10-24T10:59:00Z"}],"incidents":[],"history":[]}"#.utf8)
+        let model = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in
+                    (freshFixture, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }),
+                snapshotStore: store
+            )
+        }
+
+        await model.refresh()
+
+        let payload = await model.payload
+        let restored = try XCTUnwrap(store.load())
+        XCTAssertEqual(payload?.lastVerifiedAt, "2026-10-24T10:59:00Z")
+        XCTAssertEqual(restored.checks.map(\.checkName), ["Discord Bot"])
+        XCTAssertEqual(restored.lastVerifiedAt, payload?.lastVerifiedAt)
     }
 
     func testRefreshExposesLoadingStateUntilResponseArrives() async throws {

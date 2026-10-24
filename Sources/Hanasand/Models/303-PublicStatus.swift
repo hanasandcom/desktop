@@ -1,6 +1,6 @@
 import Foundation
 
-struct PublicStatusPayload: Decodable, Equatable {
+struct PublicStatusPayload: Codable, Equatable {
     let overall: String
     let monitoring: String?
     let generatedAt: String?
@@ -59,7 +59,7 @@ struct PublicStatusPayload: Decodable, Equatable {
     )
 }
 
-struct PublicStatusCheck: Decodable, Equatable, Identifiable {
+struct PublicStatusCheck: Codable, Equatable, Identifiable {
     var id: String { "\(service)|\(checkName)" }
     var displayService: String { PublicStatusSuite.displayName(service) }
     let service: String
@@ -161,7 +161,7 @@ private enum PublicStatusSuite {
     }
 }
 
-struct PublicStatusIncident: Decodable, Equatable, Identifiable {
+struct PublicStatusIncident: Codable, Equatable, Identifiable {
     var displayService: String { PublicStatusSuite.displayName(service) }
     var id: String
     var aliases: [String]?
@@ -184,7 +184,7 @@ struct PublicStatusIncident: Decodable, Equatable, Identifiable {
     }
 }
 
-struct PublicStatusIncidentUpdate: Decodable, Equatable, Identifiable {
+struct PublicStatusIncidentUpdate: Codable, Equatable, Identifiable {
     var id: String { "\(at)|\(status)|\(message)" }
     let at: String
     let status: String
@@ -192,7 +192,7 @@ struct PublicStatusIncidentUpdate: Decodable, Equatable, Identifiable {
     let evidence: String?
 }
 
-struct PublicStatusDay: Decodable, Equatable, Identifiable {
+struct PublicStatusDay: Codable, Equatable, Identifiable {
     var id: String { "\(service)|\(checkName)|\(date)" }
     var displayService: String { PublicStatusSuite.displayName(service) }
     let service: String
