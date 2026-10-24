@@ -243,7 +243,7 @@ struct GalleryAlbumClient {
         }
         let mime = http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.lowercased() ?? ""
         guard ["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif"].contains(String(mime)),
-              !data.isEmpty, data.count <= (thumbnail ? 5 : 20) * 1024 * 1024 else { throw GalleryAlbumClientError.invalidImage }
+              !data.isEmpty, data.count <= (thumbnail ? 5 : 50) * 1024 * 1024 else { throw GalleryAlbumClientError.invalidImage }
         return data
     }
 

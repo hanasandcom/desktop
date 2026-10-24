@@ -253,4 +253,38 @@ final class GalleryAlbumClientTests: XCTestCase {
         XCTAssertEqual(request?.cachePolicy, .reloadIgnoringLocalCacheData)
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Cookie"), "id=owner; access_token=token_abc-123.jwt")
     }
+
+    func testOriginalImageMatchesMobile50MiBCeilingAndRetainsFailureState() async throws {
+        for size in [20, 50].map({ $0 * 1024 * 1024 }) {
+            let client = try GalleryAlbumClient(settings: settings) { request in
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                               headerFields: ["Content-Type": "image/jpeg", "Cache-Control": "private, no-store"])!
+                return (Data(repeating: 0x2A, count: size), response)
+            }
+            let image = try await client.originalImage(for: "large-photo")
+            XCTAssertEqual(image.count, size)
+        }
+
+        let oversized = try GalleryAlbumClient(settings: settings) { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                           headerFields: ["Content-Type": "image/jpeg"])!
+            return (Data(repeating: 0x2A, count: 50 * 1024 * 1024 + 1), response)
+        }
+        do {
+            _ = try await oversized.originalImage(for: "too-large")
+            XCTFail("Expected an original above the mobile preview limit to be rejected")
+        } catch GalleryAlbumClientError.invalidImage {}
+
+        let unavailable = try GalleryAlbumClient(settings: settings) { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil,
+                                           headerFields: ["Content-Type": "application/json"])!
+            return (Data(#"{"error":"CDN unavailable"}"#.utf8), response)
+        }
+        do {
+            _ = try await unavailable.originalImage(for: "unavailable")
+            XCTFail("Expected the CDN failure to remain visible to the caller")
+        } catch GalleryAlbumClientError.requestFailed(let status, _) {
+            XCTAssertEqual(status, 503)
+        }
+    }
 }
