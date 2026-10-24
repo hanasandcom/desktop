@@ -141,6 +141,8 @@ struct IntelligenceCasesNativePanel: View {
             }
         }
 
+        DwmCaseWorkflowPanel(detail: value, organizationID: routeOrganizationID ?? model.selectedOrganizationID)
+
         CasesDevelopmentNativePanel(caseID: value.caseRecord.id, organizationID: routeOrganizationID ?? model.selectedOrganizationID)
     }
 
