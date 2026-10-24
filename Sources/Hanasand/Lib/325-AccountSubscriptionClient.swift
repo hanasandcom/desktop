@@ -20,25 +20,36 @@ private enum AccountSubscriptionSession {
 enum AccountSubscriptionClientError: LocalizedError {
     case signInRequired
     case invalidBaseURL
+    case invalidWebsiteURL
     case invalidResponse
     case requestFailed(Int)
     case impersonationUnsupported
     case invalidPortalURL
+    case invalidPlan
+    case planAlreadyActive
+    case checkoutUncertainOutcome
+    case invalidCheckoutURL
 
     var errorDescription: String? {
         switch self {
         case .signInRequired: "Sign in to view subscription information."
         case .invalidBaseURL: "Subscription information requires a valid HTTPS API address."
+        case .invalidWebsiteURL: "Plan checkout requires a valid HTTPS website address."
         case .invalidResponse: "The subscription service returned an invalid response."
         case let .requestFailed(status): "Subscription request failed (HTTP \(status))."
         case .impersonationUnsupported: "Return to your own account to manage billing."
         case .invalidPortalURL: "The billing service returned an invalid management link."
+        case .invalidPlan: "Choose one of the available Hanasand plans."
+        case .planAlreadyActive: "This plan is already active. Refresh subscription details."
+        case .checkoutUncertainOutcome: "Checkout status is unclear. Check billing before starting another checkout."
+        case .invalidCheckoutURL: "The billing service returned an invalid checkout link."
         }
     }
 }
 
 struct AccountSubscriptionClient {
     let endpoint: URL
+    private let websiteBaseURL: URL?
     let userID: String
     let token: String
     let impersonationToken: String
@@ -46,7 +57,7 @@ struct AccountSubscriptionClient {
         try await AccountSubscriptionSession.shared.data(for: request)
     }
 
-    init(baseURL: URL, userID: String, token: String, impersonationToken: String = "", send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
+    init(baseURL: URL, websiteBaseURL: URL? = nil, userID: String, token: String, impersonationToken: String = "", send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
         let cleanUserID = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanUserID.isEmpty, !cleanToken.isEmpty else {
@@ -65,7 +76,11 @@ struct AccountSubscriptionClient {
         guard let endpoint = components?.url, endpoint.scheme == "https", endpoint.host == baseURL.host else {
             throw AccountSubscriptionClientError.invalidBaseURL
         }
+        if let websiteBaseURL, !Self.validWebsiteBase(websiteBaseURL) {
+            throw AccountSubscriptionClientError.invalidWebsiteURL
+        }
         self.endpoint = endpoint
+        self.websiteBaseURL = websiteBaseURL
         self.userID = cleanUserID
         self.token = cleanToken
         self.impersonationToken = impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,6 +128,87 @@ struct AccountSubscriptionClient {
             throw AccountSubscriptionClientError.invalidPortalURL
         }
         return url
+    }
+
+    /// Starts a plan checkout through the website's authenticated session route.
+    /// URLSession's redirect delegate rejects automatic redirects, so the only
+    /// destination handed to the app is the explicitly validated Stripe URL.
+    func createPlanCheckoutURL(for planID: String) async throws -> URL {
+        guard impersonationToken.isEmpty else { throw AccountSubscriptionClientError.impersonationUnsupported }
+        guard CommercialAccessPlans.all.contains(where: { $0.id == planID }) else {
+            throw AccountSubscriptionClientError.invalidPlan
+        }
+        guard let websiteBaseURL, Self.validWebsiteBase(websiteBaseURL),
+              var components = URLComponents(url: websiteBaseURL, resolvingAgainstBaseURL: false) else {
+            throw AccountSubscriptionClientError.invalidWebsiteURL
+        }
+        components.path = "/api/billing/checkout"
+        components.queryItems = [URLQueryItem(name: "plan", value: planID)]
+        guard let url = components.url, Self.sameOrigin(url, websiteBaseURL) else {
+            throw AccountSubscriptionClientError.invalidWebsiteURL
+        }
+
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 25)
+        request.httpMethod = "GET"
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("id=\(userID); access_token=\(token)", forHTTPHeaderField: "Cookie")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await send(request)
+        } catch {
+            // The website route can create a Stripe session before the client
+            // loses its response. Never retry this mutation automatically.
+            throw AccountSubscriptionClientError.checkoutUncertainOutcome
+        }
+        guard let http = response as? HTTPURLResponse,
+              let responseURL = http.url, Self.sameOrigin(responseURL, websiteBaseURL),
+              responseURL.path == "/api/billing/checkout" else {
+            throw AccountSubscriptionClientError.checkoutUncertainOutcome
+        }
+        if (300..<400).contains(http.statusCode) {
+            guard let rawLocation = http.value(forHTTPHeaderField: "Location"),
+                  let checkoutURL = URL(string: rawLocation, relativeTo: responseURL)?.absoluteURL else {
+                throw AccountSubscriptionClientError.invalidCheckoutURL
+            }
+            if Self.sameOrigin(checkoutURL, websiteBaseURL), checkoutURL.path == "/login" {
+                throw AccountSubscriptionClientError.signInRequired
+            }
+            guard Self.validCheckoutURL(checkoutURL) else { throw AccountSubscriptionClientError.invalidCheckoutURL }
+            return checkoutURL
+        }
+        if http.statusCode == 409 { throw AccountSubscriptionClientError.planAlreadyActive }
+        if http.statusCode == 408 || http.statusCode >= 500 {
+            throw AccountSubscriptionClientError.checkoutUncertainOutcome
+        }
+        _ = data
+        throw AccountSubscriptionClientError.requestFailed(http.statusCode)
+    }
+
+    private static func validWebsiteBase(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "https",
+              url.host != nil, url.user == nil, url.password == nil,
+              url.query == nil, url.fragment == nil else { return false }
+        let path = url.path
+        return path.isEmpty || path == "/"
+    }
+
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.scheme?.lowercased() == "https"
+            && lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased()
+            && lhs.port == rhs.port
+            && lhs.user == nil && lhs.password == nil
+    }
+
+    private static func validCheckoutURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https"
+            && url.host?.lowercased() == "checkout.stripe.com"
+            && url.user == nil && url.password == nil
+            && url.port == nil && url.fragment == nil
     }
 
     private struct BillingPortalEnvelope: Decodable { let url: String }

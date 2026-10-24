@@ -92,7 +92,7 @@ extension MailNativePanel {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 7) {
-                            ForEach(filteredMessages.prefix(120)) { message in
+                            ForEach(filteredMessages) { message in
                                 messageRow(message)
                                     .id(message.id)
                             }
@@ -113,6 +113,17 @@ extension MailNativePanel {
                     Task { await model.searchMail(searchText, after: cursor) }
                 }
                 .disabled(model.mailSearchPending)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            let mailboxID = overview.selectedMailboxId ?? model.selectedMailboxID
+            let inboxScope = "\(overview.mailboxUser ?? model.userIDForRequests)|\(mailboxID)"
+            if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, overview.nextCursor != nil {
+                let loadingOlderMessages = MailInboxPaginationState.shared.isLoading(scope: inboxScope)
+                ActionButton(title: loadingOlderMessages ? "Loading older messages…" : "Load older messages", icon: "arrow.down.circle") {
+                    Task { await model.loadMoreMailOverview() }
+                }
+                .disabled(loadingOlderMessages)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

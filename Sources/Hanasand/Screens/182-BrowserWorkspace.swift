@@ -16,4 +16,16 @@ struct BrowserWorkspace: View {
     @Environment(\.desktopTheme) var theme
 
     @StateObject var workspace = BrowserWorkspaceModel(); @FocusState var addressFocused: Bool
+    @State var browserUsageState: BrowserUsageLoadState = .loading
+    @State var browserGlobalStatsState: BrowserGlobalStatsLoadState = .loading
+
+    var browserUsageCredentialKey: String {
+        var hasher = Hasher()
+        hasher.combine(model.settings.apiBaseURL)
+        hasher.combine(model.userIDForRequests)
+        hasher.combine(model.authTokenForRequests)
+        hasher.combine(model.settings.impersonationToken)
+        hasher.combine(model.settings.impersonatingUserID)
+        return String(hasher.finalize())
+    }
 }

@@ -165,7 +165,7 @@ extension MailNativePanel {
 
     var headerBar: some View {
         NativeGroupPanel(title: "Mail", subtitle: model.mailSummary) {
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 125), spacing: 8)], alignment: .leading, spacing: 8) {
                 Label("\(overview?.messages.count ?? 0) messages", systemImage: "envelope")
                 Label("\(overview?.messages.filter { $0.isRead != true }.count ?? 0) unread", systemImage: "envelope.badge")
                 Label("\(model.selectedMailMessageIDs.count) selected", systemImage: "checkmark.circle")
@@ -175,15 +175,23 @@ extension MailNativePanel {
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(theme.textSecondary)
 
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], alignment: .leading, spacing: 8) {
                 SearchFieldRow(placeholder: "Search mail", text: $searchText)
                     .focused($searchFocused)
+                    .frame(minWidth: 132)
                 ActionButton(title: "Refresh", icon: "arrow.clockwise") {
                     Task { await model.loadMailOverview() }
                 }
                 ActionButton(title: "Compose", icon: "square.and.pencil") {
-                    model.mailComposerExpanded.toggle()
+                    guard !model.mailSendIsInFlight else { return }
+                    if model.mailComposerExpanded {
+                        model.mailComposerExpanded = false
+                    } else {
+                        model.beginNewMailDraft()
+                        model.mailComposerExpanded = true
+                    }
                 }
+                .disabled(model.mailSendIsInFlight)
                 Button {
                     model.mailAutoRefreshEnabled.toggle()
                 } label: {

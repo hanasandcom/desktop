@@ -192,8 +192,22 @@ extension DesktopAgentModel {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
-    func requestPrettyText(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false, userAgent: String? = nil) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(for: request(url, method: method, body: body, authenticated: authenticated, userAgent: userAgent))
+    func requestPrettyText(
+        _ url: URL,
+        method: String = "GET",
+        body: Data? = nil,
+        authenticated: Bool = false,
+        userAgent: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> String {
+        var outgoing = request(url, method: method, body: body, authenticated: authenticated, userAgent: userAgent)
+        if let idempotencyKey {
+            guard (16...200).contains(idempotencyKey.utf8.count), !idempotencyKey.contains("\r"), !idempotencyKey.contains("\n") else {
+                throw MailSendIdempotencyKeyError.invalid
+            }
+            outgoing.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        }
+        let (data, response) = try await URLSession.shared.data(for: outgoing)
         try validateHTTP(response)
         if let object = try? JSONSerialization.jsonObject(with: data),
            let prettyData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
@@ -202,4 +216,10 @@ extension DesktopAgentModel {
         }
         return String(data: data, encoding: .utf8) ?? ""
     }
+}
+
+enum MailSendIdempotencyKeyError: LocalizedError {
+    case invalid
+
+    var errorDescription: String? { "Unable to create a safe mail send request." }
 }

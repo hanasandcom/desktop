@@ -40,13 +40,13 @@ enum SandboxLiveSessionError: LocalizedError, Equatable {
     }
 }
 
-struct SandboxBrowserTool: Equatable, Identifiable {
+struct SandboxBrowserTool: Codable, Equatable, Identifiable {
     let id: String
     let name: String
     let url: String
 }
 
-struct SandboxBrowserProfile: Equatable, Identifiable {
+struct SandboxBrowserProfile: Codable, Equatable, Identifiable {
     let id: String
     let name: String
     let tools: [SandboxBrowserTool]
@@ -61,12 +61,32 @@ struct SandboxBrowserProfile: Equatable, Identifiable {
     ]
 }
 
+enum SandboxBrowserProfileDraftMarker {
+    static func isPending(storageKey: String, defaults: UserDefaults) -> Bool {
+        defaults.bool(forKey: markerKey(storageKey: storageKey))
+    }
+
+    static func setPending(_ pending: Bool, storageKey: String, defaults: UserDefaults) {
+        let key = markerKey(storageKey: storageKey)
+        if pending {
+            defaults.set(true, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private static func markerKey(storageKey: String) -> String {
+        "\(storageKey).pending"
+    }
+}
+
 enum SandboxBrowserProfileError: LocalizedError, Equatable {
     case signInRequired
     case ownAccountRequired
     case invalidEndpoint
     case invalidCredentials
     case invalidResponse
+    case invalidProfile
     case responseTooLarge
     case requestFailed(Int)
 
@@ -77,6 +97,7 @@ enum SandboxBrowserProfileError: LocalizedError, Equatable {
         case .invalidEndpoint: "Saved Sandbox profiles require a valid HTTPS browser service address."
         case .invalidCredentials: "The current account credentials are invalid. Sign in again."
         case .invalidResponse: "The Sandbox profile service returned invalid profile data."
+        case .invalidProfile: "Check profile names, provider URLs, and profile limits before saving."
         case .responseTooLarge: "The Sandbox profile response exceeded its size limit."
         case .requestFailed(401): "Sign in again to load saved Sandbox profiles."
         case .requestFailed(403): "Your account cannot load these Sandbox profiles."
@@ -96,6 +117,8 @@ struct SandboxBrowserProfileClient {
     typealias Sender = (URLRequest) async throws -> (Data, URLResponse)
     static let defaultAPIBaseURL = URL(string: "https://browsers.hanasand.com/api")!
     static let responseByteLimit = 256 * 1_024
+    static let maximumProfiles = 16
+    static let maximumToolsPerProfile = 8
     private let url: URL
     private let userID: String
     private let token: String
@@ -125,20 +148,9 @@ struct SandboxBrowserProfileClient {
     }
 
     func load() async throws -> [SandboxBrowserProfile] {
-        var request = URLRequest(url: url, timeoutInterval: 20)
-        request.httpMethod = "GET"
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.httpShouldHandleCookies = false
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(userID, forHTTPHeaderField: "id")
-
+        let request = makeRequest(method: "GET")
         let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse,
-              response.url?.scheme?.lowercased() == "https", response.url?.host == url.host else {
-            throw SandboxBrowserProfileError.invalidResponse
-        }
+        let http = try checkedHTTPResponse(response)
         guard (200..<300).contains(http.statusCode) else { throw SandboxBrowserProfileError.requestFailed(http.statusCode) }
         if let length = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init), length > Self.responseByteLimit {
             throw SandboxBrowserProfileError.responseTooLarge
@@ -149,9 +161,110 @@ struct SandboxBrowserProfileClient {
             throw SandboxBrowserProfileError.invalidResponse
         }
 
-        let profiles = try rawProfiles.map(Self.decodeProfile)
+        let profiles = try rawProfiles.map(Self.decodeProfile).filter { profile in
+            !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id })
+        }
         let customIDs = Set(profiles.map(\.id))
         return profiles + SandboxBrowserProfile.defaults.filter { !customIDs.contains($0.id) }
+    }
+
+    func save(_ profiles: [SandboxBrowserProfile]) async throws {
+        let customProfiles = try Self.validatedCustomProfiles(profiles)
+        var request = makeRequest(method: "PUT")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "profiles": customProfiles.map { profile in
+                ["id": profile.id, "name": profile.name, "tools": profile.tools.map { tool in
+                    ["id": tool.id, "name": tool.name, "url": tool.url]
+                }]
+            },
+        ], options: [.sortedKeys])
+
+        let (data, response) = try await send(request)
+        let http = try checkedHTTPResponse(response)
+        guard (200..<300).contains(http.statusCode) else { throw SandboxBrowserProfileError.requestFailed(http.statusCode) }
+        guard data.count <= Self.responseByteLimit else { throw SandboxBrowserProfileError.responseTooLarge }
+    }
+
+    static func validatedCustomProfiles(_ profiles: [SandboxBrowserProfile]) throws -> [SandboxBrowserProfile] {
+        let custom = profiles.filter { profile in
+            !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id })
+        }
+        guard custom.count <= maximumProfiles,
+              Set(custom.map(\.id)).count == custom.count else {
+            throw SandboxBrowserProfileError.invalidProfile
+        }
+        for profile in custom {
+            guard validIdentifier(profile.id), validName(profile.name),
+                  profile.tools.count <= maximumToolsPerProfile,
+                  Set(profile.tools.map(\.id)).count == profile.tools.count,
+                  profile.tools.allSatisfy(validTool) else {
+                throw SandboxBrowserProfileError.invalidProfile
+            }
+        }
+        return custom
+    }
+
+    static func customProfilesMatch(_ lhs: [SandboxBrowserProfile], _ rhs: [SandboxBrowserProfile]) -> Bool {
+        let left = lhs.filter { profile in !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id }) }
+            .sorted { $0.id < $1.id }
+        let right = rhs.filter { profile in !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id }) }
+            .sorted { $0.id < $1.id }
+        return left == right
+    }
+
+    static func mergingProfiles(_ profiles: [SandboxBrowserProfile]) -> [SandboxBrowserProfile] {
+        var seen = Set<String>()
+        return (SandboxBrowserProfile.defaults + profiles).filter { seen.insert($0.id).inserted }
+    }
+
+    static func selectedProfile(id: String, from profiles: [SandboxBrowserProfile], advancedAnalysisEnabled: Bool) -> SandboxBrowserProfile {
+        let builtIn = SandboxBrowserProfile.defaults.first(where: { $0.id == id })
+        guard advancedAnalysisEnabled else { return builtIn ?? SandboxBrowserProfile.defaults[0] }
+        return builtIn ?? profiles.first(where: { $0.id == id }) ?? SandboxBrowserProfile.defaults[0]
+    }
+
+    static func isValidProviderURL(_ value: String) -> Bool {
+        guard value.utf8.count <= 600, let components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.port.map({ (1...65_535).contains($0) }) ?? true else { return false }
+        return components.url != nil
+    }
+
+    private func makeRequest(method: String) -> URLRequest {
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = method
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+        return request
+    }
+
+    private func checkedHTTPResponse(_ response: URLResponse) throws -> HTTPURLResponse {
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == url.host,
+              (response.url?.port ?? 443) == (url.port ?? 443) else {
+            throw SandboxBrowserProfileError.invalidResponse
+        }
+        return http
+    }
+
+    private static func validIdentifier(_ value: String) -> Bool {
+        value.utf8.count <= 80 && value.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil
+    }
+
+    private static func validName(_ value: String) -> Bool {
+        value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && !value.isEmpty && value.utf8.count <= 80
+    }
+
+    private static func validTool(_ tool: SandboxBrowserTool) -> Bool {
+        validIdentifier(tool.id) && validName(tool.name) && isValidProviderURL(tool.url)
     }
 
     private static func decodeProfile(_ value: Any) throws -> SandboxBrowserProfile {
@@ -159,7 +272,7 @@ struct SandboxBrowserProfileClient {
               let id = boundedString(object["id"], maximumBytes: 80),
               id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil,
               let name = boundedString(object["name"], maximumBytes: 80), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let rawTools = object["tools"] as? [Any], rawTools.count <= 8 else {
+              let rawTools = object["tools"] as? [Any], rawTools.count <= maximumToolsPerProfile else {
             throw SandboxBrowserProfileError.invalidResponse
         }
         let tools = try rawTools.map(decodeTool)
@@ -177,6 +290,7 @@ struct SandboxBrowserProfileClient {
               let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = components.host, !host.isEmpty,
               components.user == nil, components.password == nil,
+              components.port.map({ (1...65_535).contains($0) }) ?? true,
               let url = components.url else {
             throw SandboxBrowserProfileError.invalidResponse
         }

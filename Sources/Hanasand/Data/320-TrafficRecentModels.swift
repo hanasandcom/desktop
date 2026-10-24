@@ -44,7 +44,15 @@ struct TrafficRecentRecord: Decodable, Identifiable, Equatable {
             throw TrafficRecentError.invalidResponse
         }
         timestamp = try values.decode(Date.self, forKey: .timestamp)
-        countryISO = try values.decodeIfPresent(String.self, forKey: .countryISO)
+        let country = try values.decodeIfPresent(String.self, forKey: .countryISO)
+        if let country, !country.isEmpty {
+            guard country.range(of: "^[A-Za-z]{2}$", options: .regularExpression) != nil else {
+                throw TrafficRecentError.invalidResponse
+            }
+            countryISO = country.uppercased()
+        } else {
+            countryISO = nil
+        }
     }
 }
 

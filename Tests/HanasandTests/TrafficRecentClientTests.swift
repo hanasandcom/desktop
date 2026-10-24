@@ -46,12 +46,28 @@ final class TrafficRecentClientTests: XCTestCase {
     }
 
     func testDecodesAndValidatesTrafficRecords() throws {
-        let json = #"{"total":1,"result":[{"id":42,"user_agent":"Test client","domain":"example.test","path":"/health","method":"GET","referer":"","request_time":"12.5","status":"200","timestamp":"2026-10-23 09:14:12+00:00","country_iso":"NO"}]}"#.data(using: .utf8)!
+        let json = #"{"total":1,"result":[{"id":42,"user_agent":"Test client","domain":"example.test","path":"/health","method":"GET","referer":"","request_time":"12.5","status":"200","timestamp":"2026-10-23 09:14:12+00:00","country_iso":"no"}]}"#.data(using: .utf8)!
         let page = try TrafficRecentClient.decodePage(json)
         XCTAssertEqual(page.total, 1)
         XCTAssertEqual(page.result.first?.id, "42")
         XCTAssertEqual(page.result.first?.path, "/health")
         XCTAssertEqual(page.result.first?.countryISO, "NO")
+    }
+
+    func testAcceptsServerDefaultStatusZeroAsUnknown() throws {
+        let json = #"{"total":1,"result":[{"id":42,"user_agent":"Test client","domain":"example.test","path":"/health","method":"GET","referer":"","request_time":1,"status":0,"timestamp":"2026-10-23T09:14:12Z","country_iso":null}]}"#.data(using: .utf8)!
+        let page = try TrafficRecentClient.decodePage(json)
+        XCTAssertEqual(page.result.first?.status, 0)
+    }
+
+    func testMapSnapshotDecoderAcceptsTheAuthorized200RecordPage() throws {
+        let rows = (1...200).map { id in
+            #"{"id":\#(id),"user_agent":"test","domain":"example.test","path":"/health","method":"GET","referer":"","request_time":1,"status":200,"timestamp":"2026-10-23T09:14:12Z","country_iso":"NO"}"#
+        }.joined(separator: ",")
+        let data = Data("{\"total\":200,\"result\":[\(rows)]}".utf8)
+
+        XCTAssertEqual(try TrafficRecentClient.decodePage(data, limit: 200).result.count, 200)
+        XCTAssertThrowsError(try TrafficRecentClient.decodePage(data))
     }
 
     func testRejectsDuplicateOrMalformedRecordsAndDeduplicatesDomains() throws {
@@ -89,6 +105,29 @@ final class TrafficRecentClientTests: XCTestCase {
         XCTAssertEqual(metrics.requestsOverTime.first?.count, 12)
         XCTAssertEqual(metrics.topSlowPaths.first?.averageTime, 52.1)
         XCTAssertEqual(metrics.topErrorPaths.first?.key, "/api/health")
+    }
+
+    func testTrafficMetricsAcceptExpoNumericStringPayloads() throws {
+        let data = Data("""
+        {
+          "sampled_at":"2026-10-23T10:05:00Z",
+          "total_requests":"51",
+          "avg_request_time":"18.5",
+          "error_rate":"0.02",
+          "top_methods":[{"key":"GET","count":"50"}],
+          "top_status_codes":[{"key":"200","count":"50"}],
+          "top_domains":[{"key":"synthetic.invalid","count":"51"}],
+          "top_os":[],"top_browsers":[],
+          "requests_over_time":[{"key":"2026-10-23T03:00:00Z","count":"26"}],
+          "top_error_paths":[],"top_slow_paths":[],"top_paths":[]
+        }
+        """.utf8)
+
+        let metrics = try TrafficMetricSnapshot.decode(data)
+        XCTAssertEqual(metrics.totalRequests, 51)
+        XCTAssertEqual(metrics.averageRequestTime, 18.5)
+        XCTAssertEqual(metrics.errorRate, 0.02)
+        XCTAssertEqual(metrics.topMethods.first?.count, 50)
     }
 
     func testRejectsInvalidTrafficMetricValuesAndTimestamps() {

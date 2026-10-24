@@ -5,6 +5,11 @@ struct MailSearchPage: Decodable {
     let nextCursor: String?
 }
 
+struct MailOverviewPage: Decodable {
+    let messages: [MailOverviewEnvelope.Message]
+    let nextCursor: String?
+}
+
 enum MailSearchRequest {
     static let maximumQueryLength = 200
 

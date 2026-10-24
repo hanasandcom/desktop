@@ -54,21 +54,16 @@ struct TrafficMapNativePanel: View {
                 FeatureCard(title: "Retained requests", value: metrics?.totalRequests.formatted() ?? "—", icon: "arrow.left.arrow.right")
             }
 
-            HStack(spacing: 10) {
-                Picker("Domain", selection: $selectedDomain) {
-                    Text("All domains").tag("")
-                    ForEach(domains, id: \.self) { Text($0).tag($0) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    domainPicker
+                    refreshButton
+                    Spacer(minLength: 0)
                 }
-                .pickerStyle(.menu)
-                .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
-                Button {
-                    refreshGeneration = UUID()
-                } label: {
-                    Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+                VStack(alignment: .leading, spacing: 8) {
+                    domainPicker.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack { Spacer(minLength: 0); refreshButton }
                 }
-                .buttonStyle(.bordered)
-                .disabled(isLoading)
-                Spacer(minLength: 0)
             }
 
             Text(status)
@@ -76,33 +71,35 @@ struct TrafficMapNativePanel: View {
                 .foregroundStyle(status.hasPrefix("Could not") ? theme.danger : theme.textSecondary)
                 .textSelection(.enabled)
 
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(liveStatus == "Live" ? theme.accent : theme.textTertiary)
-                    .frame(width: 7, height: 7)
-                Text(liveStatus)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(liveStatus == "Access refresh required" ? theme.danger : theme.textSecondary)
-                if let lastBatchCount {
-                    Text("· latest live batch: \(lastBatchCount) requests")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.textSecondary)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    liveStatusRow
+                    if !liveNotice.isEmpty {
+                        Text("· \(liveNotice)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
                 }
-                if !liveNotice.isEmpty {
-                    Text("· \(liveNotice)")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.textSecondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    liveStatusRow
+                    if !liveNotice.isEmpty {
+                        Text(liveNotice)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer(minLength: 0)
             }
             .accessibilityElement(children: .combine)
 
             if countries.isEmpty {
                 NativeEmptyState(
-                    title: records.isEmpty ? "No traffic snapshot" : "No located requests",
-                    message: records.isEmpty
-                        ? "Refresh to load the latest retained traffic records."
-                        : "The current snapshot has no requests with a supported country code."
+                    title: isLoading && records.isEmpty ? "Loading traffic snapshot" : (status.hasPrefix("Could not") && records.isEmpty ? "Traffic snapshot unavailable" : (records.isEmpty ? "No traffic snapshot" : "No located requests")),
+                    message: isLoading && records.isEmpty
+                        ? "Fetching the latest retained requests and traffic metrics."
+                        : (status.hasPrefix("Could not") && records.isEmpty ? "\(status) Use Refresh to try again." : (records.isEmpty ? "Refresh to load the latest retained traffic records." : "The current snapshot has no requests with a supported country code."))
                 )
             }
             mapView
@@ -132,20 +129,16 @@ struct TrafficMapNativePanel: View {
 
     private var mapView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Country markers show approximate country centers; borders are not shown.")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.textSecondary)
-                Spacer(minLength: 4)
-                Button("Zoom in") { mapZoom = min(4, mapZoom * 1.25) }
-                    .disabled(mapZoom >= 4)
-                Button("Zoom out") { mapZoom = max(1, mapZoom / 1.25); if mapZoom == 1 { mapOffset = .zero; dragOrigin = .zero } }
-                    .disabled(mapZoom <= 1)
-                Button("Reset map") { resetMap() }
-                    .disabled(mapZoom == 1 && mapOffset == .zero)
+            ViewThatFits(in: .horizontal) {
+                mapToolbar
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Country markers show approximate country centers; borders are not shown.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    mapZoomControls
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
 
             GeometryReader { geometry in
                 let size = geometry.size
@@ -224,6 +217,65 @@ struct TrafficMapNativePanel: View {
         }
     }
 
+    private var domainPicker: some View {
+        Picker("Domain", selection: $selectedDomain) {
+            Text("All domains").tag("")
+            ForEach(domains, id: \.self) { Text($0).tag($0) }
+        }
+        .pickerStyle(.menu)
+        .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            refreshGeneration = UUID()
+        } label: {
+            Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isLoading)
+    }
+
+    private var liveStatusRow: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(liveStatus == "Live" ? theme.accent : theme.textTertiary)
+                .frame(width: 7, height: 7)
+            Text(liveStatus)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(liveStatus == "Access refresh required" ? theme.danger : theme.textSecondary)
+            if let lastBatchCount {
+                Text("· latest live batch: \(lastBatchCount) requests")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+    }
+
+    private var mapToolbar: some View {
+        HStack(spacing: 8) {
+            Text("Country markers show approximate country centers; borders are not shown.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            mapZoomControls
+        }
+    }
+
+    private var mapZoomControls: some View {
+        HStack(spacing: 6) {
+            Button("Zoom in") { mapZoom = min(4, mapZoom * 1.25) }
+                .disabled(mapZoom >= 4)
+            Button("Zoom out") { mapZoom = max(1, mapZoom / 1.25); if mapZoom == 1 { mapOffset = .zero; dragOrigin = .zero } }
+                .disabled(mapZoom <= 1)
+            Button("Reset map") { resetMap() }
+                .disabled(mapZoom == 1 && mapOffset == .zero)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
     private var countryPicker: some View {
         NativeGroupPanel(title: "Countries in this snapshot", subtitle: "Select a country to inspect its requests") {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
@@ -263,7 +315,7 @@ struct TrafficMapNativePanel: View {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(selectedRecords.prefix(10)) { record in
                         HStack(alignment: .top, spacing: 10) {
-                            Text("\(record.status)")
+                            Text(record.status == 0 ? "Unknown" : "\(record.status)")
                                 .font(.system(size: 11, weight: .bold, design: .rounded))
                                 .foregroundStyle(record.status >= 500 ? theme.danger : theme.text)
                                 .frame(width: 38)
@@ -551,7 +603,7 @@ struct TrafficMapNativePanel: View {
     private func fetchRecords() async throws -> TrafficRecentPage {
         let url = try TrafficRecentClient.recordsURL(apiBaseURL: apiBaseURL, domain: selectedDomain, page: 1, limit: 200)
         let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
-        return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request))
+        return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request), limit: 200)
     }
 
     private func fetchMetrics() async throws -> TrafficMetricSnapshot {

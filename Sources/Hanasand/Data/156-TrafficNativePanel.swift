@@ -16,22 +16,16 @@ struct TrafficNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Picker("Domain", selection: $selectedDomain) {
-                    Text("All domains").tag("")
-                    ForEach(domains, id: \.self) { Text($0).tag($0) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    domainPicker
+                    refreshButton
+                    Spacer(minLength: 0)
                 }
-                .pickerStyle(.menu)
-                .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
-
-                Button {
-                    refreshGeneration = UUID()
-                } label: {
-                    Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+                VStack(alignment: .leading, spacing: 8) {
+                    domainPicker.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack { Spacer(minLength: 0); refreshButton }
                 }
-                .buttonStyle(.bordered)
-                .disabled(isLoading)
-                Spacer(minLength: 0)
             }
 
             Text(status)
@@ -75,6 +69,25 @@ struct TrafficNativePanel: View {
             }
         }
         .onDisappear { requestGeneration = UUID() }
+    }
+
+    private var domainPicker: some View {
+        Picker("Domain", selection: $selectedDomain) {
+            Text("All domains").tag("")
+            ForEach(domains, id: \.self) { Text($0).tag($0) }
+        }
+        .pickerStyle(.menu)
+        .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            refreshGeneration = UUID()
+        } label: {
+            Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isLoading)
     }
 
     private func summary(_ metrics: TrafficMetricSnapshot) -> some View {

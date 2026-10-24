@@ -14,7 +14,7 @@ extension MailNativePanel {
 
     var accountSetupPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 10)], alignment: .leading, spacing: 10) {
                 CompactInfoCard(title: "Account", lines: [overview?.mailboxAddress ?? (model.selectedMailAccountUser.isEmpty ? "No mailbox selected" : model.selectedMailAccountUser)])
                 CompactInfoCard(title: "IMAP", lines: [mailServerLine(kind: "imap")])
                 CompactInfoCard(title: "SMTP", lines: [mailServerLine(kind: "smtp")])
@@ -58,11 +58,14 @@ extension MailNativePanel {
 
             if let accounts = overview.accessibleAccounts, !accounts.isEmpty {
                 NativeGroupPanel(title: "Accounts", subtitle: "Switch mailbox") {
-                    LazyVStack(alignment: .leading, spacing: 7) {
-                        ForEach(accounts.prefix(10)) { account in
-                            accountButton(account, currentUser: overview.mailboxUser)
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(alignment: .leading, spacing: 7) {
+                            ForEach(accounts.filter { !["admin", "administrator"].contains($0.id.lowercased()) && $0.name?.lowercased() != "administrator" }) { account in
+                                accountButton(account, currentUser: overview.mailboxUser)
+                            }
                         }
                     }
+                    .frame(maxHeight: 260)
                 }
             }
 
@@ -151,5 +154,6 @@ extension MailNativePanel {
             .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(model.mailSendIsInFlight)
     }
 }

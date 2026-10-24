@@ -54,7 +54,8 @@ enum TrafficRecentClient {
         return request
     }
 
-    static func decodePage(_ data: Data) throws -> TrafficRecentPage {
+    static func decodePage(_ data: Data, limit: Int = pageSize) throws -> TrafficRecentPage {
+        guard (1...200).contains(limit) else { throw TrafficRecentError.invalidResponse }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -68,14 +69,14 @@ enum TrafficRecentClient {
             throw TrafficRecentError.invalidResponse
         }
         let page = try decoder.decode(TrafficRecentPage.self, from: data)
-        guard page.total >= 0, page.result.count <= pageSize,
+        guard page.total >= 0, page.result.count <= limit,
               Set(page.result.map(\.id)).count == page.result.count,
               page.result.allSatisfy({
-                  !$0.id.isEmpty && $0.id.count <= 30 && $0.id.allSatisfy(\.isNumber)
+                  $0.id.range(of: "^[1-9][0-9]{0,29}$", options: .regularExpression) != nil
                   && $0.domain.count <= 253 && $0.path.count <= 4096
                   && $0.method.count <= 20 && $0.userAgent.count <= 2048
                   && $0.referer.count <= 4096 && $0.requestTime.isFinite && $0.requestTime >= 0
-                  && (100...599).contains($0.status)
+                  && (0...599).contains($0.status)
                   && ($0.countryISO == nil || $0.countryISO?.count == 2)
               }) else { throw TrafficRecentError.invalidResponse }
         return page

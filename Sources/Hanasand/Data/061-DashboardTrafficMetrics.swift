@@ -35,6 +35,14 @@ struct TrafficMetricSnapshot: Decodable, Equatable {
         let key: String
         let count: Int
         var id: String { key }
+
+        private enum CodingKeys: String, CodingKey { case key, count }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            key = try values.decode(String.self, forKey: .key)
+            count = try values.decodeSafeInteger(forKey: .count)
+        }
     }
 
     struct SlowMetric: Decodable, Identifiable, Equatable {
@@ -42,9 +50,12 @@ struct TrafficMetricSnapshot: Decodable, Equatable {
         let averageTime: Double
         var id: String { key }
 
-        enum CodingKeys: String, CodingKey {
-            case key
-            case averageTime = "avg_time"
+        private enum CodingKeys: String, CodingKey { case key, averageTime = "avg_time" }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            key = try values.decode(String.self, forKey: .key)
+            averageTime = try values.decodeNonnegativeNumber(forKey: .averageTime)
         }
     }
 
@@ -61,22 +72,6 @@ struct TrafficMetricSnapshot: Decodable, Equatable {
     let topErrorPaths: [Metric]
     let topSlowPaths: [SlowMetric]
     let topPaths: [Metric]
-
-    enum CodingKeys: String, CodingKey {
-        case sampledAt = "sampled_at"
-        case totalRequests = "total_requests"
-        case averageRequestTime = "avg_request_time"
-        case errorRate = "error_rate"
-        case topMethods = "top_methods"
-        case topStatusCodes = "top_status_codes"
-        case topDomains = "top_domains"
-        case topOperatingSystems = "top_os"
-        case topBrowsers = "top_browsers"
-        case requestsOverTime = "requests_over_time"
-        case topErrorPaths = "top_error_paths"
-        case topSlowPaths = "top_slow_paths"
-        case topPaths = "top_paths"
-    }
 
     static func decode(_ data: Data) throws -> TrafficMetricSnapshot {
         let value = try JSONDecoder().decode(TrafficMetricSnapshot.self, from: data)
@@ -96,6 +91,39 @@ struct TrafficMetricSnapshot: Decodable, Equatable {
         return value
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case sampledAt = "sampled_at"
+        case totalRequests = "total_requests"
+        case averageRequestTime = "avg_request_time"
+        case errorRate = "error_rate"
+        case topMethods = "top_methods"
+        case topStatusCodes = "top_status_codes"
+        case topDomains = "top_domains"
+        case topOperatingSystems = "top_os"
+        case topBrowsers = "top_browsers"
+        case requestsOverTime = "requests_over_time"
+        case topErrorPaths = "top_error_paths"
+        case topSlowPaths = "top_slow_paths"
+        case topPaths = "top_paths"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        sampledAt = try values.decodeIfPresent(String.self, forKey: .sampledAt)
+        totalRequests = try values.decodeSafeInteger(forKey: .totalRequests)
+        averageRequestTime = try values.decodeNonnegativeNumber(forKey: .averageRequestTime)
+        errorRate = try values.decodeNonnegativeNumber(forKey: .errorRate)
+        topMethods = try values.decode([Metric].self, forKey: .topMethods)
+        topStatusCodes = try values.decode([Metric].self, forKey: .topStatusCodes)
+        topDomains = try values.decode([Metric].self, forKey: .topDomains)
+        topOperatingSystems = try values.decode([Metric].self, forKey: .topOperatingSystems)
+        topBrowsers = try values.decode([Metric].self, forKey: .topBrowsers)
+        requestsOverTime = try values.decode([Metric].self, forKey: .requestsOverTime)
+        topErrorPaths = try values.decode([Metric].self, forKey: .topErrorPaths)
+        topSlowPaths = try values.decode([SlowMetric].self, forKey: .topSlowPaths)
+        topPaths = try values.decode([Metric].self, forKey: .topPaths)
+    }
+
     private static func validDate(_ value: String) -> Bool {
         guard !value.isEmpty, value.count <= 100 else { return false }
         var raw = value.replacingOccurrences(of: " ", with: "T", range: value.range(of: " "))
@@ -109,5 +137,30 @@ struct TrafficMetricSnapshot: Decodable, Equatable {
             formatter.formatOptions = [.withInternetDateTime]
             return formatter.date(from: raw) != nil
         }()
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeNonnegativeNumber(forKey key: Key) throws -> Double {
+        let value: Double
+        if let number = try? decode(Double.self, forKey: key) {
+            value = number
+        } else if let text = try? decode(String.self, forKey: key),
+                  text.range(of: "^[0-9]+(?:\\.[0-9]+)?$", options: .regularExpression) != nil,
+                  let number = Double(text) {
+            value = number
+        } else {
+            throw TrafficRecentError.invalidResponse
+        }
+        guard value.isFinite, value >= 0, value <= 9_007_199_254_740_991 else {
+            throw TrafficRecentError.invalidResponse
+        }
+        return value
+    }
+
+    func decodeSafeInteger(forKey key: Key) throws -> Int {
+        let value = try decodeNonnegativeNumber(forKey: key)
+        guard value.rounded(.towardZero) == value else { throw TrafficRecentError.invalidResponse }
+        return Int(value)
     }
 }

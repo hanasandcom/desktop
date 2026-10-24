@@ -3,8 +3,8 @@ import XCTest
 @testable import Hanasand
 
 final class AccountSubscriptionClientTests: XCTestCase {
-    private func http(_ json: String, request: URLRequest, status: Int = 200) -> (Data, URLResponse) {
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+    private func http(_ json: String, request: URLRequest, status: Int = 200, headers: [String: String] = ["Content-Type": "application/json"]) -> (Data, URLResponse) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
         return (Data(json.utf8), response)
     }
 
@@ -86,6 +86,117 @@ final class AccountSubscriptionClientTests: XCTestCase {
             do { _ = try await unsafe.createBillingPortalURL(); XCTFail("Expected unsafe billing URL to be rejected") }
             catch AccountSubscriptionClientError.invalidPortalURL {}
         }
+    }
+
+    func testPlanCheckoutSendsCredentialsOnlyAsWebsiteCookieAndCapturesStripeRedirect() async throws {
+        var captured: URLRequest?
+        let client = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://www.hanasand.test/")!,
+            userID: "owner", token: "token_abc-123"
+        ) { request in
+            captured = request
+            return self.http("", request: request, status: 307, headers: ["Location": "https://checkout.stripe.com/c/pay/cs_test_fixture"])
+        }
+
+        let url = try await client.createPlanCheckoutURL(for: "threat-intelligence")
+
+        XCTAssertEqual(url.absoluteString, "https://checkout.stripe.com/c/pay/cs_test_fixture")
+        XCTAssertEqual(captured?.url?.absoluteString, "https://www.hanasand.test/api/billing/checkout?plan=threat-intelligence")
+        XCTAssertEqual(captured?.httpMethod, "GET")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cookie"), "id=owner; access_token=token_abc-123")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+    }
+
+    func testPlanCheckoutRejectsImpersonationUnknownPlansAndUnsafeWebsiteOriginsBeforeSending() async throws {
+        var requestCount = 0
+        let sender: (URLRequest) async throws -> (Data, URLResponse) = { request in
+            requestCount += 1
+            return self.http("", request: request, status: 307, headers: ["Location": "https://checkout.stripe.com/c/pay/fixture"])
+        }
+        let impersonating = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://hanasand.test")!,
+            userID: "admin", token: "token", impersonationToken: "view-token", send: sender
+        )
+        do { _ = try await impersonating.createPlanCheckoutURL(for: "monitoring"); XCTFail("Expected own-account restriction") }
+        catch AccountSubscriptionClientError.impersonationUnsupported {}
+
+        let unknownPlan = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://hanasand.test")!,
+            userID: "owner", token: "token", send: sender
+        )
+        do { _ = try await unknownPlan.createPlanCheckoutURL(for: "other-plan"); XCTFail("Expected plan allowlist") }
+        catch AccountSubscriptionClientError.invalidPlan {}
+
+        XCTAssertEqual(requestCount, 0)
+        do {
+            _ = try AccountSubscriptionClient(
+                baseURL: URL(string: "https://api.hanasand.test/api")!,
+                websiteBaseURL: URL(string: "http://hanasand.test")!,
+                userID: "owner", token: "token", send: sender
+            )
+            XCTFail("Expected insecure website origin to be rejected")
+        } catch AccountSubscriptionClientError.invalidWebsiteURL {}
+    }
+
+    func testPlanCheckoutRejectsNonStripeRedirectsAndAlreadyActivePlan() async throws {
+        for location in [
+            "http://checkout.stripe.com/c/pay/fixture",
+            "https://checkout.stripe.com.attacker.test/c/pay/fixture",
+            "https://user@checkout.stripe.com/c/pay/fixture",
+            "https://checkout.stripe.com:8443/c/pay/fixture",
+            "https://hanasand.test/subscription",
+        ] {
+            let client = try AccountSubscriptionClient(
+                baseURL: URL(string: "https://api.hanasand.test/api")!,
+                websiteBaseURL: URL(string: "https://hanasand.test")!,
+                userID: "owner", token: "token"
+            ) { request in
+                self.http("", request: request, status: 307, headers: ["Location": location])
+            }
+            do { _ = try await client.createPlanCheckoutURL(for: "scanner"); XCTFail("Expected unsafe redirect to be rejected: \(location)") }
+            catch AccountSubscriptionClientError.invalidCheckoutURL {}
+        }
+
+        let expiredSession = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://hanasand.test")!,
+            userID: "owner", token: "token"
+        ) { request in
+            self.http("", request: request, status: 307, headers: ["Location": "https://hanasand.test/login?next=%2Fsubscription"])
+        }
+        do { _ = try await expiredSession.createPlanCheckoutURL(for: "scanner"); XCTFail("Expired website session must stay in native auth") }
+        catch AccountSubscriptionClientError.signInRequired {}
+
+        let active = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://hanasand.test")!,
+            userID: "owner", token: "token"
+        ) { request in
+            self.http(#"{"error":"already active"}"#, request: request, status: 409)
+        }
+        do { _ = try await active.createPlanCheckoutURL(for: "scanner"); XCTFail("Expected active plan rejection") }
+        catch AccountSubscriptionClientError.planAlreadyActive {}
+    }
+
+    func testUncertainPlanCheckoutTimeoutIsNotRetried() async throws {
+        var requestCount = 0
+        let client = try AccountSubscriptionClient(
+            baseURL: URL(string: "https://api.hanasand.test/api")!,
+            websiteBaseURL: URL(string: "https://hanasand.test")!,
+            userID: "owner", token: "token"
+        ) { _ in
+            requestCount += 1
+            throw URLError(.timedOut)
+        }
+
+        do { _ = try await client.createPlanCheckoutURL(for: "monitoring"); XCTFail("Expected uncertain outcome") }
+        catch AccountSubscriptionClientError.checkoutUncertainOutcome {}
+        XCTAssertEqual(requestCount, 1)
     }
 
     func testClientRejectsInsecureURLAndMissingCredentials() throws {

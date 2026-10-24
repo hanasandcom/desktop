@@ -329,7 +329,50 @@ extension DesktopAgentModel {
         }
     }
 
+    func loadMoreMailOverview() async {
+        guard hasHanasandAuth, let overview = mailOverview,
+              let mailboxUser = overview.mailboxUser, !mailboxUser.isEmpty,
+              let cursor = overview.nextCursor, !cursor.isEmpty else { return }
+        let mailboxID = overview.selectedMailboxId ?? selectedMailboxID
+        guard !mailboxID.isEmpty, selectedMailAccountUser == mailboxUser, selectedMailboxID == mailboxID else { return }
+
+        let scope = "\(mailboxUser)|\(mailboxID)"
+        guard MailInboxPaginationState.shared.begin(scope: scope) else { return }
+        objectWillChange.send()
+        let requestGeneration = mailSearchRequestGeneration
+        defer {
+            MailInboxPaginationState.shared.finish(scope: scope)
+            objectWillChange.send()
+        }
+
+        do {
+            let url = try MailOverviewPageRequest.makeURL(
+                baseURL: settings.apiBaseURL,
+                mailboxUser: mailboxUser,
+                mailboxID: mailboxID,
+                cursor: cursor
+            )
+            let page: MailOverviewPage = try await requestJSON(url, authenticated: true)
+            guard requestGeneration == mailSearchRequestGeneration,
+                  selectedMailAccountUser == mailboxUser,
+                  selectedMailboxID == mailboxID,
+                  let current = mailOverview,
+                  current.mailboxUser == mailboxUser,
+                  current.selectedMailboxId == mailboxID,
+                  current.nextCursor == cursor else { return }
+
+            var updated = current
+            updated.messages = MailOverviewPageMerge.appending(page.messages, to: current.messages)
+            updated.nextCursor = page.nextCursor
+            mailOverview = updated
+            mailSummary = "\(updated.messages.count) messages · \(updated.mailboxes.count) mailboxes"
+        } catch {
+            mailSummary = "Could not load older messages: \(error.localizedDescription)"
+        }
+    }
+
     func selectMailbox(_ mailbox: MailOverviewEnvelope.Mailbox) async {
+        guard !mailSendIsInFlight else { return }
         resetMailSearch()
         selectedMailboxID = mailbox.id
         selectedMailMessageID = ""
@@ -339,6 +382,7 @@ extension DesktopAgentModel {
     }
 
     func selectMailAccount(_ account: MailOverviewEnvelope.Account) async {
+        guard !mailSendIsInFlight else { return }
         resetMailSearch()
         selectedMailAccountUser = account.id
         selectedMailboxID = ""
@@ -352,7 +396,30 @@ extension DesktopAgentModel {
 
     func selectMailMessage(_ message: MailOverviewEnvelope.Message) async {
         selectedMailMessageID = message.id
-        await loadMailOverview()
+        guard let overview = mailOverview,
+              let mailboxUser = overview.mailboxUser, !mailboxUser.isEmpty else { return }
+        let mailboxID = overview.selectedMailboxId ?? selectedMailboxID
+        let requestGeneration = mailSearchRequestGeneration
+        var clearedSelection = overview
+        clearedSelection.selectedMessage = nil
+        mailOverview = clearedSelection
+
+        do {
+            let details: MailOverviewEnvelope = try await requestJSON(mailOverviewURL(), authenticated: true)
+            guard requestGeneration == mailSearchRequestGeneration,
+                  selectedMailMessageID == message.id,
+                  selectedMailAccountUser == mailboxUser,
+                  selectedMailboxID == mailboxID,
+                  var current = mailOverview,
+                  current.mailboxUser == mailboxUser,
+                  current.selectedMailboxId == mailboxID else { return }
+            current.selectedMessage = details.selectedMessage ?? message
+            mailOverview = current
+        } catch {
+            guard requestGeneration == mailSearchRequestGeneration,
+                  selectedMailMessageID == message.id else { return }
+            mailSummary = error.localizedDescription
+        }
     }
 
     func toggleMailSelection(_ message: MailOverviewEnvelope.Message) {

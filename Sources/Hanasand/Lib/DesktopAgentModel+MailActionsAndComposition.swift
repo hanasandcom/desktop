@@ -12,6 +12,18 @@ import WebKit
 
 extension DesktopAgentModel {
 
+    var mailSendMailboxScope: String {
+        mailOverview?.mailboxUser ?? userIDForRequests
+    }
+
+    var mailSendIsInFlight: Bool {
+        MailSendIdempotencyStore.shared.isSendingAnyMailbox
+    }
+
+    func beginNewMailDraft() {
+        MailSendIdempotencyStore.shared.beginNewDraft(mailbox: mailSendMailboxScope)
+    }
+
     func runMailAction(_ action: String, message: MailOverviewEnvelope.Message, targetMailboxId: String? = nil, targetMailboxName: String? = nil, reload: Bool = true) async {
         guard hasHanasandAuth else {
             mailSummary = "Setup needed."
@@ -52,7 +64,9 @@ extension DesktopAgentModel {
     }
 
     func composeReplyToSelectedMail() {
+        guard !mailSendIsInFlight else { return }
         guard let message = selectedMailMessage else { return }
+        beginNewMailDraft()
         let replyAddress = (message.replyTo?.first ?? message.from.first)?.displayName ?? ""
         mailComposeTo = replyAddress
         mailComposeCc = ""
@@ -66,7 +80,9 @@ extension DesktopAgentModel {
     }
 
     func composeReplyAllToSelectedMail() {
+        guard !mailSendIsInFlight else { return }
         guard let message = selectedMailMessage else { return }
+        beginNewMailDraft()
         let currentAddress = mailOverview?.mailboxAddress?.lowercased() ?? ""
         let recipients = (message.from + message.to + (message.cc ?? []))
             .filter { !$0.email.lowercased().isEmpty && $0.email.lowercased() != currentAddress }
@@ -82,7 +98,9 @@ extension DesktopAgentModel {
     }
 
     func composeForwardSelectedMail() {
+        guard !mailSendIsInFlight else { return }
         guard let message = selectedMailMessage else { return }
+        beginNewMailDraft()
         mailComposeTo = ""
         mailComposeCc = ""
         mailComposeBcc = ""
@@ -125,6 +143,12 @@ extension DesktopAgentModel {
             return
         }
 
+        guard mailOverview?.canSend != false else {
+            mailSummary = "This mailbox does not allow sending."
+            append(meta: "Mail send", body: mailSummary, kind: .error)
+            return
+        }
+
         let to = mailComposeTo.trimmingCharacters(in: .whitespacesAndNewlines)
         let subject = mailComposeSubject.trimmingCharacters(in: .whitespacesAndNewlines)
         let bodyText = mailComposeBody.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,6 +156,21 @@ extension DesktopAgentModel {
             mailSummary = "Add a recipient and a subject or message."
             append(meta: "Mail send", body: mailSummary, kind: .error)
             return
+        }
+
+        let mailboxScope = mailSendMailboxScope
+        guard MailSendIdempotencyStore.shared.beginSend(mailbox: mailboxScope) else {
+            mailSummary = "A message is already being sent for this mailbox."
+            return
+        }
+        mailSummary = "Sending message…"
+        var sendSucceeded = false
+        defer {
+            MailSendIdempotencyStore.shared.finishSend(mailbox: mailboxScope)
+            if sendSucceeded {
+                MailSendIdempotencyStore.shared.beginNewDraft(mailbox: mailboxScope)
+            }
+            objectWillChange.send()
         }
 
         do {
@@ -145,11 +184,15 @@ extension DesktopAgentModel {
                 textBody: bodyText,
                 attachments: mailDraftAttachments.map(\.payload)
             )
+            let body = try MailSendPayloadBudget.encodedBody(payload)
+            try MailSendPayloadBudget.validateEncodedBody(body)
+            let idempotencyKey = MailSendIdempotencyStore.shared.idempotencyKey(mailbox: mailboxScope, payload: body)
             let text = try await requestPrettyText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("mail/send"),
                 method: "POST",
-                body: try JSONEncoder().encode(payload),
-                authenticated: true
+                body: body,
+                authenticated: true,
+                idempotencyKey: idempotencyKey
             )
             mailComposeTo = ""
             mailComposeCc = ""
@@ -160,6 +203,7 @@ extension DesktopAgentModel {
             mailDraftAttachments = []
             mailComposerExpanded = false
             mailSummary = "Message sent"
+            sendSucceeded = true
             append(meta: "Mail sent", body: String(text.prefix(240)), kind: .change)
             await loadMailOverview()
         } catch {

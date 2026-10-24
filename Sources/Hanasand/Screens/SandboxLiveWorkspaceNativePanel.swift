@@ -11,6 +11,14 @@ struct SandboxLiveWorkspaceNativePanel: View {
     @State private var selectedProfileID = SandboxBrowserProfile.defaults[0].id
     @State private var profileSyncMessage = ""
     @State private var isLoadingProfiles = false
+    @State private var isSavingProfiles = false
+    @State private var profileQuota: SandboxHistoryQuota?
+    @State private var profileDraftIsDirty = false
+    @State private var profilesReconciled = false
+    @State private var newProfileName = ""
+    @State private var editingProfileName = ""
+    @State private var newToolName = ""
+    @State private var newToolURL = ""
     @State private var selectedFingerprintID = SandboxBrowserFingerprint.presets[0].id
     @State private var viewportWidth = String(SandboxBrowserFingerprint.presets[0].width)
     @State private var viewportHeight = String(SandboxBrowserFingerprint.presets[0].height)
@@ -23,11 +31,16 @@ struct SandboxLiveWorkspaceNativePanel: View {
     @State private var streamFailure = ""
 
     private var selectedProfile: SandboxBrowserProfile {
-        profiles.first(where: { $0.id == selectedProfileID }) ?? SandboxBrowserProfile.defaults[0]
+        SandboxBrowserProfileClient.selectedProfile(
+            id: selectedProfileID,
+            from: profiles,
+            advancedAnalysisEnabled: profileQuota?.paid == true && profileQuota?.advancedAnalysis == true
+        )
     }
 
     private var profileCredentialKey: String {
         var hasher = Hasher()
+        hasher.combine(model.settings.apiBaseURL)
         hasher.combine(model.userIDForRequests)
         hasher.combine(model.authTokenForRequests)
         hasher.combine(model.settings.impersonationToken)
@@ -38,6 +51,30 @@ struct SandboxLiveWorkspaceNativePanel: View {
     private var isImpersonating: Bool {
         !model.settings.impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !model.settings.impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canManageProfiles: Bool {
+        model.hasHanasandAuth && !isImpersonating
+            && profileQuota?.paid == true && profileQuota?.advancedAnalysis == true
+    }
+
+    private var selectedProfileIsCustom: Bool {
+        !SandboxBrowserProfile.defaults.contains(where: { $0.id == selectedProfile.id })
+    }
+
+    private var customProfileCount: Int {
+        profiles.filter { profile in !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id }) }.count
+    }
+
+    private var selectedToolIDs: Set<String> { Set(selectedProfile.tools.map(\.id)) }
+
+    private var canAddProvider: Bool {
+        canManageProfiles && selectedProfileIsCustom
+            && !newToolName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && newToolName.trimmingCharacters(in: .whitespacesAndNewlines).utf8.count <= 80
+            && SandboxBrowserProfileClient.isValidProviderURL(newToolURL.trimmingCharacters(in: .whitespacesAndNewlines))
+            && (selectedProfile.tools.count < SandboxBrowserProfileClient.maximumToolsPerProfile
+                || selectedToolIDs.contains(profileSlug(newToolName)))
     }
 
     private var canStart: Bool {
@@ -68,6 +105,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
                         .disabled(session.isActive || isLoadingProfiles)
                         if isLoadingProfiles { ProgressView().controlSize(.small) }
                     }
+                    profileManagementControls
                     if !profileSyncMessage.isEmpty {
                         Text(profileSyncMessage)
                             .font(.system(size: 11, weight: .medium))
@@ -209,15 +247,226 @@ struct SandboxLiveWorkspaceNativePanel: View {
                 }
             }
         }
-        .task(id: profileCredentialKey) { await loadProfiles() }
+        .task(id: profileCredentialKey) {
+            resetProfileScope()
+            await loadProfiles()
+        }
+        .onChange(of: profileCredentialKey) { _, _ in resetProfileScope() }
         .onChange(of: model.userIDForRequests) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.authTokenForRequests) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.settings.impersonationToken) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.settings.impersonatingUserID) { _, _ in stopIfCredentialsChanged() }
+        .onChange(of: selectedProfileID) { _, _ in editingProfileName = selectedProfile.name }
         .onDisappear {
             guard session.isActive else { return }
             Task { await session.stop() }
         }
+    }
+
+    @ViewBuilder
+    private var profileManagementControls: some View {
+        if isLoadingProfiles && profileQuota == nil {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Checking plan access for saved profiles…")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(theme.textSecondary)
+        } else if !canManageProfiles {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(profileQuota == nil
+                     ? "Saved analysis profiles are unavailable until plan access can be checked."
+                     : "Custom analysis profiles and provider tools require a paid plan with advanced analysis.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if profileQuota == nil, model.hasHanasandAuth, !isImpersonating {
+                    ActionButton(title: "Retry profile access", icon: "arrow.clockwise") {
+                        Task { await loadProfiles() }
+                    }
+                    .disabled(isLoadingProfiles)
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 9) {
+                if !profilesReconciled {
+                    NativeNotice(message: "Reload account profiles before saving. Local edits are preserved.", title: "Sync needs review")
+                }
+
+                if selectedProfileIsCustom {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            profileNameEditor
+                            ActionButton(title: "Rename", icon: "pencil") { renameSelectedProfile() }
+                                .disabled(!canRenameSelectedProfile)
+                            ActionButton(title: "Delete", icon: "trash", tone: .danger) { deleteSelectedProfile() }
+                                .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            profileNameEditor
+                            HStack(spacing: 8) {
+                                ActionButton(title: "Rename", icon: "pencil") { renameSelectedProfile() }
+                                    .disabled(!canRenameSelectedProfile)
+                                ActionButton(title: "Delete", icon: "trash", tone: .danger) { deleteSelectedProfile() }
+                                    .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+                            }
+                        }
+                    }
+
+                    if selectedProfile.tools.isEmpty {
+                        Text("No providers in this profile. Add HTTP or HTTPS provider pages below.")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    ForEach(selectedProfile.tools) { tool in
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(tool.name)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(theme.text)
+                                Text(tool.url)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("Remove", systemImage: "minus.circle", role: .destructive) {
+                                removeProvider(toolID: tool.id)
+                            }
+                            .labelStyle(.iconOnly)
+                            .help("Remove \(tool.name)")
+                            .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+                        }
+                        .padding(8)
+                        .background(theme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            newToolNameField
+                            newToolURLField
+                            addProviderButton
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            newToolNameField
+                            HStack(spacing: 8) {
+                                newToolURLField
+                                addProviderButton
+                            }
+                        }
+                    }
+                } else {
+                    Text("Built-in profiles are read-only. Create a custom profile to edit its providers.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        newProfileNameField
+                        createProfileButton
+                        saveProfilesButton
+                        reloadProfilesButton
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        newProfileNameField
+                        HStack(spacing: 8) {
+                            createProfileButton
+                            saveProfilesButton
+                            reloadProfilesButton
+                        }
+                    }
+                }
+
+                Text("Profiles sync to your account. A failed save keeps this local draft; the app reloads the account copy before allowing another save.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(9)
+            .background(theme.cardRaised.opacity(0.65), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .accessibilityIdentifier("sandbox-profile-management")
+        }
+    }
+
+    private var profileNameEditor: some View {
+        TextField("Profile name", text: $editingProfileName)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 130)
+            .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+            .accessibilityLabel("Selected profile name")
+    }
+
+    private var newProfileNameField: some View {
+        TextField("New profile name", text: $newProfileName)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 150)
+            .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+            .accessibilityLabel("New analysis profile name")
+    }
+
+    private var newToolNameField: some View {
+        TextField("Provider name", text: $newToolName)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 120)
+            .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+            .accessibilityLabel("New provider name")
+    }
+
+    private var newToolURLField: some View {
+        TextField("https://provider.example/search?q={url}", text: $newToolURL)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 10, design: .monospaced))
+            .frame(minWidth: 180)
+            .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+            .accessibilityLabel("New provider HTTP or HTTPS URL")
+    }
+
+    private var addProviderButton: some View {
+        ActionButton(title: "Add provider", icon: "plus") { addProvider() }
+            .disabled(!canAddProvider || isLoadingProfiles || isSavingProfiles || session.isActive)
+    }
+
+    private var createProfileButton: some View {
+        ActionButton(title: "Create profile", icon: "plus") { createProfile() }
+            .disabled(!canCreateProfile || isLoadingProfiles || isSavingProfiles || session.isActive)
+    }
+
+    private var saveProfilesButton: some View {
+        ActionButton(title: isSavingProfiles ? "Saving…" : profileDraftIsDirty ? "Save changes" : "Saved", icon: "square.and.arrow.down") {
+            Task { await saveProfiles() }
+        }
+        .disabled(!profileDraftIsDirty || !profilesReconciled || isLoadingProfiles || isSavingProfiles || session.isActive)
+    }
+
+    private var reloadProfilesButton: some View {
+        ActionButton(title: isLoadingProfiles ? "Reloading…" : "Reload account", icon: "arrow.clockwise") {
+            Task { await loadProfiles() }
+        }
+        .disabled(isLoadingProfiles || isSavingProfiles || session.isActive)
+    }
+
+    private var canCreateProfile: Bool {
+        let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return canManageProfiles && !name.isEmpty && name.utf8.count <= 80
+            && customProfileCount < SandboxBrowserProfileClient.maximumProfiles
+    }
+
+    private var canRenameSelectedProfile: Bool {
+        let name = editingProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selectedProfileIsCustom && !name.isEmpty && name.utf8.count <= 80
+            && name != selectedProfile.name
+            && !isLoadingProfiles && !isSavingProfiles && !session.isActive
     }
 
     private func startSession() {
@@ -268,17 +517,69 @@ struct SandboxLiveWorkspaceNativePanel: View {
     }
 
     @MainActor
+    private var profileStorageKey: String {
+        let host = URL(string: model.settings.apiBaseURL)?.host?.lowercased() ?? "browsers.hanasand.com"
+        let scope = model.settings.userID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "hanasand.sandbox.profiles.v1.\(host).\(scope)"
+    }
+
+    private func resetProfileScope() {
+        profileQuota = nil
+        profiles = loadLocalProfiles()
+        selectedProfileID = SandboxBrowserProfile.defaults[0].id
+        editingProfileName = SandboxBrowserProfile.defaults[0].name
+        profileDraftIsDirty = SandboxBrowserProfileDraftMarker.isPending(
+            storageKey: profileStorageKey,
+            defaults: .standard
+        )
+        profilesReconciled = false
+        isLoadingProfiles = false
+        isSavingProfiles = false
+        profileSyncMessage = "Checking account access for saved profiles."
+    }
+
+    @MainActor
     private func loadProfiles() async {
         let requestKey = profileCredentialKey
         guard model.hasHanasandAuth, !isImpersonating else {
+            profileQuota = nil
             profiles = SandboxBrowserProfile.defaults
             selectedProfileID = SandboxBrowserProfile.defaults[0].id
+            profileDraftIsDirty = false
+            profilesReconciled = false
             profileSyncMessage = "Sign in to load account-saved analysis profiles."
             return
         }
+        let draft = profiles
+        let keepDraft = profileDraftIsDirty
         isLoadingProfiles = true
         defer { isLoadingProfiles = false }
         do {
+            let quotaClient = try SandboxHistoryClient(
+                userID: model.userIDForRequests,
+                token: model.authTokenForRequests,
+                impersonationToken: model.settings.impersonationToken,
+                impersonatingUserID: model.settings.impersonatingUserID
+            )
+            let quota = try await quotaClient.loadQuota()
+            guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
+            profileQuota = quota
+            guard quota.paid && quota.advancedAnalysis else {
+                if keepDraft {
+                    profiles = draft
+                    profileDraftIsDirty = true
+                    profilesReconciled = false
+                    persistLocalProfiles(pendingDraft: profileDraftIsDirty)
+                } else {
+                    profiles = SandboxBrowserProfile.defaults
+                    selectedProfileID = SandboxBrowserProfile.defaults[0].id
+                    profileDraftIsDirty = false
+                    profilesReconciled = true
+                }
+                profileSyncMessage = "Custom analysis profiles require a paid plan with advanced analysis."
+                return
+            }
+
             let client = try SandboxBrowserProfileClient(
                 userID: model.userIDForRequests,
                 token: model.authTokenForRequests,
@@ -287,17 +588,158 @@ struct SandboxLiveWorkspaceNativePanel: View {
             )
             let loaded = try await client.load()
             guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
-            profiles = loaded
+            if keepDraft {
+                profiles = draft
+                profileDraftIsDirty = !SandboxBrowserProfileClient.customProfilesMatch(draft, loaded)
+            } else {
+                profiles = SandboxBrowserProfileClient.mergingProfiles(loaded)
+                profileDraftIsDirty = false
+            }
+            profilesReconciled = true
             if !loaded.contains(where: { $0.id == selectedProfileID }) {
                 selectedProfileID = SandboxBrowserProfile.defaults[0].id
             }
-            profileSyncMessage = "Account profiles loaded. Selected providers run with the isolated browser."
+            editingProfileName = selectedProfile.name
+            persistLocalProfiles(pendingDraft: profileDraftIsDirty)
+            profileSyncMessage = profileDraftIsDirty
+                ? "Account profile state reloaded. Local edits remain; choose Save changes to replace the account copy."
+                : "Account profiles loaded and synced. Selected providers run with the isolated browser."
         } catch {
             guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
-            profiles = SandboxBrowserProfile.defaults
-            selectedProfileID = SandboxBrowserProfile.defaults[0].id
-            profileSyncMessage = "Saved profiles unavailable; using built-in SOC triage profile. \(error.localizedDescription)"
+            profileQuota = nil
+            profiles = keepDraft ? draft : loadLocalProfiles()
+            if !profiles.contains(where: { $0.id == selectedProfileID }) {
+                selectedProfileID = SandboxBrowserProfile.defaults[0].id
+            }
+            editingProfileName = selectedProfile.name
+            profilesReconciled = false
+            profileDraftIsDirty = keepDraft
+            persistLocalProfiles(pendingDraft: keepDraft)
+            profileSyncMessage = "Account profile state could not be confirmed. Local edits are preserved; reload before saving again. \(error.localizedDescription)"
         }
+    }
+
+    @MainActor
+    private func saveProfiles() async {
+        guard canManageProfiles, profileDraftIsDirty, profilesReconciled,
+              !isLoadingProfiles, !isSavingProfiles, !session.isActive else { return }
+        isSavingProfiles = true
+        let requestKey = profileCredentialKey
+        let draft = profiles
+        defer { isSavingProfiles = false }
+        do {
+            let client = try SandboxBrowserProfileClient(
+                userID: model.userIDForRequests,
+                token: model.authTokenForRequests,
+                impersonationToken: model.settings.impersonationToken,
+                impersonatingUserID: model.settings.impersonatingUserID
+            )
+            try await client.save(draft)
+            guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
+            profileDraftIsDirty = false
+            profilesReconciled = true
+            persistLocalProfiles(pendingDraft: false)
+            profileSyncMessage = "Custom profiles saved to your account."
+        } catch {
+            guard requestKey == profileCredentialKey else { return }
+            profileDraftIsDirty = true
+            profilesReconciled = false
+            persistLocalProfiles(pendingDraft: true)
+            profileSyncMessage = "Profile save was not confirmed. Your local edits are preserved; reloading the account copy before another save. \(error.localizedDescription)"
+            await loadProfiles()
+        }
+    }
+
+    private func createProfile() {
+        let name = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canCreateProfile, !isSavingProfiles else { return }
+        let baseID = profileSlug(name)
+        var candidate = baseID
+        var suffix = 2
+        while profiles.contains(where: { $0.id == candidate }) {
+            let ending = "-\(suffix)"
+            candidate = String(baseID.prefix(80 - ending.utf8.count)) + ending
+            suffix += 1
+        }
+        let profile = SandboxBrowserProfile(id: candidate, name: name, tools: SandboxBrowserProfile.defaults[0].tools)
+        profiles.insert(profile, at: 0)
+        selectedProfileID = profile.id
+        editingProfileName = profile.name
+        newProfileName = ""
+        markProfileDraftChanged("Profile created locally. Save changes to sync it to your account.")
+    }
+
+    private func renameSelectedProfile() {
+        let name = editingProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canRenameSelectedProfile, let index = profiles.firstIndex(where: { $0.id == selectedProfile.id }) else { return }
+        profiles[index] = SandboxBrowserProfile(id: selectedProfile.id, name: name, tools: selectedProfile.tools)
+        editingProfileName = name
+        markProfileDraftChanged("Profile name updated locally. Save changes to sync it to your account.")
+    }
+
+    private func deleteSelectedProfile() {
+        guard selectedProfileIsCustom, !isLoadingProfiles, !isSavingProfiles, !session.isActive else { return }
+        profiles.removeAll { $0.id == selectedProfile.id }
+        selectedProfileID = SandboxBrowserProfile.defaults[0].id
+        editingProfileName = SandboxBrowserProfile.defaults[0].name
+        markProfileDraftChanged("Profile removed locally. Save changes to sync the deletion to your account.")
+    }
+
+    private func addProvider() {
+        let name = newToolName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = newToolURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canAddProvider, let index = profiles.firstIndex(where: { $0.id == selectedProfile.id }) else { return }
+        let id = profileSlug(name)
+        let tool = SandboxBrowserTool(id: id, name: name, url: value)
+        let previous = profiles[index]
+        let tools = (previous.tools.filter { $0.id != id } + [tool]).prefix(SandboxBrowserProfileClient.maximumToolsPerProfile)
+        profiles[index] = SandboxBrowserProfile(id: previous.id, name: previous.name, tools: Array(tools))
+        newToolName = ""
+        newToolURL = ""
+        markProfileDraftChanged("Provider added locally. Save changes to sync it to your account.")
+    }
+
+    private func removeProvider(toolID: String) {
+        guard selectedProfileIsCustom, !isLoadingProfiles, !isSavingProfiles, !session.isActive,
+              let index = profiles.firstIndex(where: { $0.id == selectedProfile.id }) else { return }
+        let previous = profiles[index]
+        profiles[index] = SandboxBrowserProfile(id: previous.id, name: previous.name,
+                                                 tools: previous.tools.filter { $0.id != toolID })
+        markProfileDraftChanged("Provider removed locally. Save changes to sync the removal to your account.")
+    }
+
+    private func markProfileDraftChanged(_ message: String) {
+        profileDraftIsDirty = true
+        persistLocalProfiles(pendingDraft: true)
+        profileSyncMessage = message
+    }
+
+    private func loadLocalProfiles() -> [SandboxBrowserProfile] {
+        guard let data = UserDefaults.standard.data(forKey: profileStorageKey),
+              let decoded = try? JSONDecoder().decode([SandboxBrowserProfile].self, from: data),
+              let custom = try? SandboxBrowserProfileClient.validatedCustomProfiles(decoded) else {
+            return SandboxBrowserProfile.defaults
+        }
+        return custom + SandboxBrowserProfile.defaults
+    }
+
+    private func persistLocalProfiles(pendingDraft: Bool? = nil) {
+        let custom = profiles.filter { profile in !SandboxBrowserProfile.defaults.contains(where: { $0.id == profile.id }) }
+        guard let data = try? JSONEncoder().encode(custom) else { return }
+        UserDefaults.standard.set(data, forKey: profileStorageKey)
+        if let pendingDraft {
+            SandboxBrowserProfileDraftMarker.setPending(
+                pendingDraft,
+                storageKey: profileStorageKey,
+                defaults: .standard
+            )
+        }
+    }
+
+    private func profileSlug(_ value: String) -> String {
+        let base = value.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return String((base.isEmpty ? "profile" : base).prefix(80))
     }
 
     private func stopIfCredentialsChanged() {

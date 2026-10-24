@@ -5,6 +5,20 @@ import XCTest
 
 @MainActor
 final class SandboxLiveSessionTests: XCTestCase {
+    func testPendingProfileDraftMarkerSurvivesAUserDefaultsReopen() throws {
+        let suiteName = "SandboxLiveSessionTests.pending.\(UUID().uuidString)"
+        let firstLaunch = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { firstLaunch.removePersistentDomain(forName: suiteName) }
+        let secondLaunch = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let storageKey = "hanasand.sandbox.profiles.v1.browser.example.owner"
+
+        XCTAssertFalse(SandboxBrowserProfileDraftMarker.isPending(storageKey: storageKey, defaults: firstLaunch))
+        SandboxBrowserProfileDraftMarker.setPending(true, storageKey: storageKey, defaults: firstLaunch)
+        XCTAssertTrue(SandboxBrowserProfileDraftMarker.isPending(storageKey: storageKey, defaults: secondLaunch))
+        SandboxBrowserProfileDraftMarker.setPending(false, storageKey: storageKey, defaults: secondLaunch)
+        XCTAssertFalse(SandboxBrowserProfileDraftMarker.isPending(storageKey: storageKey, defaults: firstLaunch))
+    }
+
     private let api = URL(string: "https://browser.example.test/api")!
 
     func testRequestUsesAuthenticatedWebSocketWithoutCookies() throws {
@@ -102,7 +116,7 @@ final class SandboxLiveSessionTests: XCTestCase {
                 XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "owner.test")
                 XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
                 XCTAssertFalse(request.httpShouldHandleCookies)
-                let data = Data(#"{"profiles":[{"id":"custom-triage","name":"Custom triage","tools":[{"id":"scanner","name":"Scanner","url":"https://scanner.example.test/search?q={url}"}]}]}"#.utf8)
+                let data = Data(#"{"profiles":[{"id":"custom-triage","name":"Custom triage","tools":[{"id":"scanner","name":"Scanner","url":"https://scanner.example.test/search?q={url}"}]},{"id":"triage-default","name":"Server shadow","tools":[]},{"id":"browser-only","name":"Local shadow","tools":[] }]}"#.utf8)
                 let response = try XCTUnwrap(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil))
                 return (data, response)
             }
@@ -111,6 +125,10 @@ final class SandboxLiveSessionTests: XCTestCase {
         let profiles = try await client.load()
         XCTAssertEqual(profiles.map(\.id), ["custom-triage", "triage-default", "browser-only"])
         XCTAssertEqual(profiles.first?.tools, [SandboxBrowserTool(id: "scanner", name: "Scanner", url: "https://scanner.example.test/search?q={url}")])
+        XCTAssertEqual(profiles.first(where: { $0.id == "triage-default" })?.name,
+                       SandboxBrowserProfile.defaults.first(where: { $0.id == "triage-default" })?.name)
+        XCTAssertEqual(profiles.first(where: { $0.id == "browser-only" })?.name,
+                       SandboxBrowserProfile.defaults.first(where: { $0.id == "browser-only" })?.name)
     }
 
     func testSavedProfilesRejectUnsafeToolURLsAndImpersonatedAccounts() async throws {
@@ -132,6 +150,115 @@ final class SandboxLiveSessionTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? SandboxBrowserProfileError, .invalidResponse)
         }
+    }
+
+    func testSavingProfilesUsesAuthenticatedPUTAndOmitsBuiltIns() async throws {
+        let profile = SandboxBrowserProfile(id: "triage-team", name: "Team triage", tools: [
+            SandboxBrowserTool(id: "scanner", name: "Scanner", url: "https://scanner.example.test/search?q={url}"),
+        ])
+        let client = try SandboxBrowserProfileClient(
+            apiBaseURL: api, userID: "owner.test", token: "session-token",
+            send: { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://browser.example.test/api/browser/profiles")
+                XCTAssertEqual(request.httpMethod, "PUT")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "owner.test")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+                XCTAssertFalse(request.httpShouldHandleCookies)
+                let body = try XCTUnwrap(request.httpBody)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let saved = try XCTUnwrap(payload["profiles"] as? [[String: Any]])
+                XCTAssertEqual(saved.count, 1)
+                XCTAssertEqual(saved[0]["id"] as? String, "triage-team")
+                let response = try XCTUnwrap(HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: nil))
+                return (Data(), response)
+            }
+        )
+
+        try await client.save([profile] + SandboxBrowserProfile.defaults)
+    }
+
+    func testProfileWriteValidationRequiresHTTPOrHTTPSAndEnforcesWebsiteLimits() throws {
+        XCTAssertThrowsError(try SandboxBrowserProfileClient.validatedCustomProfiles([
+            SandboxBrowserProfile(id: "custom", name: "Custom", tools: [
+                SandboxBrowserTool(id: "unsafe", name: "Unsafe", url: "javascript:alert(1)"),
+            ]),
+        ])) { XCTAssertEqual($0 as? SandboxBrowserProfileError, .invalidProfile) }
+
+        XCTAssertNoThrow(try SandboxBrowserProfileClient.validatedCustomProfiles([
+            SandboxBrowserProfile(id: "custom-http", name: "HTTP provider", tools: [
+                SandboxBrowserTool(id: "plain", name: "Plain", url: "http://provider.example.test/search?q={url}"),
+            ]),
+        ]))
+
+        XCTAssertThrowsError(try SandboxBrowserProfileClient.validatedCustomProfiles([
+            SandboxBrowserProfile(id: "duplicate", name: "One", tools: []),
+            SandboxBrowserProfile(id: "duplicate", name: "Two", tools: []),
+        ])) { XCTAssertEqual($0 as? SandboxBrowserProfileError, .invalidProfile) }
+
+        let tooManyTools = (0...SandboxBrowserProfileClient.maximumToolsPerProfile).map { index in
+            SandboxBrowserTool(id: "tool-\(index)", name: "Tool \(index)", url: "https://provider.example.test/\(index)")
+        }
+        XCTAssertThrowsError(try SandboxBrowserProfileClient.validatedCustomProfiles([
+            SandboxBrowserProfile(id: "custom", name: "Custom", tools: tooManyTools),
+        ])) { XCTAssertEqual($0 as? SandboxBrowserProfileError, .invalidProfile) }
+
+        XCTAssertTrue(SandboxBrowserProfileClient.isValidProviderURL("https://provider.example.test/search?q={url}"))
+        XCTAssertFalse(SandboxBrowserProfileClient.isValidProviderURL("https://user:pass@provider.example.test/search"))
+        XCTAssertFalse(SandboxBrowserProfileClient.isValidProviderURL("javascript:alert(1)"))
+    }
+
+    func testProfileComparisonIgnoresBuiltInsAndOrder() {
+        let first = SandboxBrowserProfile(id: "first", name: "First", tools: [])
+        let second = SandboxBrowserProfile(id: "second", name: "Second", tools: [])
+        XCTAssertTrue(SandboxBrowserProfileClient.customProfilesMatch(
+            [first] + SandboxBrowserProfile.defaults,
+            SandboxBrowserProfile.defaults + [first]
+        ))
+        XCTAssertFalse(SandboxBrowserProfileClient.customProfilesMatch([first], [second]))
+    }
+
+    func testProfileMergeKeepsServerVersionBeforeLocalCopyAndBuiltInsBeforeShadowingCopies() {
+        let server = SandboxBrowserProfile(id: "shared", name: "Server version", tools: [])
+        let local = SandboxBrowserProfile(id: "shared", name: "Local version", tools: [])
+        let localOnly = SandboxBrowserProfile(id: "local-only", name: "Local only", tools: [])
+        let shadow = SandboxBrowserProfile(id: "triage-default", name: "Shadow", tools: [])
+
+        let merged = SandboxBrowserProfileClient.mergingProfiles([server, localOnly, local, shadow])
+
+        XCTAssertEqual(merged.first(where: { $0.id == "shared" })?.name, "Server version")
+        XCTAssertTrue(merged.contains(where: { $0.id == "local-only" }))
+        XCTAssertEqual(merged.first?.id, SandboxBrowserProfile.defaults[0].id)
+        XCTAssertEqual(merged.first(where: { $0.id == "triage-default" })?.name,
+                       SandboxBrowserProfile.defaults[0].name)
+        XCTAssertEqual(merged.filter { SandboxBrowserProfile.defaults.map(\.id).contains($0.id) }.map(\.id),
+                       SandboxBrowserProfile.defaults.map(\.id))
+    }
+
+    func testCustomProfilesRequireConfirmedAdvancedAnalysisForSelection() {
+        let custom = SandboxBrowserProfile(id: "custom", name: "Custom", tools: [
+            SandboxBrowserTool(id: "scanner", name: "Scanner", url: "https://scanner.example.test/"),
+        ])
+        let profiles = [custom] + SandboxBrowserProfile.defaults
+
+        XCTAssertEqual(
+            SandboxBrowserProfileClient.selectedProfile(id: "custom", from: profiles, advancedAnalysisEnabled: false),
+            SandboxBrowserProfile.defaults[0]
+        )
+        XCTAssertEqual(
+            SandboxBrowserProfileClient.selectedProfile(id: "custom", from: profiles, advancedAnalysisEnabled: true),
+            custom
+        )
+        XCTAssertEqual(
+            SandboxBrowserProfileClient.selectedProfile(id: "browser-only", from: profiles, advancedAnalysisEnabled: false),
+            SandboxBrowserProfile.defaults[1]
+        )
+        let shadow = SandboxBrowserProfile(id: "triage-default", name: "Shadow", tools: [])
+        XCTAssertEqual(
+            SandboxBrowserProfileClient.selectedProfile(id: "triage-default", from: [shadow] + profiles, advancedAnalysisEnabled: true),
+            SandboxBrowserProfile.defaults[0]
+        )
     }
 
     func testRejectsImpersonationInvalidCredentialsAndInvalidTargets() throws {

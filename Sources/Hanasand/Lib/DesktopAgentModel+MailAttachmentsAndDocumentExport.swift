@@ -21,14 +21,44 @@ extension DesktopAgentModel {
 
         for url in panel.urls {
             do {
-                let data = try Data(contentsOf: url)
+                guard let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, fileSize >= 0 else {
+                    throw MailSendPayloadBudgetError.invalidAttachmentSize
+                }
                 let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-                mailDraftAttachments.append(MailDraftAttachment(name: url.lastPathComponent, type: type, size: data.count, contentBase64: data.base64EncodedString()))
+                let placeholder = MailDraftAttachment.Payload(name: url.lastPathComponent, type: type, contentBase64: "", size: fileSize)
+                let plannedAttachments = mailDraftAttachments.map(\.payload) + [placeholder]
+                let budgetEstimate = try MailSendPayloadBudget.estimatedBodyBytes(
+                    mailDraftPayload(attachments: plannedAttachments),
+                    attachmentSizes: plannedAttachments.map(\.size)
+                )
+                guard budgetEstimate <= MailSendPayloadBudget.maximumBodyBytes else {
+                    throw MailSendPayloadBudgetError.bodyTooLarge
+                }
+
+                let data = try Data(contentsOf: url)
+                guard data.count == fileSize else { throw MailSendPayloadBudgetError.invalidAttachmentSize }
+                let attachment = MailDraftAttachment(name: url.lastPathComponent, type: type, size: data.count, contentBase64: data.base64EncodedString())
+                let exactPayload = mailDraftPayload(attachments: (mailDraftAttachments + [attachment]).map(\.payload))
+                try MailSendPayloadBudget.validateEncodedBody(MailSendPayloadBudget.encodedBody(exactPayload))
+                mailDraftAttachments.append(attachment)
             } catch {
                 append(meta: "Attachment failed", body: error.localizedDescription, kind: .error)
             }
         }
         mailSummary = "\(mailDraftAttachments.count) attachment\(mailDraftAttachments.count == 1 ? "" : "s") ready"
+    }
+
+    private func mailDraftPayload(attachments: [MailDraftAttachment.Payload]) -> MailSendPayload {
+        MailSendPayload(
+            mailboxUser: mailOverview?.mailboxUser,
+            to: mailComposeTo.trimmingCharacters(in: .whitespacesAndNewlines),
+            cc: mailComposeCc.trimmingCharacters(in: .whitespacesAndNewlines),
+            bcc: mailComposeBcc.trimmingCharacters(in: .whitespacesAndNewlines),
+            replyTo: mailComposeReplyTo.trimmingCharacters(in: .whitespacesAndNewlines),
+            subject: mailComposeSubject.trimmingCharacters(in: .whitespacesAndNewlines),
+            textBody: mailComposeBody.trimmingCharacters(in: .whitespacesAndNewlines),
+            attachments: attachments
+        )
     }
 
     func removeMailAttachment(_ attachment: MailDraftAttachment) {

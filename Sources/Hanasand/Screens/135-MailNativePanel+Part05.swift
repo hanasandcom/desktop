@@ -76,23 +76,25 @@ extension MailNativePanel {
                 }
             }
 
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: 8)], alignment: .leading, spacing: 8) {
                 ActionButton(title: "Attach", icon: "paperclip") {
                     model.addMailAttachment()
                 }
-                ActionButton(title: "Send", icon: "paperplane.fill") {
+                ActionButton(title: model.mailSendIsInFlight ? "Sending…" : "Send", icon: "paperplane.fill") {
                     Task { await model.sendComposedMail() }
                 }
+                .disabled(model.mailSendIsInFlight || !overview.canSend)
                 ActionButton(title: "Discard", icon: "xmark.circle", tone: .danger) {
                     model.mailComposerExpanded = false
                     model.mailDraftAttachments = []
+                    model.beginNewMailDraft()
                 }
-                Spacer()
                 Text(overview.settings.map { "\($0.smtpHost ?? "SMTP"):\($0.smtpPort ?? 0)" } ?? "Ready")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(theme.textTertiary)
             }
         }
+        .disabled(model.mailSendIsInFlight)
     }
 
     func mailField(_ label: String, text: Binding<String>, placeholder: String) -> some View {
@@ -112,7 +114,7 @@ extension MailNativePanel {
 
     func mailboxTools(_ overview: MailOverviewEnvelope) -> some View {
         NativeGroupPanel(title: "Folders", subtitle: "Create and move quickly") {
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 8)], alignment: .leading, spacing: 8) {
                 TextField("New mailbox", text: $model.mailNewMailboxName)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, weight: .semibold))

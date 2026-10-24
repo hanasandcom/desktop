@@ -27,16 +27,15 @@ struct TrafficRecentNativePanel: View {
                 FeatureCard(title: "Domains", value: "\(domains.count)", icon: "globe")
             }
 
-            HStack(alignment: .center, spacing: 10) {
-                SearchFieldRow(placeholder: "Search domain, path, or user agent", text: $query)
-                Button {
-                    page = 1
-                    Task { await load() }
-                } label: {
-                    Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 10) {
+                    SearchFieldRow(placeholder: "Search domain, path, or user agent", text: $query)
+                    refreshButton
                 }
-                .buttonStyle(.bordered)
-                .disabled(isLoading)
+                VStack(alignment: .leading, spacing: 8) {
+                    SearchFieldRow(placeholder: "Search domain, path, or user agent", text: $query)
+                    HStack { Spacer(minLength: 0); refreshButton }
+                }
             }
 
             ViewThatFits(in: .horizontal) {
@@ -57,7 +56,10 @@ struct TrafficRecentNativePanel: View {
             if isLoading && records.isEmpty {
                 NativeEmptyState(title: "Loading recent requests", message: "Fetching the latest traffic records.")
             } else if filteredRecords.isEmpty {
-                NativeEmptyState(title: records.isEmpty ? "No traffic records loaded" : "No matching requests", message: records.isEmpty ? "Refresh to load recent requests from the Traffic API." : "Change the search or filters to see matching requests.")
+                NativeEmptyState(
+                    title: records.isEmpty && status.hasPrefix("Could not") ? "Recent traffic unavailable" : (records.isEmpty ? "No traffic records loaded" : "No matching requests"),
+                    message: records.isEmpty && status.hasPrefix("Could not") ? "\(status) Refresh to try again." : (records.isEmpty ? "Refresh to load recent requests from the Traffic API." : "Change the search or filters to see matching requests.")
+                )
             } else {
                 LazyVStack(alignment: .leading, spacing: 9) {
                     ForEach(filteredRecords) { record in
@@ -66,23 +68,14 @@ struct TrafficRecentNativePanel: View {
                 }
             }
 
-            HStack {
-                Text("Page \(page) · \(total.formatted()) retained requests")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.textSecondary)
-                Spacer(minLength: 12)
-                Button("Previous") {
-                    guard page > 1 else { return }
-                    page -= 1
-                    Task { await loadRecordsOnly() }
+            ViewThatFits(in: .horizontal) {
+                paginationControls
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Page \(page) · \(total.formatted()) retained requests")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    HStack { Spacer(minLength: 0); previousPageButton; nextPageButton }
                 }
-                .disabled(page <= 1 || isLoading)
-                Button("Next") {
-                    guard page < max(1, (total + pageSize - 1) / pageSize) else { return }
-                    page += 1
-                    Task { await loadRecordsOnly() }
-                }
-                .disabled(page >= max(1, (total + pageSize - 1) / pageSize) || isLoading)
             }
         }
         .task {
@@ -95,6 +88,46 @@ struct TrafficRecentNativePanel: View {
             }
         }
         .onDisappear { requestGeneration = UUID() }
+    }
+
+    private var refreshButton: some View {
+        Button {
+            page = 1
+            Task { await load() }
+        } label: {
+            Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.bordered)
+        .disabled(isLoading)
+    }
+
+    private var paginationControls: some View {
+        HStack {
+            Text("Page \(page) · \(total.formatted()) retained requests")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+            Spacer(minLength: 12)
+            previousPageButton
+            nextPageButton
+        }
+    }
+
+    private var previousPageButton: some View {
+        Button("Previous") {
+            guard page > 1 else { return }
+            page -= 1
+            Task { await loadRecordsOnly() }
+        }
+        .disabled(page <= 1 || isLoading)
+    }
+
+    private var nextPageButton: some View {
+        Button("Next") {
+            guard page < max(1, (total + pageSize - 1) / pageSize) else { return }
+            page += 1
+            Task { await loadRecordsOnly() }
+        }
+        .disabled(page >= max(1, (total + pageSize - 1) / pageSize) || isLoading)
     }
 
     @ViewBuilder
@@ -111,7 +144,7 @@ struct TrafficRecentNativePanel: View {
     private var stackedFilterControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             domainPicker.frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 135), spacing: 8)], alignment: .leading, spacing: 8) {
                 methodPicker
                 statusPicker
             }
@@ -169,7 +202,7 @@ struct TrafficRecentNativePanel: View {
                 expandedRecordID = expanded ? nil : record.id
             } label: {
                 HStack(alignment: .top, spacing: 12) {
-                    Text("\(record.status)")
+                    Text(record.status == 0 ? "Unknown" : "\(record.status)")
                         .font(.system(size: 12, weight: .black, design: .rounded))
                         .foregroundStyle(record.status >= 500 ? theme.danger : theme.text)
                         .frame(width: 46, height: 34)
