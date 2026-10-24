@@ -71,10 +71,14 @@ enum DashboardOrganizationMemberPolicy {
         if action == "invite" { return requested.map { ["admin", "editor", "reader"].contains($0) } ?? false }
         if action == "role" {
             guard let requested, ["admin", "editor", "reader"].contains(requested) else { return false }
+            // The website keeps organization owners out of member mutations. Preserve
+            // that owner boundary in Desktop, including when the acting user is owner.
+            guard target != "owner" else { return false }
             if actor == "owner" { return true }
             return ["editor", "reader"].contains(target) && ["editor", "reader"].contains(requested)
         }
         if action == "remove" {
+            guard target != "owner" else { return false }
             return actor == "owner" || ["editor", "reader", "member", "viewer"].contains(target)
         }
         if action == "inviteAction" { return true }

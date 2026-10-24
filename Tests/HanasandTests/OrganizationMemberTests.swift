@@ -89,7 +89,9 @@ final class OrganizationMemberTests: XCTestCase {
         XCTAssertFalse(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "admin", targetRole: "admin", requestedRole: "reader", action: "role"))
         XCTAssertFalse(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "admin", targetRole: "editor", requestedRole: "admin", action: "role"))
         XCTAssertFalse(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "admin", targetRole: "admin", action: "remove"))
-        XCTAssertTrue(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "owner", targetRole: "owner", requestedRole: "admin", action: "role"))
+        XCTAssertFalse(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "owner", targetRole: "owner", requestedRole: "admin", action: "role"))
+        XCTAssertFalse(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "owner", targetRole: "owner", action: "remove"))
+        XCTAssertTrue(DashboardOrganizationMemberPolicy.canManageTarget(actorRole: "owner", targetRole: "reader", requestedRole: "admin", action: "role"))
     }
 
     func testInviteEmailNormalizationAndValidation() {

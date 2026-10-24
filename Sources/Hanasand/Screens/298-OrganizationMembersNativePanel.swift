@@ -291,6 +291,7 @@ struct OrganizationMembersNativePanel: View {
     }
 
     private func rolesAssignable(by actorRole: String, to targetRole: String) -> [String] {
+        guard targetRole.lowercased() != "owner" else { return [] }
         if actorRole.lowercased() == "owner" { return ["admin", "editor", "reader"] }
         return ["editor", "reader"].contains(targetRole.lowercased()) ? ["editor", "reader"] : []
     }
