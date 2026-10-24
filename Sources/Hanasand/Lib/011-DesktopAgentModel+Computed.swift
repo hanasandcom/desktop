@@ -58,7 +58,6 @@ extension DesktopAgentModel {
             .route("Monitoring cases", "Review health checks and cases.", "tray.full", "/cases"),
             .route("Service status", "View public service checks, incidents, and daily history.", "heart.text.square", "/status"),
             .route("Threat intelligence", "Search actors and vulnerabilities.", "magnifyingglass", "/ti"),
-            .route("Latest Activity", "Review recent threat intelligence activity.", "clock.arrow.circlepath", "/ti/activity"),
             .route("Actor Profiles", "Browse source-backed threat actor records.", "person.text.rectangle", "/ti/profiles"),
             .route("Intelligence Sources", "Browse the public intelligence source catalogue.", "dot.radiowaves.left.and.right", "/ti/sources"),
             .route("Collection Runs", "Review global intelligence collection runs.", "clock.arrow.circlepath", "/ti/runs"),
@@ -129,6 +128,7 @@ extension DesktopAgentModel {
             .route("Organization Settings", "Review settings for the selected organization.", "slider.horizontal.3", "/organizations/settings"),
             .route("Organization Events", "Review scoped events and cases.", "list.bullet.rectangle", "/organizations/events"),
             .route("Organization Activity", "Review recent derived organization activity.", "clock.arrow.circlepath", "/organizations/activity"),
+            .route("Latest Activity", "Review recent threat intelligence activity.", "clock.arrow.circlepath", "/ti/activity"),
             .route("Sandbox History", "Review saved Sandbox run metadata.", "square.stack.3d.up", "/sandbox"),
             .route("OpenAPI JSON", "Inspect and copy the raw OpenAPI document.", "curlybraces", "/api/openapi"),
         ]

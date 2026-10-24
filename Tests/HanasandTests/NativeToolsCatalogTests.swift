@@ -97,11 +97,28 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertEqual(sections.flatMap(\.actions).map(\.title), ["Authenticator"])
         XCTAssertTrue(NativeDashboardDetail.hasNativePanel(for: "/authenticator"))
     }
+
+    @MainActor
+    func testLatestActivityIsListedWithAdministrativeTools() {
+        let model = DesktopAgentModel()
+
+        XCTAssertFalse(model.dashboardActions.contains { $0.kind.routePath == "/ti/activity" })
+        XCTAssertTrue(model.adminActions.contains { $0.kind.routePath == "/ti/activity" })
+        XCTAssertTrue(NativeToolsCatalog.sections(dashboard: model.dashboardActions, administration: model.adminActions)
+            .flatMap(\.actions).contains { $0.kind.routePath == "/ti/activity" })
+    }
 }
 
 private extension DesktopAction {
     var routePath: String? {
         guard case .route(let path) = kind else { return nil }
+        return path
+    }
+}
+
+private extension DesktopAction.Kind {
+    var routePath: String? {
+        guard case .route(let path) = self else { return nil }
         return path
     }
 }
