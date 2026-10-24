@@ -7,6 +7,7 @@ struct NativeShareWorkspacePanel: View {
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
+    @StateObject private var collaboration = NativeShareCollaborationLiveSession()
     @State private var workspace: NativeShareWorkspace?
     @State private var selectedFileID = ""
     @State private var selectedParentFolderID = ""
@@ -36,7 +37,9 @@ struct NativeShareWorkspacePanel: View {
 
     private var selectedFile: NativeShareWorkspaceFile? { workspace?.selectedFile }
     private var interactionPolicy: NativeShareWorkspaceInteractionPolicy {
-        .make(hasUnresolvedSaveConflict: saveConflict != nil)
+        .make(hasUnresolvedSaveConflict: saveConflict != nil || (!context.isProject &&
+            (collaboration.session?.conflict != nil
+                || collaboration.session?.saveState != nil && collaboration.session?.saveState != .saved)))
     }
     private var canEdit: Bool {
         model.hasHanasandAuth && selectedFile?.locked != true
@@ -49,6 +52,11 @@ struct NativeShareWorkspacePanel: View {
         [context.alias, context.fileID ?? "", context.isProject ? "project" : "share",
          context.initialChatOpen ? "chat" : "", context.createIfMissing ? "create" : "", initialPath ?? ""]
             .joined(separator: "\u{1f}")
+    }
+    private var collaborationIdentityKey: String {
+        [selectedFile?.id ?? "", context.isProject ? "project" : "share", model.settings.apiBaseURL,
+         model.userIDForRequests, model.authTokenForRequests, model.settings.impersonationToken,
+         model.settings.impersonatingUserID].joined(separator: "\u{1f}")
     }
 
     var body: some View {
@@ -89,6 +97,18 @@ struct NativeShareWorkspacePanel: View {
             }
         }
         .task(id: loadIdentity) { await load() }
+        .task(id: collaborationIdentityKey) { syncCollaboration() }
+        .onReceive(collaboration.$session) { changed in
+            guard !context.isProject, let changed, changed.identity == collaboration.session?.identity,
+                  changed.conflict == nil, let file = selectedFile, file.id == changed.identity.shareID else { return }
+            if draftContent != changed.localContent { draftContent = changed.localContent }
+            baselineContent = changed.persistedContent
+        }
+        .onChange(of: draftContent) { _, content in
+            guard !context.isProject, selectedFile?.id == collaboration.session?.identity.shareID else { return }
+            collaboration.edit(content)
+        }
+        .onDisappear { collaboration.stop() }
         .confirmationDialog(
             "Delete \(pendingDeleteItem?.name ?? "item")?",
             isPresented: Binding(get: { pendingDeleteItem != nil }, set: { if !$0 { pendingDeleteItem = nil } }),
@@ -173,7 +193,21 @@ struct NativeShareWorkspacePanel: View {
     private var editorPanel: some View {
         NativeGroupPanel(title: selectedFile?.type == "folder" ? "Folder details" : (selectedFile?.displayName ?? "File editor"), subtitle: selectedFile?.path ?? "Select a file from the tree") {
             if let selectedFile {
-                if let saveConflict, saveConflict.id == selectedFile.id {
+                if let conflict = collaboration.session?.conflict,
+                   collaboration.session?.identity.shareID == selectedFile.id {
+                    NativeNotice(message: "A collaborator changed this document while you had local edits. Review both versions before continuing.",
+                                 title: "Review concurrent edit", tone: .info)
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Use theirs", icon: "arrow.uturn.backward") {
+                            collaboration.useRemoteConflict()
+                            draftContent = conflict.remoteContent
+                            baselineContent = conflict.remoteContent
+                        }
+                        ActionButton(title: "Keep mine", icon: "arrow.uturn.forward") {
+                            collaboration.keepLocalConflict()
+                        }
+                    }
+                } else if let saveConflict, saveConflict.id == selectedFile.id {
                     NativeNotice(
                         message: "The server copy differs from the version you opened. Keep mine will overwrite the displayed server copy after one more fresh check. The API has no atomic version check, so another edit could still race that write.",
                         title: "Review concurrent edit",
@@ -190,26 +224,26 @@ struct NativeShareWorkspacePanel: View {
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
-                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
+                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations)
+                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations)
                     }
                     VStack(spacing: 8) {
-                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
-                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
+                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations)
+                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations)
                     }
                 }
                 HStack(spacing: 8) {
                     if isRenamingName {
                         ActionButton(title: isSaving ? "Renaming…" : "Rename", icon: "pencil") { Task { await renameSelected() } }
-                            .disabled(isSaving || pendingMutation != nil || saveConflict != nil || draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations || draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         ActionButton(title: "Cancel rename", icon: "xmark") {
                             draftName = selectedFile.name ?? selectedFile.displayName
                             isRenamingName = false
-                        }.disabled(isSaving || saveConflict != nil)
+                        }.disabled(isSaving || !interactionPolicy.allowsNavigationAndTreeMutations)
                     }
                     if draftPath != (selectedFile.path ?? "") {
                         ActionButton(title: isSaving ? "Saving path…" : "Save path", icon: "folder") { Task { await updatePath() } }
-                            .disabled(isSaving || pendingMutation != nil || saveConflict != nil || draftPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(isSaving || pendingMutation != nil || !interactionPolicy.allowsNavigationAndTreeMutations || draftPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
                 if selectedFile.type == "folder" {
@@ -220,7 +254,7 @@ struct NativeShareWorkspacePanel: View {
                         .frame(minHeight: 350)
                         .padding(7)
                         .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .disabled(!canEdit || isSaving || saveConflict != nil || pendingMutation != nil)
+                        .disabled(!canEdit || isSaving || saveConflict != nil || collaboration.session?.conflict != nil || pendingMutation != nil)
                     HStack {
                         if selectedFile.locked == true {
                             Label("Locked", systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(theme.danger)
@@ -228,8 +262,16 @@ struct NativeShareWorkspacePanel: View {
                             Label("Read only · sign in to edit", systemImage: "lock.open").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                         }
                         Spacer()
-                        ActionButton(title: isSaving ? "Saving…" : "Save file", icon: "checkmark") { Task { await saveFile() } }
-                            .disabled(isSaving || isLoading || !canEdit || !canSaveSelectedFileContent || pendingMutation != nil || saveConflict != nil)
+                        if context.isProject {
+                            ActionButton(title: isSaving ? "Saving…" : "Save file", icon: "checkmark") { Task { await saveFile() } }
+                                .disabled(isSaving || isLoading || !canEdit || !canSaveSelectedFileContent || pendingMutation != nil || saveConflict != nil)
+                        } else {
+                            Text(collaborationStatus)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             } else {
@@ -286,6 +328,7 @@ struct NativeShareWorkspacePanel: View {
         draftContent = selected?.content ?? ""
         baselineContent = selected?.content ?? ""
         saveConflict = nil
+        syncCollaboration()
     }
 
     @MainActor private func select(_ item: NativeShareWorkspaceTreeItem) async {
@@ -310,6 +353,7 @@ struct NativeShareWorkspacePanel: View {
             draftContent = file.content ?? ""
             baselineContent = file.content ?? ""
             saveConflict = nil
+            syncCollaboration()
             error = ""
             status = "Loaded \(file.displayName)."
         } catch {
@@ -318,7 +362,7 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func saveFile() async {
-        guard let selectedFile, canSaveSelectedFileContent, pendingMutation == nil else { return }
+        guard context.isProject, let selectedFile, canSaveSelectedFileContent, pendingMutation == nil else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -455,11 +499,23 @@ struct NativeShareWorkspacePanel: View {
                         error = ""
                         return
                     }
-                    _ = try await client.saveFile(id: id, name: name, path: path,
-                                                  content: content, baselineContent: baselineContent)
-                    status = "Saved \(name)."
-                    pendingMutation = nil
-                    apply(try await client.load(context: refreshContext))
+                    if current.name != name || current.path != path {
+                        _ = try await client.updateMetadata(id: id, name: name, path: path)
+                    }
+                    if context.isProject {
+                        _ = try await client.saveFile(id: id, name: name, path: path,
+                                                      content: content, baselineContent: baselineContent)
+                        status = "Saved \(name)."
+                        pendingMutation = nil
+                        apply(try await client.load(context: refreshContext))
+                    } else {
+                        guard selectedFile?.id == id, collaboration.session?.identity.shareID == id else {
+                            throw NativeShareWorkspaceError.invalidRoute
+                        }
+                        collaboration.edit(content)
+                        status = "Content queued for live save."
+                        pendingMutation = nil
+                    }
                 }
                 error = ""
             case let .duplicate(plan):
@@ -516,39 +572,48 @@ struct NativeShareWorkspacePanel: View {
 
     @MainActor private func keepLocalConflictVersion(_ conflict: NativeShareWorkspaceSaveConflict) async {
         guard saveConflict == conflict, pendingMutation == nil else { return }
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            // Treat the explicitly reviewed remote snapshot as the new baseline.
-            // saveFile fetches it again before PUT; if it changed again, no PUT is sent.
-            let remoteBaseline = conflict.remoteFile.content ?? ""
-            let saved = try await makeClient().saveFile(
-                id: conflict.id, name: conflict.localName, path: conflict.localPath,
-                content: conflict.localContent, baselineContent: remoteBaseline
-            )
-            workspace = NativeShareWorkspace(root: workspace?.root ?? saved, tree: workspace?.tree ?? [], selectedFile: saved)
-            draftName = saved.name ?? conflict.localName
-            draftPath = saved.path ?? conflict.localPath
-            draftContent = saved.content ?? conflict.localContent
-            baselineContent = saved.content ?? conflict.localContent
-            saveConflict = nil
-            status = "Saved your reviewed version. The CDN has no atomic compare-and-swap protection."
-            error = ""
-        } catch {
-            if let shareError = error as? NativeShareWorkspaceError, case let .saveConflict(remote) = shareError {
-                saveConflict = NativeShareWorkspaceSaveConflict(
-                    id: conflict.id, originalBaselineContent: conflict.originalBaselineContent,
-                    localName: conflict.localName, localPath: conflict.localPath,
-                    localContent: conflict.localContent, remoteFile: remote
+        guard selectedFile?.id == conflict.id else { return }
+        if context.isProject {
+            isSaving = true
+            defer { isSaving = false }
+            do {
+                let remoteBaseline = conflict.remoteFile.content ?? ""
+                let saved = try await makeClient().saveFile(
+                    id: conflict.id, name: conflict.localName, path: conflict.localPath,
+                    content: conflict.localContent, baselineContent: remoteBaseline
                 )
-                status = "The server copy changed again. Your draft remains available; review the newest version."
-            } else if error as? NativeShareWorkspaceError == .mutationUncertain("save") {
-                pendingMutation = .save(id: conflict.id, name: conflict.localName, path: conflict.localPath,
-                                        content: conflict.localContent, baselineContent: conflict.remoteFile.content ?? "")
+                workspace = NativeShareWorkspace(root: workspace?.root ?? saved, tree: workspace?.tree ?? [], selectedFile: saved)
+                draftName = saved.name ?? conflict.localName
+                draftPath = saved.path ?? conflict.localPath
+                draftContent = saved.content ?? conflict.localContent
+                baselineContent = saved.content ?? conflict.localContent
                 saveConflict = nil
+                status = "Saved your reviewed version. The CDN has no atomic compare-and-swap protection."
+                error = ""
+            } catch {
+                if let shareError = error as? NativeShareWorkspaceError, case let .saveConflict(remote) = shareError {
+                    saveConflict = NativeShareWorkspaceSaveConflict(
+                        id: conflict.id, originalBaselineContent: conflict.originalBaselineContent,
+                        localName: conflict.localName, localPath: conflict.localPath,
+                        localContent: conflict.localContent, remoteFile: remote
+                    )
+                    status = "The server copy changed again. Your draft remains available; review the newest version."
+                } else if error as? NativeShareWorkspaceError == .mutationUncertain("save") {
+                    pendingMutation = .save(id: conflict.id, name: conflict.localName, path: conflict.localPath,
+                                            content: conflict.localContent, baselineContent: conflict.remoteFile.content ?? "")
+                    saveConflict = nil
+                }
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            return
         }
+        collaboration.keepReviewedLocalVersion(remoteContent: conflict.remoteFile.content ?? "",
+                                               localContent: conflict.localContent)
+        draftContent = conflict.localContent
+        baselineContent = conflict.remoteFile.content ?? ""
+        saveConflict = nil
+        status = "Your reviewed version is queued for live save."
+        error = ""
     }
 
     private var refreshContext: NativeShareWorkspaceContext {
@@ -586,6 +651,36 @@ struct NativeShareWorkspacePanel: View {
                                        userID: model.userIDForRequests, token: model.authTokenForRequests,
                                        impersonationToken: model.settings.impersonationToken,
                                        impersonatingUserID: model.settings.impersonatingUserID)
+    }
+
+    @MainActor private func syncCollaboration() {
+        guard !context.isProject, let file = selectedFile, file.type != "folder", canEdit,
+              file.locked != true, model.hasHanasandAuth,
+              !model.userIDForRequests.isEmpty, !model.authTokenForRequests.isEmpty else {
+            collaboration.stop()
+            return
+        }
+        collaboration.start(
+            identity: NativeShareCollaborationIdentity(shareID: file.id, accountID: model.userIDForRequests),
+            apiBaseURL: model.settings.apiBaseURL,
+            userID: model.userIDForRequests,
+            token: model.authTokenForRequests,
+            displayName: model.userIDForRequests,
+            initialContent: file.content ?? ""
+        )
+    }
+
+    private var collaborationStatus: String {
+        guard let session = collaboration.session,
+              session.identity.shareID == selectedFile?.id else { return "Live editing unavailable" }
+        switch (collaboration.connection, session.saveState) {
+        case (.connected, .saved): return "Live · saved"
+        case (.connected, .saving): return "Live · saving…"
+        case (.connected, .queued): return "Live · queued"
+        case (.connecting, _): return "Connecting…"
+        case (.disconnected, .queued): return "Offline · changes queued"
+        case (.disconnected, _): return session.lastError ?? "Disconnected"
+        }
     }
 
     private func findPath(for id: String) -> String? {

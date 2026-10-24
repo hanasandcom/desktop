@@ -197,9 +197,11 @@ extension DesktopAgentModel {
     }
 
     func openShare(_ share: DashboardShare) {
-        guard NativeRouteSelection.resolve(share.id, among: shares.map(\.id)) != nil else { return }
+        guard let destination = NativeShareManagerNavigation.destination(
+            shareID: share.id, availableShareIDs: shares.map(\.id)
+        ) else { return }
         loadShareIntoEditor(share)
-        openNativeDashboard(path: "/s", label: share.displayName)
+        openNativeDashboard(path: destination.path, label: share.displayName, detailID: destination.detailID)
     }
 
     func loadShareIntoEditor(_ share: DashboardShare) {
@@ -259,5 +261,12 @@ extension DesktopAgentModel {
         } catch {
             nativeDashboardStatus = error.localizedDescription
         }
+    }
+}
+
+enum NativeShareManagerNavigation {
+    static func destination(shareID: String, availableShareIDs: [String]) -> (path: String, detailID: String)? {
+        guard NativeRouteSelection.resolve(shareID, among: availableShareIDs) != nil else { return nil }
+        return ("/s", shareID)
     }
 }
