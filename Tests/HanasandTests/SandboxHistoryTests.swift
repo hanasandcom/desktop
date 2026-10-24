@@ -31,6 +31,10 @@ final class SandboxHistoryTests: XCTestCase {
         XCTAssertEqual(page.runs.count, 1)
         XCTAssertEqual(page.runs[0].target, "https://example.test")
         XCTAssertEqual(page.runs[0].network, "residential")
+        XCTAssertEqual(page.runs[0].providerResults, [
+            SandboxHistoryProviderResult(id: "urlquery", status: "suspicious", label: "3 alerts"),
+            SandboxHistoryProviderResult(id: "virustotal", status: "clean", label: "0 detections"),
+        ])
         XCTAssertEqual(page.nextOffset, 50)
     }
 
@@ -153,5 +157,5 @@ final class SandboxHistoryTests: XCTestCase {
         HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
     }
 
-    private static let pageJSON = #"{"runs":[{"id":"run-1","resultId":"result-1","target":"https://example.test","network":"residential","status":"complete","startedAt":"2026-10-22T10:00:00Z","providerResults":[{"large":"ignored"}]}],"nextOffset":50}"#
+    private static let pageJSON = #"{"runs":[{"id":"run-1","resultId":"result-1","target":"https://example.test","network":"residential","status":"complete","startedAt":"2026-10-22T10:00:00Z","providerResults":{"virustotal":{"status":"clean","label":"0 detections"},"urlquery":{"status":"suspicious","label":"3 alerts"},"bad key":{"status":"clean","label":"ignored"},"unknown":{"status":"other","label":"ignored"}}}],"nextOffset":50}"#
 }

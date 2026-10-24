@@ -8,8 +8,15 @@ struct SandboxHistoryRun: Identifiable, Equatable {
     let network: String
     let status: String
     let startedAt: String
+    let providerResults: [SandboxHistoryProviderResult]
 
     var displayTarget: String { target.isEmpty ? "Untitled target" : target }
+}
+
+struct SandboxHistoryProviderResult: Identifiable, Equatable {
+    let id: String
+    let status: String
+    let label: String
 }
 
 struct SandboxHistoryPage: Equatable {
@@ -27,6 +34,8 @@ enum SandboxHistoryLimits {
     static let identifierLength = 128
     static let targetLength = 2_000
     static let fieldLength = 100
+    static let maximumProviderResults = 16
+    static let providerLabelLength = 160
 }
 
 enum SandboxHistoryError: LocalizedError, Equatable {

@@ -135,7 +135,21 @@ struct SandboxHistoryClient {
               network.utf8.count <= SandboxHistoryLimits.fieldLength,
               status.utf8.count <= SandboxHistoryLimits.fieldLength,
               startedAt.utf8.count <= SandboxHistoryLimits.fieldLength else { return nil }
-        return SandboxHistoryRun(id: id, resultID: resultID, target: target, network: network, status: status, startedAt: startedAt)
+        return SandboxHistoryRun(id: id, resultID: resultID, target: target, network: network, status: status, startedAt: startedAt,
+                                 providerResults: decodeProviderResults(object["providerResults"]))
+    }
+
+    private static func decodeProviderResults(_ value: Any?) -> [SandboxHistoryProviderResult] {
+        guard let object = value as? [String: Any], object.count <= SandboxHistoryLimits.maximumProviderResults else { return [] }
+        return object.keys.sorted().compactMap { key in
+            guard key.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil,
+                  let result = object[key] as? [String: Any],
+                  let status = result["status"] as? String,
+                  ["clean", "suspicious", "blocked", "loading"].contains(status) else { return nil }
+            let label = result["label"] as? String ?? key
+            guard label.utf8.count <= SandboxHistoryLimits.providerLabelLength else { return nil }
+            return SandboxHistoryProviderResult(id: key, status: status, label: label)
+        }
     }
 
     private static func validIdentifier(_ value: String) -> Bool {

@@ -127,6 +127,19 @@ struct SandboxHistoryNativePanel: View {
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                    if !run.providerResults.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(run.providerResults) { result in
+                                Text(result.label)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(providerColor(result.status))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(providerColor(result.status).opacity(0.12), in: Capsule())
+                                    .accessibilityLabel("\(result.id): \(result.label) (\(result.status))")
+                            }
+                        }
+                    }
                     Text("Run \(run.id)")
                         .font(.system(size: 9, weight: .regular, design: .monospaced))
                         .foregroundStyle(theme.textTertiary)
@@ -141,6 +154,14 @@ struct SandboxHistoryNativePanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func providerColor(_ status: String) -> Color {
+        switch status {
+        case "suspicious", "blocked": theme.danger
+        case "loading": theme.textTertiary
+        default: theme.green
+        }
     }
 
     @MainActor
