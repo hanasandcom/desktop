@@ -176,7 +176,7 @@ final class DwmCaseWorkflowTests: XCTestCase {
                 }
                 ledgerReads += 1
                 let row = ledgerReads == 1
-                    ? #"{"deliveryId":"d-1","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","destinationId":"dest-1","thirdPartyReport":true,"dryRun":false,"status":"failed","retryable":true,"retryDue":true,"nextRetryAt":"2026-10-24T10:00:00Z","attemptCount":1,"attemptedAt":"2026-10-24T09:00:00Z"}"#
+                    ? #"{"deliveryId":"d-1","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","destinationId":"dest-1","thirdPartyReport":true,"dryRun":false,"status":"failed","retryable":true,"retryDue":true,"nextRetryAt":"2000-01-01T00:00:00Z","attemptCount":1,"attemptedAt":"2000-01-01T00:00:00Z"}"#
                     : #"{"deliveryId":"d-1","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","destinationId":"dest-1","thirdPartyReport":true,"dryRun":false,"status":"delivered","retryable":false,"retryDue":false,"attemptCount":2,"attemptedAt":"2026-10-24T11:00:00Z"}"#
                 return (Data("{\"deliveryLedger\":[\(row)],\"deliveryOperations\":{\"liveDeliveryEnabled\":true}}".utf8), self.response(request))
             }
@@ -186,7 +186,7 @@ final class DwmCaseWorkflowTests: XCTestCase {
             "deliveryId": .string("d-1"), "orgId": .string("org-1"), "alertId": .string("alert-1"),
             "reportCaseId": .string("case-1"), "destinationId": .string("dest-1"), "thirdPartyReport": .bool(true),
             "dryRun": .bool(false), "status": .string("failed"), "retryable": .bool(true), "retryDue": .bool(true),
-            "nextRetryAt": .string("2026-10-24T10:00:00Z"), "attemptCount": .number(1), "attemptedAt": .string("2026-10-24T09:00:00Z"),
+            "nextRetryAt": .string("2000-01-01T00:00:00Z"), "attemptCount": .number(1), "attemptedAt": .string("2000-01-01T00:00:00Z"),
         ]
         let result = try await client.retryReport(delivery: failed, caseID: "case-1", alertID: "alert-1", currentSettings: settings)
         XCTAssertEqual(result["attemptCount"]?.numberValue, 2)
@@ -219,7 +219,7 @@ final class DwmCaseWorkflowTests: XCTestCase {
         case "/v1/cases/case-1/export": return Data(#"{"exportChecksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","evidenceSummary":[{"id":"evidence-1","title":"Evidence"}],"copyText":"Case summary"}"#.utf8)
         case "/v1/cases/case-1": return Data(#"{"case":{"id":"case-1","tenantId":"org-1","organizationId":"org-1","customerNotifications":[]},"customerNotificationContext":{"ready":true}}"#.utf8)
         case "/api/dwm/webhook-destinations": return integrationBody()
-        case "/api/organizations/org-1": return Data(#"{"id":"org-1","lifecycle":"active","privacyDeletionInProgress":false}"#.utf8)
+        case "/api/organizations/org-1": return Data(#"{"organization":{"id":"org-1","lifecycleStatus":"active","privacyDeletionInProgress":false}}"#.utf8)
         case "/api/dwm/webhook-deliveries": return Data(#"{"deliveryLedger":[{"deliveryId":"d-1","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","thirdPartyReport":true,"status":"delivered"}],"deliveryOperations":{"liveDeliveryEnabled":true}}"#.utf8)
         case "/api/findings/webhook-receiver": return Data(#"{"receipts":[{"id":"r-1","orgId":"org-1","reportCaseId":"case-1"}]}"#.utf8)
         default: return Data("{}".utf8)
@@ -236,7 +236,7 @@ final class DwmCaseWorkflowTests: XCTestCase {
             }
             return Data(#"{"exportChecksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#.utf8)
         case "/api/dwm/webhook-destinations": return integrationBody()
-        case "/api/organizations/org-1": return Data(#"{"id":"org-1","lifecycle":"active","privacyDeletionInProgress":false}"#.utf8)
+        case "/api/organizations/org-1": return Data(#"{"organization":{"id":"org-1","lifecycleStatus":"active","privacyDeletionInProgress":false}}"#.utf8)
         case "/api/dwm/webhook-deliveries":
             if request.httpMethod == "POST" {
                 return Data(#"{"deliveries":[{"id":"d-1","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","destinationId":"dest-1","thirdPartyReport":true,"status":"dry_run"}]}"#.utf8)

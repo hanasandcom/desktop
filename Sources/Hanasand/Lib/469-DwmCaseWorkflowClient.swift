@@ -137,10 +137,10 @@ struct DwmCaseWorkflowClient {
         guard let checksum = report["exportChecksum"]?.stringValue, checksum.range(of: "^[A-Fa-f0-9]{64}$", options: .regularExpression) != nil,
               report["reportPolicy"]?["alertId"]?.stringValue == alertID else { throw DwmCaseWorkflowError.malformedResponse }
         var boundAlert = alert
-        boundAlert["caseId"] = caseID
-        boundAlert["report"] = report
-        boundAlert["dedupeKey"] = checksum
-        boundAlert["evidenceCount"] = evidenceIDs.count
+        boundAlert["caseId"] = .string(caseID)
+        boundAlert["report"] = .object(report)
+        boundAlert["dedupeKey"] = .string(checksum)
+        boundAlert["evidenceCount"] = .number(Double(evidenceIDs.count))
         let integration = try await IntegrationClient(apiBaseURL: URL(string: settings.apiBaseURL)!, userID: settings.userID,
             token: settings.authToken, organizationID: organizationID, impersonationToken: settings.impersonationToken,
             impersonatingUserID: settings.impersonatingUserID, send: send).load()
@@ -150,7 +150,7 @@ struct DwmCaseWorkflowClient {
         }
         let payload: [String: Any] = [
             "tenantId": organizationID, "organizationId": organizationID, "orgId": organizationID,
-            "alertId": alertID, "alert": boundAlert, "caseId": caseID,
+            "alertId": alertID, "alert": boundAlert.mapValues(\.foundationValue), "caseId": caseID,
             "evidenceIds": evidenceIDs.sorted(), "reportFormat": format, "destinationId": destinationID,
             "dryRun": dryRun, "live": !dryRun,
         ]
@@ -264,7 +264,7 @@ struct DwmCaseWorkflowClient {
     private func urlComponents(service: Service, path: String) throws -> URLComponents {
         let base: URL?
         switch service {
-        case .api: base = URL(string: settings.apiBaseURL)?.normalizedBaseURL
+        case .api: base = settings.apiBaseURL.normalizedBaseURL
         case .ti:
             let site = URL(string: settings.websiteBaseURL)
             base = site?.host?.lowercased() == "hanasand.com" ? URL(string: "https://ti.hanasand.com") : site
@@ -314,7 +314,15 @@ private struct DwmWorkflowReceipt: Decodable {
     let destinationID: String
     let thirdPartyReport: Bool
     let status: String
-    enum CodingKeys: String, CodingKey { case id, organizationID = "orgId", alertID, caseID = "reportCaseId", destinationID, thirdPartyReport, status }
+    enum CodingKeys: String, CodingKey {
+        case id
+        case organizationID = "orgId"
+        case alertID = "alertId"
+        case caseID = "reportCaseId"
+        case destinationID = "destinationId"
+        case thirdPartyReport
+        case status
+    }
 }
 
 extension IntelligenceCaseJSON {

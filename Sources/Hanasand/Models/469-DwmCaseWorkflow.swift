@@ -65,8 +65,8 @@ struct DwmCaseWorkflowReconciliation: Equatable {
     enum Kind: Equatable { case notification, report, retry }
     let kind: Kind
     let key: String
-    let previousAttemptedAt: String? = nil
-    let previousAttemptCount: Double = 0
+    let previousAttemptedAt: String?
+    let previousAttemptCount: Double
 
     init(kind: Kind, key: String, previousAttemptedAt: String? = nil, previousAttemptCount: Double = 0) {
         self.kind = kind
