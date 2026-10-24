@@ -123,6 +123,45 @@ struct SandboxHistoryClient {
         return SandboxHistoryPage(runs: runs, nextOffset: nextOffset)
     }
 
+    func loadQuota() async throws -> SandboxHistoryQuota {
+        let components = URLComponents(url: baseURL.appendingAPIPath("browser/runs"), resolvingAgainstBaseURL: false)
+        guard let url = components?.url, url.scheme?.lowercased() == "https", url.host == baseURL.host,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+            throw SandboxHistoryError.invalidBaseURL
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == baseURL.host else {
+            throw SandboxHistoryError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else { throw SandboxHistoryError.requestFailed(http.statusCode) }
+        guard data.count <= SandboxHistoryLimits.responseBytes else { throw SandboxHistoryError.responseTooLarge }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let quota = root["quota"] as? [String: Any],
+              let plan = quota["plan"] as? String, !plan.isEmpty, plan.utf8.count <= SandboxHistoryLimits.fieldLength,
+              let used = Self.nonnegativeInteger(quota["used"]),
+              let active = Self.nonnegativeInteger(quota["active"]),
+              let paid = quota["paid"] as? Bool,
+              let advancedAnalysis = quota["advancedAnalysis"] as? Bool,
+              let sessionSeconds = Self.nonnegativeInteger(quota["sessionSeconds"]), sessionSeconds > 0,
+              let limit = Self.optionalQuotaInteger(quota["limit"]),
+              let concurrentLimit = Self.optionalQuotaInteger(quota["concurrentLimit"]) else {
+            throw SandboxHistoryError.invalidResponse
+        }
+        return SandboxHistoryQuota(plan: plan, limit: limit, used: used, active: active, paid: paid,
+                                   advancedAnalysis: advancedAnalysis, sessionSeconds: sessionSeconds,
+                                   concurrentLimit: concurrentLimit)
+    }
+
     private static func decodeRun(_ object: [String: Any]) -> SandboxHistoryRun? {
         guard let id = object["id"] as? String,
               let resultID = object["resultId"] as? String,
@@ -150,6 +189,20 @@ struct SandboxHistoryClient {
             guard label.utf8.count <= SandboxHistoryLimits.providerLabelLength else { return nil }
             return SandboxHistoryProviderResult(id: key, status: status, label: label)
         }
+    }
+
+    private static func optionalQuotaInteger(_ value: Any?) -> Int?? {
+        guard let value else { return nil }
+        if value is NSNull { return .some(nil) }
+        guard let integer = nonnegativeInteger(value) else { return nil }
+        return .some(integer)
+    }
+
+    private static func nonnegativeInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.intValue >= 0,
+              Double(number.intValue) == number.doubleValue else { return nil }
+        return number.intValue
     }
 
     private static func validIdentifier(_ value: String) -> Bool {

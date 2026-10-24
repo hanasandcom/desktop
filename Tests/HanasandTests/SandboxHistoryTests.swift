@@ -38,6 +38,44 @@ final class SandboxHistoryTests: XCTestCase {
         XCTAssertEqual(page.nextOffset, 50)
     }
 
+    func testLoadsOwnerQuotaWithAuthenticatedRegularRunsRequest() async throws {
+        var captured: URLRequest?
+        let client = try makeClient { request in
+            captured = request
+            let body = #"{"runs":[],"quota":{"plan":"free","limit":null,"used":12,"remaining":null,"active":1,"paid":false,"advancedAnalysis":false,"sessionSeconds":90,"concurrentLimit":2,"identityKind":"user"}}"#
+            return (Data(body.utf8), Self.response(for: request, status: 200))
+        }
+
+        let quota = try await client.loadQuota()
+
+        XCTAssertEqual(captured?.url?.absoluteString, "https://api.example.test/api/browser/runs")
+        XCTAssertEqual(captured?.httpMethod, "GET")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "owner.test")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertNil(captured?.httpBody)
+        XCTAssertEqual(quota, SandboxHistoryQuota(plan: "free", limit: nil, used: 12, active: 1, paid: false,
+                                                   advancedAnalysis: false, sessionSeconds: 90, concurrentLimit: 2))
+        XCTAssertEqual(quota.summary, "1 min 30 sec per run · 2 simultaneous browsers · no daily run limit")
+    }
+
+    func testRejectsMalformedQuotaAndBadQuotaTypes() async throws {
+        for body in [
+            #"{"runs":[]}"#,
+            #"{"quota":{"plan":"free","limit":null,"used":true,"remaining":null,"active":0,"paid":false,"advancedAnalysis":false,"sessionSeconds":90,"concurrentLimit":null}}"#,
+            #"{"quota":{"plan":"free","limit":null,"used":1.5,"remaining":null,"active":0,"paid":false,"advancedAnalysis":false,"sessionSeconds":90,"concurrentLimit":null}}"#,
+        ] {
+            let client = try makeClient { request in
+                (Data(body.utf8), Self.response(for: request, status: 200))
+            }
+            do {
+                _ = try await client.loadQuota()
+                XCTFail("Malformed quota payloads must be rejected")
+            } catch { XCTAssertEqual(error as? SandboxHistoryError, .invalidResponse) }
+        }
+    }
+
     func testPaginationUsesInjectedBaseAndSkipsMalformedOrDuplicateRows() async throws {
         var captured: URLRequest?
         let body = #"{"runs":[{"id":"run-2","resultId":"result-2","target":"https://two.test","network":"direct","status":"complete","startedAt":"2026-10-22T10:00:00Z","providerResults":{"secret":"ignored"}},{"id":"bad id","resultId":"x","target":"x","network":"n","status":"s","startedAt":"t"},{"id":"run-2","resultId":"result-2","target":"duplicate","network":"n","status":"s","startedAt":"t"},null],"nextOffset":null}"#

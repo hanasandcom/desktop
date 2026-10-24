@@ -24,6 +24,28 @@ struct SandboxHistoryPage: Equatable {
     let nextOffset: Int?
 }
 
+struct SandboxHistoryQuota: Equatable {
+    let plan: String
+    let limit: Int?
+    let used: Int
+    let active: Int
+    let paid: Bool
+    let advancedAnalysis: Bool
+    let sessionSeconds: Int
+    let concurrentLimit: Int?
+
+    var summary: String {
+        let minutes = sessionSeconds / 60
+        let seconds = sessionSeconds % 60
+        let duration = seconds == 0 ? "\(minutes) \(minutes == 1 ? "minute" : "minutes")"
+            : minutes == 0 ? "\(seconds) seconds" : "\(minutes) min \(seconds) sec"
+        let concurrency = concurrentLimit.map { "\(max(1, $0)) simultaneous browser\(max(1, $0) == 1 ? "" : "s")" }
+            ?? "no simultaneous-browser limit"
+        let daily = limit.map { "\(used)/\($0) runs today" } ?? "no daily run limit"
+        return "\(duration) per run · \(concurrency) · \(daily)"
+    }
+}
+
 enum SandboxHistoryLimits {
     static let pageSize = 50
     static let responseBytes = 1 * 1024 * 1024

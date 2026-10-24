@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SandboxHistoryNativePanel: View {
+    private enum QuotaLoadState: Equatable { case loading, ready, unavailable }
+
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var runs: [SandboxHistoryRun] = []
@@ -12,6 +14,8 @@ struct SandboxHistoryNativePanel: View {
     @State private var reportRequestID = UUID()
     @State private var error = ""
     @State private var selectedReport: SandboxHistoryReport?
+    @State private var quota: SandboxHistoryQuota?
+    @State private var quotaLoadState = QuotaLoadState.loading
 
     private var selectedRun: SandboxHistoryRun? { runs.first { $0.id == selectedRunID } }
 
@@ -29,11 +33,38 @@ struct SandboxHistoryNativePanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
                     ActionButton(title: isLoading ? "Loading…" : "Refresh", icon: "arrow.clockwise") {
-                        Task { await refresh() }
+                        Task {
+                            await refresh()
+                            await refreshQuota()
+                        }
                     }
                     .disabled(isLoading || !model.hasHanasandAuth)
                 }
                 if !error.isEmpty { NativeNotice(message: error) }
+            }
+
+            NativeGroupPanel(title: "Run limits", subtitle: "Current Sandbox usage") {
+                HStack(alignment: .center, spacing: 10) {
+                    Group {
+                        switch quotaLoadState {
+                        case .loading:
+                            Text("Loading run limits…")
+                        case .ready:
+                            Text(quota?.summary ?? "Run limits unavailable")
+                        case .unavailable:
+                            Text(model.hasHanasandAuth ? "Run limits unavailable. Refresh to try again." : "Sign in to view run limits.")
+                        }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if quotaLoadState == .unavailable {
+                        ActionButton(title: "Retry", icon: "arrow.clockwise") { Task { await refreshQuota() } }
+                            .disabled(!model.hasHanasandAuth)
+                    }
+                }
+                .accessibilityIdentifier("sandbox-quota-summary")
             }
 
             NativeGroupPanel(title: "Run history", subtitle: "Newest runs first") {
@@ -96,7 +127,11 @@ struct SandboxHistoryNativePanel: View {
                 }
             }
         }
-        .task { await refresh() }
+        .task {
+            async let history: Void = refresh()
+            async let limits: Void = refreshQuota()
+            _ = await (history, limits)
+        }
     }
 
     private func runRow(_ run: SandboxHistoryRun) -> some View {
@@ -266,5 +301,23 @@ struct SandboxHistoryNativePanel: View {
             impersonationToken: model.settings.impersonationToken,
             impersonatingUserID: model.settings.impersonatingUserID
         )
+    }
+
+    @MainActor
+    private func refreshQuota() async {
+        guard model.hasHanasandAuth else {
+            quota = nil
+            quotaLoadState = .unavailable
+            return
+        }
+        quotaLoadState = .loading
+        do {
+            let loaded = try await makeClient().loadQuota()
+            quota = loaded
+            quotaLoadState = .ready
+        } catch {
+            quota = nil
+            quotaLoadState = .unavailable
+        }
     }
 }
