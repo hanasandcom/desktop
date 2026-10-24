@@ -35,6 +35,12 @@ extension RecentTestsNativePanel {
         return loadClient.canWrite && permissionConfirmed && !loading && !busy && !submissionLocked && remaining > 0
     }
 
+    var canJoinLive: Bool {
+        guard let loadClient else { return false }
+        return loadClient.canRead && loadClient.canWrite && !loading && !busy
+            && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
+    }
+
     var isValidTarget: Bool {
         (try? LoadTestingClient.validate(url: targetURL)) != nil
     }
@@ -74,6 +80,9 @@ extension RecentTestsNativePanel {
             lookupID = initialTestID
             await openResult(id: initialTestID)
         }
+        .onDisappear { liveSession.stop() }
+        .onChange(of: model.settings.impersonationToken) { _, _ in liveSession.stop() }
+        .onChange(of: model.settings.impersonatingUserID) { _, _ in liveSession.stop() }
         .confirmationDialog("Start this load test?", isPresented: $showStartConfirmation, titleVisibility: .visible) {
             Button("I own this endpoint or have written permission · Start", role: .destructive) {
                 Task { await createTest() }
@@ -89,6 +98,22 @@ extension RecentTestsNativePanel {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("\(selectedTest?.displayURL ?? "")\nThis uses the saved traffic configuration and adds a run to the server queue.")
+        }
+        .confirmationDialog("Join public live output?", isPresented: $showLiveJoinConfirmation, titleVisibility: .visible) {
+            Button("Join public stream", role: .destructive) {
+                guard let selectedTest, canJoinLive, let client = loadClient else { return }
+                liveSession.join(
+                    apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+                    id: selectedTest.id,
+                    reviewed: true,
+                    hasAuth: client.canRead,
+                    canWrite: client.canWrite,
+                    isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty
+                )
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This stream is public and sends no account credentials. Joining can start the server’s global queued load-test runner. It does not create a new test. It will not reconnect automatically.")
         }
     }
 
@@ -338,6 +363,7 @@ extension RecentTestsNativePanel {
 
     func openResult(id: String) async {
         guard let client = loadClient, client.canRead else { errorMessage = "Sign in to open a test result."; return }
+        if liveSession.testID != nil && liveSession.testID != id { liveSession.stop() }
         loading = true; errorMessage = ""; noticeMessage = ""
         defer { loading = false }
         do { selectedTest = try await client.result(id: id.trimmingCharacters(in: .whitespacesAndNewlines)); lookupID = selectedTest?.id ?? id }
@@ -346,6 +372,7 @@ extension RecentTestsNativePanel {
 
     func createTest() async {
         guard permissionConfirmed, canSubmit, let client = loadClient else { return }
+        liveSession.stop()
         busy = true; errorMessage = ""; noticeMessage = ""; submissionLocked = true
         defer { busy = false }
         do {
@@ -366,6 +393,7 @@ extension RecentTestsNativePanel {
     func rerun(_ test: DashboardRecentTest) async {
         guard permissionConfirmed, canSubmit, let client = loadClient,
               !["queued", "running"].contains(test.statusLabel.lowercased()) else { return }
+        liveSession.stop()
         busy = true; errorMessage = ""; noticeMessage = ""; submissionLocked = true
         defer { busy = false }
         do {

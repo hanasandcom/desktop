@@ -15,6 +15,7 @@ struct RecentTestsNativePanel: View {
     var initialTestID: String? = nil
 
     @Environment(\.desktopTheme) var theme
+    @StateObject var liveSession = LoadTestLiveSession()
 
     @State var searchText = ""
     @State var selectedStatus = "all"
@@ -38,4 +39,7 @@ struct RecentTestsNativePanel: View {
     @State var noticeMessage = ""
     @State var showStartConfirmation = false
     @State var showRerunConfirmation = false
+    @State var showLiveJoinConfirmation = false
+    @State var showLiveLogs = true
+    @State var showLiveErrors = false
 }

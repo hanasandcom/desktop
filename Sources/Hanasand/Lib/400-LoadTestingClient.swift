@@ -156,6 +156,19 @@ struct LoadTestingClient {
         value.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil && value != "." && value != ".."
     }
 
+    static func liveSocketURL(apiBaseURL: URL, testID: String) -> URL? {
+        guard validTestID(testID),
+              var components = URLComponents(url: apiBaseURL, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https", components.host != nil,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else { return nil }
+        let basePath = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let suffix = "ws/test/\(testID)"
+        components.percentEncodedPath = "/" + ([basePath, suffix].filter { !$0.isEmpty }.joined(separator: "/"))
+        components.scheme = "wss"
+        return components.url
+    }
+
     static func validStage(_ stage: LoadTestStagePayload) -> Bool {
         durationSeconds(stage.duration) != nil && stage.target >= 0 && stage.target <= 100
     }
