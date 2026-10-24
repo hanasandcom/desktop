@@ -10,6 +10,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum NotesNativePanelLayout {
+    static let stackedBreakpoint: CGFloat = 720
+
+    static func usesStackedLayout(contentWidth: CGFloat) -> Bool {
+        contentWidth < stackedBreakpoint
+    }
+
+    static func sidebarWidth(contentWidth: CGFloat) -> CGFloat {
+        min(260, max(200, contentWidth * 0.32))
+    }
+}
+
 struct NotesNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
@@ -26,8 +38,39 @@ struct NotesNativePanel: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 10) {
+        GeometryReader { geometry in
+            Group {
+                if !NotesNativePanelLayout.usesStackedLayout(contentWidth: geometry.size.width) {
+                    HStack(alignment: .top, spacing: 16) {
+                        notesSidebar
+                            .frame(width: NotesNativePanelLayout.sidebarWidth(contentWidth: geometry.size.width), alignment: .topLeading)
+                        noteEditor
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        notesSidebar
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        noteEditor
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(minHeight: 460)
+        .alert("Delete this note?", isPresented: $isConfirmingDelete) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { await model.deleteSelectedNote() }
+            }
+        } message: {
+            Text("This permanently deletes the shared note. Any unsaved local draft for it will also be removed.")
+        }
+    }
+
+    private var notesSidebar: some View {
+        VStack(alignment: .leading, spacing: 10) {
                 ActionButton(title: "New note", icon: "plus") {
                     model.newNoteDraft()
                 }
@@ -70,8 +113,9 @@ struct NotesNativePanel: View {
                     )
                 }
             }
-            .frame(width: 260, alignment: .topLeading)
+    }
 
+    private var noteEditor: some View {
             VStack(alignment: .leading, spacing: 12) {
                 if model.noteSaveConflict {
                     VStack(alignment: .leading, spacing: 8) {
@@ -160,14 +204,5 @@ struct NotesNativePanel: View {
                     .disabled(model.noteSaveConflict)
                 }
             }
-        }
-        .alert("Delete this note?", isPresented: $isConfirmingDelete) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                Task { await model.deleteSelectedNote() }
-            }
-        } message: {
-            Text("This permanently deletes the shared note. Any unsaved local draft for it will also be removed.")
-        }
     }
 }
