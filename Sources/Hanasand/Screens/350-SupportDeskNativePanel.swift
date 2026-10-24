@@ -285,11 +285,22 @@ struct SupportDeskNativePanel: View {
             Picker("Rating", selection: $pendingFilters.stars) { ForEach(SupportDeskStarsFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
             Picker("Feedback", selection: $pendingFilters.feedback) { ForEach(SupportDeskFeedbackFilter.allCases) { Text($0.title).tag($0) } }.disabled(busy)
             Picker("Status", selection: $pendingFilters.status) { ForEach(SupportDeskStatusFilter.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented).disabled(busy)
-            HStack(spacing: 8) {
-                ActionButton(title: "Apply filters", icon: "checkmark") { applyFilters() }.disabled(busy)
-                ActionButton(title: "Clear filters", icon: "xmark") { pendingFilters = SupportDeskFilters(); applyFilters() }.disabled(busy)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { applyFilterButton; clearFilterButton }
+                VStack(alignment: .leading, spacing: 8) { applyFilterButton; clearFilterButton }
             }
         }
+    }
+
+    private var applyFilterButton: some View {
+        ActionButton(title: "Apply filters", icon: "checkmark") { applyFilters() }.disabled(busy)
+    }
+
+    private var clearFilterButton: some View {
+        ActionButton(title: "Clear filters", icon: "xmark") {
+            pendingFilters = SupportDeskFilters()
+            applyFilters()
+        }.disabled(busy)
     }
 
     @ViewBuilder
