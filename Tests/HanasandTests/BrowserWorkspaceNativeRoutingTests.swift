@@ -222,6 +222,19 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
     }
 
     @MainActor
+    func testGenericStripeLinkOpensInBuiltInBrowser() {
+        let model = DesktopAgentModel()
+        let sessionURL = "https://billing.stripe.com/p/session/cs_test_sensitive"
+        model.events = []
+
+        model.openURL(sessionURL, label: "Manage billing")
+
+        XCTAssertEqual(model.selectedSection, .browser)
+        XCTAssertEqual(model.browserOpenRequest?.url, sessionURL)
+        XCTAssertFalse(model.events.contains { $0.body.contains(sessionURL) })
+    }
+
+    @MainActor
     func testStripeInAppBrowserRejectsNonStripeHosts() {
         let model = DesktopAgentModel()
 

@@ -135,6 +135,10 @@ extension DesktopAgentModel {
             append(meta: label, body: "Invalid URL: \(rawValue)", kind: .error)
             return
         }
+        if ["billing.stripe.com", "checkout.stripe.com"].contains(url.host?.lowercased() ?? "") {
+            _ = openStripeInAppBrowser(url: rawValue, title: label, source: label)
+            return
+        }
         if BrowserWorkspaceModel.isHanasandOwnedURL(rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) {
             guard let route = BrowserWorkspaceModel.nativeRoute(for: rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) else {
                 append(meta: label, body: "This Hanasand page does not have a native Desktop route yet.", kind: .note)
