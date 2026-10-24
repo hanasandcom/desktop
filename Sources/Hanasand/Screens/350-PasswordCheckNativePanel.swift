@@ -3,6 +3,7 @@ import SwiftUI
 struct PasswordCheckNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
+    @State private var localPassword = ""
     @State private var hash = ""
     @State private var result: PasswordCheckResult?
     @State private var error = ""
@@ -13,11 +14,21 @@ struct PasswordCheckNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: "Check password", subtitle: "Leaked password records") {
-                Text("Enter a SHA-1 hash as on the website. Only its first five characters are sent; the complete hash stays on this Mac and clears when the check starts.")
+                Text("Hash a password on this Mac, or enter a SHA-1 hash. Only the first five hash characters are sent; the full password and hash stay here.")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+
+                SecureField("Password to hash on this Mac", text: $localPassword)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.none)
+                    .autocorrectionDisabled()
+                    .disabled(isChecking)
+                    .onSubmit { hashPasswordLocally() }
+                    .accessibilityLabel("Password to hash locally")
+                ActionButton(title: "Hash locally", icon: "lock.shield") { hashPasswordLocally() }
+                    .disabled(isChecking || localPassword.isEmpty)
 
                 TextField("40-character SHA-1 hash", text: $hash)
                     .textFieldStyle(.plain)
@@ -66,7 +77,16 @@ struct PasswordCheckNativePanel: View {
                 }
             }
         }
-        .onDisappear { cancelRequest() }
+        .onDisappear { localPassword = ""; cancelRequest() }
+    }
+
+    private func hashPasswordLocally() {
+        guard !isChecking, !localPassword.isEmpty else { return }
+        hash = PasswordCheckClient.sha1Hash(for: localPassword)
+        localPassword = ""
+        result = nil
+        error = ""
+        hashFieldFocused = true
     }
 
     private func check() {
@@ -96,6 +116,7 @@ struct PasswordCheckNativePanel: View {
 
     private func clear() {
         cancelRequest()
+        localPassword = ""
         hash = ""
         result = nil
         error = ""

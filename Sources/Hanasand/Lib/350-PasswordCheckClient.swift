@@ -1,3 +1,4 @@
+import CryptoKit
 import Compression
 import Foundation
 
@@ -5,6 +6,12 @@ enum PasswordCheckClient {
     static let maximumBundleBytes = 32 * 1024 * 1024
     static let maximumInflatedBytes = 64 * 1024 * 1024
     static let contentType = "application/vnd.hanasand.pwned-prefix"
+
+    static func sha1Hash(for password: String) -> String {
+        Insecure.SHA1.hash(data: Data(password.utf8))
+            .map { String(format: "%02X", $0) }
+            .joined()
+    }
 
     static func normalizeHash(_ input: String) throws -> String {
         let hash = input.filter { !$0.isWhitespace }.uppercased()

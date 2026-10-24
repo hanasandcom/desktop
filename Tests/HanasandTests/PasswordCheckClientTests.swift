@@ -13,6 +13,10 @@ final class PasswordCheckClientTests: XCTestCase {
         XCTAssertThrowsError(try PasswordCheckClient.normalizeHash(String(repeating: "Z", count: 40)))
     }
 
+    func testHashesPasswordLocallyToFullUppercaseSHA1() {
+        XCTAssertEqual(PasswordCheckClient.sha1Hash(for: "password"), "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8")
+    }
+
     func testRequestSendsOnlyFiveCharacterPrefixWithoutCredentialsOrCookies() throws {
         let request = try PasswordCheckClient.request(hash: sha1Hash.lowercased(), apiBaseURL: baseURL)
         XCTAssertEqual(request.url?.path, "/api/pwned")
