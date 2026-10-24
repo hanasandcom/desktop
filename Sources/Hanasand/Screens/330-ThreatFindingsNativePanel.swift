@@ -30,10 +30,9 @@ struct ThreatFindingsNativePanel: View {
     }
     private var currentLocalPage: Int { min(localPage, max(0, (findings.count - 1) / 20)) }
     private var selected: ThreatFinding? { findings.first { $0.id == selectedID } }
-    private var selectedCaseURL: URL? {
+    private var selectedCaseDestination: ThreatFindingCaseDestination? {
         guard let selected else { return nil }
-        return ThreatFindingCaseLink.url(
-            siteBaseURL: model.settings.websiteBaseURL,
+        return ThreatFindingCaseDestination.make(
             caseID: selected.caseID,
             alertID: selected.id,
             organizationID: selected.organizationID
@@ -142,9 +141,9 @@ struct ThreatFindingsNativePanel: View {
                     model.openNativeDashboard(path: "/ti/profiles", label: "Actor profile: \(item.actor)", detailID: item.actor, query: query)
                 }
             }
-            if let caseURL = selectedCaseURL {
+            if let destination = selectedCaseDestination {
                 ActionButton(title: "Open case", icon: "arrow.up.right") {
-                    model.openURL(caseURL.absoluteString, label: "Linked case")
+                    model.openNativeDashboard(path: "/cases", label: "Case", detailID: destination.caseID, query: destination.query)
                 }
             } else {
                 Text(item.caseID.isEmpty ? "No case yet" : "The linked case is not available for this workspace.")

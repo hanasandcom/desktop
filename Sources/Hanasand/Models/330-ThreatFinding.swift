@@ -1,5 +1,29 @@
 import Foundation
 
+struct ThreatFindingCaseDestination: Equatable {
+    let caseID: String
+    let alertID: String
+    let organizationID: String?
+
+    var query: [String: String] {
+        var values = ["alertId": alertID]
+        if let organizationID { values["organizationId"] = organizationID }
+        return values
+    }
+
+    static func make(caseID: String, alertID: String, organizationID: String?) -> ThreatFindingCaseDestination? {
+        guard isSafeIdentifier(caseID), isSafeIdentifier(alertID),
+              organizationID.map(isSafeIdentifier) ?? true else { return nil }
+        return ThreatFindingCaseDestination(caseID: caseID, alertID: alertID, organizationID: organizationID)
+    }
+
+    private static func isSafeIdentifier(_ value: String) -> Bool {
+        value.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil
+            && value != "." && value != ".."
+            && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+}
+
 struct ThreatFindingPage: Decodable {
     let organization: Organization?
     let visibilityDecision: VisibilityDecision
