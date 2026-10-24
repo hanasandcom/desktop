@@ -32,6 +32,26 @@ final class ServiceAccountsClientTests: XCTestCase {
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "id"), "user_1")
     }
 
+    func testRevokedHistoryFilterAndMutationAffordances() throws {
+        let directory = try JSONDecoder().decode(ServiceAccountDirectory.self, from: Data(#"{"endpoints":[],"accounts":[{"id":"svc_active","name":"Active monitor","description":"Current","active":true,"created_at":null,"keys":[]},{"id":"svc_revoked","name":"Retired monitor","description":"Legacy","active":false,"created_at":null,"keys":[{"id":"key_1","ownerId":"svc_revoked","enabled":false,"keyPrefix":"abc123","createdAt":"2026-01-01T00:00:00Z","lastUsedAt":"2026-02-01T00:00:00Z","scopes":[{"method":"GET","route":"/api/metrics","label":"Metrics","enabled":false}]}]}]}"#.utf8))
+        let activeOnly = ServiceAccountHistory.visibleAccounts(directory.accounts, query: "", descending: false, includeRevoked: false)
+        let allHistory = ServiceAccountHistory.visibleAccounts(directory.accounts, query: "", descending: false, includeRevoked: true)
+        let matchingHistory = ServiceAccountHistory.visibleAccounts(directory.accounts, query: "legacy", descending: false, includeRevoked: true)
+        let active = try XCTUnwrap(directory.accounts.first { $0.id == "svc_active" })
+        let revoked = try XCTUnwrap(directory.accounts.first { $0.id == "svc_revoked" })
+
+        XCTAssertEqual(activeOnly.map(\.id), ["svc_active"])
+        XCTAssertEqual(allHistory.map(\.id), ["svc_active", "svc_revoked"])
+        XCTAssertEqual(matchingHistory.map(\.id), ["svc_revoked"])
+        XCTAssertFalse(ServiceAccountHistory.includes(revoked, includeRevoked: false))
+        XCTAssertTrue(ServiceAccountHistory.includes(revoked, includeRevoked: true))
+        XCTAssertEqual(revoked.keys.first?.keyPrefix, "abc123")
+        XCTAssertEqual(revoked.keys.first?.scopes.first?.route, "/api/metrics")
+        XCTAssertTrue(ServiceAccountHistory.canMutate(active, writerAllowed: true))
+        XCTAssertFalse(ServiceAccountHistory.canMutate(revoked, writerAllowed: true))
+        XCTAssertFalse(ServiceAccountHistory.canMutate(active, writerAllowed: false))
+    }
+
     func testCreateVerifiesOneTimeCredentialAndScopes() async throws {
         var captured: URLRequest?
         let endpoint = ServiceAccountEndpoint(method: "GET", route: "/api/db", label: "Database")

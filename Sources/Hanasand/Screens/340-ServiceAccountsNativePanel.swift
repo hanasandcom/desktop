@@ -1,5 +1,25 @@
 import SwiftUI
 
+enum ServiceAccountHistory {
+    static func includes(_ account: ServiceAccountRecord, includeRevoked: Bool) -> Bool {
+        includeRevoked || account.active
+    }
+
+    static func visibleAccounts(_ accounts: [ServiceAccountRecord], query: String, descending: Bool, includeRevoked: Bool) -> [ServiceAccountRecord] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return accounts.filter { account in
+            includes(account, includeRevoked: includeRevoked)
+                && (needle.isEmpty || [account.name, account.id, account.description, account.keys.flatMap { $0.scopes.map { "\($0.method) \($0.route) \($0.label ?? "")" } }.joined(separator: " ")]
+                    .contains { $0.lowercased().contains(needle) })
+        }
+        .sorted { descending ? $0.name.localizedStandardCompare($1.name) == .orderedDescending : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    static func canMutate(_ account: ServiceAccountRecord, writerAllowed: Bool) -> Bool {
+        writerAllowed && account.active
+    }
+}
+
 struct ServiceAccountsNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -8,6 +28,7 @@ struct ServiceAccountsNativePanel: View {
     @State private var selectedID: String?
     @State private var search = ""
     @State private var descending = false
+    @State private var includeRevoked = false
     @State private var name = ""
     @State private var description = ""
     @State private var scopeQuery = ""
@@ -33,11 +54,18 @@ struct ServiceAccountsNativePanel: View {
 
     private var isImpersonating: Bool { !model.settings.impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var canWrite: Bool { access?.allowed == true && access?.canEdit == true && !isImpersonating && !busy && !loading && !reconciliationRequired }
-    private var selectedAccount: ServiceAccountRecord? { directory?.accounts.first(where: { $0.id == selectedID }) }
+    private var selectedAccount: ServiceAccountRecord? {
+        guard let account = directory?.accounts.first(where: { $0.id == selectedID }),
+              ServiceAccountHistory.includes(account, includeRevoked: includeRevoked) else { return nil }
+        return account
+    }
     private var visibleAccounts: [ServiceAccountRecord] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return (directory?.accounts.filter { $0.active && (query.isEmpty || [$0.name, $0.id, $0.description, $0.keys.flatMap { $0.scopes.map { "\($0.method) \($0.route) \($0.label ?? "")" } }.joined(separator: " ")].contains { $0.lowercased().contains(query) }) } ?? [])
-            .sorted { descending ? $0.name.localizedStandardCompare($1.name) == .orderedDescending : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        ServiceAccountHistory.visibleAccounts(directory?.accounts ?? [], query: search, descending: descending, includeRevoked: includeRevoked)
+    }
+
+    private var matchingAccountCountDescription: String {
+        let total = directory?.accounts.filter { includeRevoked || $0.active }.count ?? 0
+        return "\(visibleAccounts.count) matching of \(total) \(includeRevoked ? "retained" : "active") accounts"
     }
 
     var body: some View {
@@ -59,13 +87,22 @@ struct ServiceAccountsNativePanel: View {
             if isImpersonating { Label("Changes are disabled during impersonation.", systemImage: "person.crop.circle.badge.xmark").font(.system(size: 12)).foregroundStyle(theme.textSecondary) }
             if let access, access.allowed, !access.canEdit { Label("Read-only access. Current Hanasand owner or editor access is required for changes.", systemImage: "lock").font(.system(size: 12)).foregroundStyle(theme.textSecondary) }
             if let directory {
-                NativeGroupPanel(title: "Current accounts", subtitle: "\(visibleAccounts.count) matching of \(directory.accounts.filter(\.active).count) active accounts") {
-                    HStack {
-                        TextField("Search name, ID, description, or endpoint", text: $search).textFieldStyle(.roundedBorder)
-                        ActionButton(title: descending ? "Name Z–A" : "Name A–Z", icon: "arrow.up.arrow.down") { descending.toggle() }
+                NativeGroupPanel(title: "Current accounts", subtitle: matchingAccountCountDescription) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            TextField("Search name, ID, description, or endpoint", text: $search).textFieldStyle(.roundedBorder)
+                            ActionButton(title: descending ? "Name Z–A" : "Name A–Z", icon: "arrow.up.arrow.down") { descending.toggle() }
+                            Toggle("Include revoked history", isOn: $includeRevoked).toggleStyle(.checkbox)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            TextField("Search name, ID, description, or endpoint", text: $search).textFieldStyle(.roundedBorder)
+                            ActionButton(title: descending ? "Name Z–A" : "Name A–Z", icon: "arrow.up.arrow.down") { descending.toggle() }
+                            Toggle("Include revoked history", isOn: $includeRevoked).toggleStyle(.checkbox)
+                        }
                     }
                     if visibleAccounts.isEmpty {
-                        Text("No active service accounts match this view.").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
+                        Text(includeRevoked ? "No service accounts match this view." : "No active service accounts match this view. Include revoked history to inspect past accounts.")
+                            .font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     } else {
                         ForEach(visibleAccounts) { account in
                             Button {
@@ -122,9 +159,10 @@ struct ServiceAccountsNativePanel: View {
     }
 
     @ViewBuilder private func accountPanel(_ account: ServiceAccountRecord) -> some View {
+        let accountCanWrite = ServiceAccountHistory.canMutate(account, writerAllowed: canWrite)
         NativeGroupPanel(title: account.name, subtitle: "\(account.id) · \(account.active ? "Active" : "Revoked")") {
-            TextField("Account name", text: $name).textFieldStyle(.roundedBorder).disabled(!canWrite || !account.active)
-            TextField("Description", text: $description, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder).disabled(!canWrite || !account.active)
+            TextField("Account name", text: $name).textFieldStyle(.roundedBorder).disabled(!accountCanWrite)
+            TextField("Description", text: $description, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder).disabled(!accountCanWrite)
             Text("Created \(account.createdAt ?? "unknown"). Key secrets are never returned by the service.").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
             ForEach(account.keys) { key in
                 VStack(alignment: .leading, spacing: 4) {
@@ -138,8 +176,8 @@ struct ServiceAccountsNativePanel: View {
             }
             HStack {
                 ActionButton(title: busy ? "Saving…" : "Review update", icon: "pencil") { pending = .update }
-                    .disabled(!canWrite || !account.active || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (name == account.name && description == account.description))
-                ActionButton(title: "Review revocation", icon: "xmark.circle", tone: .danger) { pending = .revoke }.disabled(!canWrite || !account.active)
+                    .disabled(!accountCanWrite || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (name == account.name && description == account.description))
+                ActionButton(title: "Review revocation", icon: "xmark.circle", tone: .danger) { pending = .revoke }.disabled(!accountCanWrite)
             }
         }
     }
