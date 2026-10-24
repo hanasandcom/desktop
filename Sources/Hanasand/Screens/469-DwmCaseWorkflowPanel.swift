@@ -19,6 +19,7 @@ struct DwmCaseWorkflowPanel: View {
     @State private var pendingRetry: [String: IntelligenceCaseJSON]?
     @State private var error = ""
     @State private var notice = ""
+    @State private var noticeIsFailure = false
 
     private var caseID: String { detail.caseRecord.id }
     private var alertID: String? { detail.alertContext["id"]?.stringValue }
@@ -41,7 +42,7 @@ struct DwmCaseWorkflowPanel: View {
                 }
             }
             if !error.isEmpty { NativeNotice(message: error, title: "DWM workflow unavailable", tone: .error) }
-            if !notice.isEmpty { NativeNotice(message: notice, title: "Workflow record", tone: .success) }
+            if !notice.isEmpty { NativeNotice(message: notice, title: noticeIsFailure ? "Delivery failed" : "Workflow record", tone: noticeIsFailure ? .error : .success) }
             if pendingReconciliation != nil {
                 NativeNotice(message: "A write may have reached the server. Review refreshed case, delivery, and receiver history before starting another action.", title: "Review the outcome", tone: .info)
             }
@@ -157,7 +158,7 @@ struct DwmCaseWorkflowPanel: View {
 
     @MainActor private func saveReport(format: String) async {
         guard let snapshot, let alertID, !selectedEvidenceIDs.isEmpty else { return }
-        isWriting = true; error = ""; notice = ""
+        isWriting = true; error = ""; notice = ""; noticeIsFailure = false
         do {
             let expectedSettings = model.settings
             let client = try DwmCaseWorkflowClient(settings: expectedSettings, organizationIDOverride: organizationID)
@@ -191,7 +192,7 @@ struct DwmCaseWorkflowPanel: View {
 
     @MainActor private func refresh() async {
         guard !isLoading else { return }
-        isLoading = true; error = ""; notice = ""
+        isLoading = true; error = ""; notice = ""; noticeIsFailure = false
         do {
             let client = try DwmCaseWorkflowClient(settings: model.settings, organizationIDOverride: organizationID)
             let current = model.settings
@@ -210,7 +211,7 @@ struct DwmCaseWorkflowPanel: View {
     }
 
     @MainActor private func notifyDryRun() async {
-        isWriting = true; error = ""; notice = ""
+        isWriting = true; error = ""; notice = ""; noticeIsFailure = false
         do {
             let expectedSettings = model.settings
             let client = try DwmCaseWorkflowClient(settings: expectedSettings, organizationIDOverride: organizationID)
@@ -231,7 +232,7 @@ struct DwmCaseWorkflowPanel: View {
 
     @MainActor private func sendReport(dryRun: Bool, confirmedLive: Bool = false) async {
         guard let alertID, blockReason == nil else { return }
-        isWriting = true; error = ""; notice = ""
+        isWriting = true; error = ""; notice = ""; noticeIsFailure = false
         do {
             let expectedSettings = model.settings
             let client = try DwmCaseWorkflowClient(settings: expectedSettings, organizationIDOverride: organizationID)
@@ -239,8 +240,13 @@ struct DwmCaseWorkflowPanel: View {
                 destinationID: destinationID, alertID: alertID, dryRun: dryRun, confirmedLive: confirmedLive,
                 caseDetail: detail, currentSettings: expectedSettings,
                 scopeIsCurrent: { expectedSettings == model.settings })
-            notice = "\(dryRun ? "Dry run" : "Delivery") recorded · \(receipt["status"]?.stringValue ?? "receipt verified")"
             await refresh()
+            if receipt["status"]?.stringValue == "failed" {
+                notice = "The failed attempt was recorded. Review delivery history and its retry time before trying again."
+                noticeIsFailure = true
+            } else {
+                notice = "\(dryRun ? "Dry run" : "Delivery") recorded · \(receipt["status"]?.stringValue ?? "receipt verified")"
+            }
         } catch {
             self.error = error.localizedDescription
             if let workflowError = error as? DwmCaseWorkflowError, case let .uncertainOutcome(key) = workflowError {
@@ -255,14 +261,19 @@ struct DwmCaseWorkflowPanel: View {
         guard let alertID, let organizationID else { return }
         let previousAt = delivery["attemptedAt"]?.stringValue
         let previousCount = delivery["attemptCount"]?.numberValue ?? 0
-        isWriting = true; error = ""; notice = ""
+        isWriting = true; error = ""; notice = ""; noticeIsFailure = false
         do {
             let expectedSettings = model.settings
             let client = try DwmCaseWorkflowClient(settings: expectedSettings, organizationIDOverride: organizationID)
             let receipt = try await client.retryReport(delivery: delivery, caseID: caseID, alertID: alertID, currentSettings: expectedSettings,
                 scopeIsCurrent: { expectedSettings == model.settings })
-            notice = "Retry receipt confirmed · \(receipt["status"]?.stringValue ?? "status unavailable")"
             await refresh()
+            if receipt["status"]?.stringValue == "failed" {
+                notice = "The retry failure was recorded. Review delivery history and its retry time before trying again."
+                noticeIsFailure = true
+            } else {
+                notice = "Retry receipt confirmed · \(receipt["status"]?.stringValue ?? "status unavailable")"
+            }
         } catch {
             self.error = error.localizedDescription
             if let workflowError = error as? DwmCaseWorkflowError, case let .uncertainOutcome(key) = workflowError {

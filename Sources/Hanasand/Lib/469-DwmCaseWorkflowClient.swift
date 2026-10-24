@@ -152,9 +152,11 @@ struct DwmCaseWorkflowClient {
                                    "idempotencyKey": "desktop-case-notify:\(caseID):\(caseDetail.caseRecord.updatedAt.isEmpty ? caseDetail.caseRecord.createdAt : caseDetail.caseRecord.updatedAt)"]
         if let organizationID { body["organizationId"] = organizationID }
         let key = body["idempotencyKey"] as! String
-        let root: [String: IntelligenceCaseJSON]
-        do { root = try await postJSON(service: .ti, path: "/v1/cases/\(encoded(caseID))/customer-notification", body: body, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
+        let response: DwmWorkflowHTTPResponse
+        do { response = try await postJSON(service: .ti, path: "/v1/cases/\(encoded(caseID))/customer-notification", body: body, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
         catch DwmCaseWorkflowError.uncertainOutcome(_) { throw DwmCaseWorkflowError.uncertainOutcome(key) }
+        guard (200..<300).contains(response.statusCode) else { throw DwmCaseWorkflowError.uncertainOutcome(key) }
+        let root = response.body
         guard let receipt = root["receipt"]?.objectValue, let id = receipt["id"]?.stringValue, !id.isEmpty else { throw DwmCaseWorkflowError.uncertainOutcome(key) }
         return receipt
     }
@@ -215,16 +217,18 @@ struct DwmCaseWorkflowClient {
             "evidenceIds": evidenceIDs.sorted(), "reportFormat": format, "destinationId": destinationID,
             "dryRun": dryRun, "live": !dryRun,
         ]
-        let root: [String: IntelligenceCaseJSON]
-        do { root = try await postJSON(service: .api, path: "/dwm/webhook-deliveries", body: payload, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
+        let response: DwmWorkflowHTTPResponse
+        do { response = try await postJSON(service: .api, path: "/dwm/webhook-deliveries", body: payload, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
         catch DwmCaseWorkflowError.uncertainOutcome(_) { throw DwmCaseWorkflowError.uncertainOutcome(checksum) }
+        let root = response.body
         guard let raw = root["deliveries"]?.arrayValue.first?.objectValue else { throw DwmCaseWorkflowError.uncertainOutcome(checksum) }
         let row: DwmWorkflowReceipt
         do { row = try JSONDecoder().decode(DwmWorkflowReceipt.self, from: JSONSerialization.data(withJSONObject: raw.mapValues(\.foundationValue))) }
         catch { throw DwmCaseWorkflowError.uncertainOutcome(checksum) }
         guard !row.id.isEmpty, row.organizationID == organizationID, row.alertID == alertID, row.caseID == caseID,
               row.destinationID == destinationID, row.thirdPartyReport,
-              (dryRun && row.status == "dry_run") || (!dryRun && row.status == "delivered") else {
+              (response.statusCode == 502 && !dryRun && row.status == "failed"
+                || (200..<300).contains(response.statusCode) && ((dryRun && row.status == "dry_run") || (!dryRun && row.status == "delivered"))) else {
             throw DwmCaseWorkflowError.uncertainOutcome(checksum)
         }
         return raw
@@ -243,16 +247,19 @@ struct DwmCaseWorkflowClient {
             throw DwmCaseWorkflowError.invalidInput
         }
         let body: [String: Any] = ["organizationId": organizationID, "deliveryId": deliveryID]
-        let root: [String: IntelligenceCaseJSON]
-        do { root = try await postJSON(service: .api, path: "/dwm/webhook-deliveries", body: body, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
+        let response: DwmWorkflowHTTPResponse
+        do { response = try await postJSON(service: .api, path: "/dwm/webhook-deliveries", body: body, expectedSettings: currentSettings, scopeIsCurrent: scopeIsCurrent) }
         catch DwmCaseWorkflowError.uncertainOutcome(_) { throw DwmCaseWorkflowError.uncertainOutcome(deliveryID) }
+        let root = response.body
         guard let receipt = root["deliveries"]?.arrayValue.first?.objectValue,
               (receipt["deliveryId"]?.stringValue ?? receipt["id"]?.stringValue) == deliveryID,
               receipt["orgId"]?.stringValue == organizationID,
               receipt["alertId"]?.stringValue == alertID,
               receipt["reportCaseId"]?.stringValue == caseID,
               (receipt["destinationId"]?.stringValue ?? receipt["webhookDestinationId"]?.stringValue) == (current["destinationId"]?.stringValue ?? current["webhookDestinationId"]?.stringValue),
-              receipt["thirdPartyReport"] == .bool(true) else { throw DwmCaseWorkflowError.uncertainOutcome(deliveryID) }
+              receipt["thirdPartyReport"] == .bool(true),
+              (response.statusCode == 502 && receipt["status"]?.stringValue == "failed"
+                || (200..<300).contains(response.statusCode)) else { throw DwmCaseWorkflowError.uncertainOutcome(deliveryID) }
         let after = try await load(caseID: caseID, alertID: alertID)
         guard let refreshed = after.deliveries.first(where: { ($0["deliveryId"]?.stringValue ?? $0["id"]?.stringValue) == deliveryID }),
               refreshed["orgId"]?.stringValue == organizationID, refreshed["alertId"]?.stringValue == alertID,
@@ -274,7 +281,7 @@ struct DwmCaseWorkflowClient {
     }
 
     private func postJSON(service: Service, path: String, body: [String: Any], expectedSettings: HanasandDesktopSettings,
-                          scopeIsCurrent: @MainActor () -> Bool) async throws -> [String: IntelligenceCaseJSON] {
+                          scopeIsCurrent: @MainActor () -> Bool) async throws -> DwmWorkflowHTTPResponse {
         var components = try urlComponents(service: service, path: path)
         components.queryItems = scopeQuery(alertID: nil)
         guard let url = components.url else { throw DwmCaseWorkflowError.invalidEndpoint }
@@ -289,18 +296,26 @@ struct DwmCaseWorkflowClient {
 
     private func requestJSON(_ components: URLComponents, method: String) async throws -> [String: IntelligenceCaseJSON] {
         guard let url = components.url else { throw DwmCaseWorkflowError.invalidEndpoint }
-        return try await requestJSON(makeRequest(url, method: method))
+        let response = try await requestJSON(makeRequest(url, method: method))
+        guard (200..<300).contains(response.statusCode) else { throw DwmCaseWorkflowError.requestFailed(response.statusCode) }
+        return response.body
     }
 
-    private func requestJSON(_ request: URLRequest, uncertainOnFailure: Bool = false) async throws -> [String: IntelligenceCaseJSON] {
+    private func requestJSON(_ request: URLRequest, uncertainOnFailure: Bool = false) async throws -> DwmWorkflowHTTPResponse {
         do {
             let (data, raw) = try await send(request)
             guard data.count <= Self.responseLimit, let http = raw as? HTTPURLResponse, http.url == request.url,
                   let root = try? JSONDecoder().decode([String: IntelligenceCaseJSON].self, from: data) else {
                 throw uncertainOnFailure ? DwmCaseWorkflowError.uncertainOutcome("") : DwmCaseWorkflowError.malformedResponse
             }
-            guard (200..<300).contains(http.statusCode) else { throw DwmCaseWorkflowError.requestFailed(http.statusCode) }
-            return root
+            if !(200..<300).contains(http.statusCode) {
+                if uncertainOnFailure && http.statusCode >= 500 {
+                    guard http.statusCode == 502 else { throw DwmCaseWorkflowError.uncertainOutcome("") }
+                    return DwmWorkflowHTTPResponse(statusCode: http.statusCode, body: root)
+                }
+                throw DwmCaseWorkflowError.requestFailed(http.statusCode)
+            }
+            return DwmWorkflowHTTPResponse(statusCode: http.statusCode, body: root)
         } catch let error as DwmCaseWorkflowError { throw error }
         catch { throw uncertainOnFailure ? DwmCaseWorkflowError.uncertainOutcome("") : DwmCaseWorkflowError.malformedResponse }
     }
@@ -365,6 +380,11 @@ struct DwmCaseWorkflowClient {
         let expected = organizationID ?? userID
         return (row.tenantID.isEmpty || row.tenantID == expected) && (row.organizationID.isEmpty || row.organizationID == expected)
     }
+}
+
+private struct DwmWorkflowHTTPResponse {
+    let statusCode: Int
+    let body: [String: IntelligenceCaseJSON]
 }
 
 private struct DwmWorkflowReceipt: Decodable {

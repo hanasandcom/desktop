@@ -178,6 +178,51 @@ final class DwmCaseWorkflowTests: XCTestCase {
         } catch { XCTAssertTrue(isUncertain(error)) }
     }
 
+    func testLiveDelivery502KeepsDurableFailureReceiptAndUnreceipted5xxIsUncertain() async throws {
+        var settings = makeSettings(organization: "org-1")
+        settings.selectedOrganizationUserID = settings.userID
+        let detail = caseDetail(readOnly: false, enabledAction: true, organizationID: "org-1")
+        var postCount = 0
+        let recordedFailure = try DwmCaseWorkflowClient(settings: settings) { request in
+            if request.httpMethod == "POST" {
+                postCount += 1
+                return (Data(#"{"error":"Webhook delivery failed.","deliveries":[{"id":"d-failed","orgId":"org-1","alertId":"alert-1","reportCaseId":"case-1","destinationId":"dest-1","thirdPartyReport":true,"status":"failed","retryable":true,"retryDue":true,"nextRetryAt":"2026-10-24T12:00:00Z"}]}"#.utf8), self.response(request, statusCode: 502))
+            }
+            return (self.liveReportResponse(for: request), self.response(request))
+        }
+
+        let failure = try await recordedFailure.deliverReport(caseID: "case-1", evidenceIDs: ["evidence-1"], destinationID: "dest-1",
+            alertID: "alert-1", dryRun: false, confirmedLive: true, caseDetail: detail, currentSettings: settings)
+        XCTAssertEqual(failure["status"]?.stringValue, "failed")
+        XCTAssertEqual(postCount, 1)
+
+        let unreceipted = try DwmCaseWorkflowClient(settings: settings) { request in
+            if request.httpMethod == "POST" {
+                postCount += 1
+                return (Data(#"{"error":"The delivery outcome could not be confirmed."}"#.utf8), self.response(request, statusCode: 503))
+            }
+            return (self.liveReportResponse(for: request), self.response(request))
+        }
+        do {
+            _ = try await unreceipted.deliverReport(caseID: "case-1", evidenceIDs: ["evidence-1"], destinationID: "dest-1",
+                alertID: "alert-1", dryRun: false, confirmedLive: true, caseDetail: detail, currentSettings: settings)
+            XCTFail("An unreceipted post-dispatch 5xx must require reconciliation.")
+        } catch { XCTAssertTrue(isUncertain(error)) }
+        XCTAssertEqual(postCount, 2)
+
+        let rejected = try DwmCaseWorkflowClient(settings: settings) { request in
+            if request.httpMethod == "POST" {
+                return (Data(#"{"error":"Forbidden."}"#.utf8), self.response(request, statusCode: 403))
+            }
+            return (self.liveReportResponse(for: request), self.response(request))
+        }
+        do {
+            _ = try await rejected.deliverReport(caseID: "case-1", evidenceIDs: ["evidence-1"], destinationID: "dest-1",
+                alertID: "alert-1", dryRun: false, confirmedLive: true, caseDetail: detail, currentSettings: settings)
+            XCTFail("A request rejected by authorization must remain a known client error.")
+        } catch { XCTAssertEqual(error as? DwmCaseWorkflowError, .requestFailed(403)) }
+    }
+
     func testEvidenceLimitsAndScopeChangesBlockBeforeWrite() async throws {
         var settings = makeSettings(organization: "org-1")
         settings.selectedOrganizationUserID = settings.userID
@@ -346,8 +391,8 @@ final class DwmCaseWorkflowTests: XCTestCase {
         return try! JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
     }
 
-    private func response(_ request: URLRequest) -> HTTPURLResponse {
-        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+    private func response(_ request: URLRequest, statusCode: Int = 200) -> HTTPURLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: statusCode, httpVersion: "HTTP/1.1", headerFields: nil)!
     }
 
     private func isUncertain(_ error: Error) -> Bool {
