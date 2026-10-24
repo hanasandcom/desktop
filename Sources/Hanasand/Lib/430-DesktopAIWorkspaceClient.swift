@@ -663,6 +663,13 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
     @Published private(set) var isSending = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var isUnavailable = false
+    @Published private(set) var chatGPTMembership: ChatGPTMembershipStatus = .loading
+    @Published private(set) var chatGPTItems: [ChatGPTPromptPortalItem] = []
+    @Published private(set) var chatGPTActivityConversationID: String?
+    @Published private(set) var chatGPTActivityError: String?
+    @Published private(set) var isRefreshingChatGPTActivity = false
+    @Published private(set) var isSubmittingChatGPT = false
+    @Published private(set) var chatGPTSubmissionUncertain = false
 
     private var routeConversationID: String?
     private var routeShareID: String?
@@ -673,6 +680,8 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
     private var ownerID = ""
     private var settingsSnapshot: HanasandDesktopSettings?
     private var client: DesktopAIWorkspaceClient?
+    private var chatGPTClient: ChatGPTPromptPortalClient?
+    private var chatGPTPollTask: Task<Void, Never>?
     private var sharePromptContexts: [String: String] = [:]
     private var pendingToolQueue: [DesktopAIPendingToolAction] = []
 
@@ -701,6 +710,115 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
         createRouteShareConversation = createShareConversation
     }
 
+    deinit { chatGPTPollTask?.cancel() }
+
+    var canUseChatGPT: Bool { chatGPTMembership == .member }
+
+    var chatGPTHistoryReady: Bool {
+        guard let selectedConversationID else { return false }
+        return chatGPTActivityConversationID == selectedConversationID
+    }
+
+    var chatGPTStatusSummary: String? {
+        guard !chatGPTItems.isEmpty else { return nil }
+        let active = chatGPTItems.filter { $0.status == "queued" || $0.status == "running" }.count
+        return active > 0 ? "\(active) ChatGPT request\(active == 1 ? "" : "s") active" : "ChatGPT queue is up to date"
+    }
+
+    func startChatGPTPolling() {
+        chatGPTPollTask?.cancel()
+        guard let id = selectedConversationID, canUseChatGPT, chatGPTClient != nil else { return }
+        chatGPTPollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.selectedConversationID == id else { return }
+                await self.refreshChatGPTActivity(clearUncertain: false)
+                let hasActive = self.chatGPTItems.contains { $0.status == "queued" || $0.status == "running" }
+                do { try await Task.sleep(nanoseconds: hasActive ? 4_000_000_000 : 15_000_000_000) }
+                catch { return }
+            }
+        }
+    }
+
+    func refreshChatGPTActivity(clearUncertain: Bool = true) async {
+        guard !isRefreshingChatGPTActivity, let id = selectedConversationID,
+              let chatGPTClient, canUseChatGPT else { return }
+        isRefreshingChatGPTActivity = true
+        defer { isRefreshingChatGPTActivity = false }
+        do {
+            let items = try await chatGPTClient.loadActivity(conversationID: id)
+            guard selectedConversationID == id else { return }
+            chatGPTItems = items
+            chatGPTActivityConversationID = id
+            chatGPTActivityError = nil
+            if clearUncertain { chatGPTSubmissionUncertain = false }
+        } catch {
+            guard selectedConversationID == id else { return }
+            chatGPTActivityError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func sendChatGPTPrompt(_ rawPrompt: String) async -> Bool {
+        guard !isSubmittingChatGPT, !isSending, canUseChatGPT, chatGPTHistoryReady,
+              !chatGPTSubmissionUncertain, let chatGPTClient,
+              let conversation = selectedConversation, conversation.canWrite else { return false }
+        let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return false }
+
+        let portalMessages = chatGPTItems.flatMap { item -> [DesktopAIMessage] in
+            let isPending = item.status == "queued" || item.status == "running"
+            let statusText: String
+            switch item.status {
+            case "queued": statusText = item.priority == "now" ? "Up next" : "In the queue"
+            case "running": statusText = "ChatGPT is working"
+            case "error": statusText = "Could not complete"
+            default: statusText = "Finished"
+            }
+            let metadata: [String: DesktopAIJSONValue] = [
+                "promptPortalId": .string(item.id), "promptPortalStatus": .string(item.status),
+                "threadId": .string(item.threadId ?? ChatGPTPromptPortalClient.threadID(conversation.id)),
+                "statusText": .string(statusText),
+                "files": .array(item.files.map { .object(["id": .string($0.id), "name": $0.name.map(DesktopAIJSONValue.string) ?? .null]) }),
+            ]
+            let created = item.createdAt
+            let answerDate = item.completedAt ?? item.startedAt ?? item.createdAt
+            let resultText = isPending ? "\(statusText)…" : (item.result?.isEmpty == false ? item.result! : item.status == "error" ? "The request could not be completed." : "Completed without a text response.")
+            return [
+                DesktopAIMessage(id: "\(item.id)-request", role: "user", content: item.prompt, modelName: "ChatGPT", metadata: metadata, createdAt: created),
+                DesktopAIMessage(id: "\(item.id)-response", role: "assistant", content: resultText, pending: isPending, error: item.status == "error", modelName: "ChatGPT", metadata: metadata, createdAt: answerDate),
+            ]
+        }
+        let allMessages = (conversation.messages + portalMessages).sorted { $0.createdAt < $1.createdAt }
+        let context = allMessages.filter { !$0.pending && !$0.error && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { message in
+                let promptID: String? = if case .string(let id)? = message.metadata["promptPortalId"] { id } else { nil }
+                let files = promptID.flatMap { promptID in
+                    chatGPTItems.first(where: { $0.id == promptID })?.files.map {
+                        ChatGPTPromptContextMessage.FileReference(itemId: promptID, fileId: $0.id)
+                    }
+                }
+                return ChatGPTPromptContextMessage(role: message.role == "user" ? "user" : "assistant",
+                                                   content: message.content, modelName: message.modelName,
+                                                   files: files?.isEmpty == false ? files : nil)
+            }
+
+        isSubmittingChatGPT = true
+        defer { isSubmittingChatGPT = false }
+        errorMessage = nil
+        do {
+            chatGPTItems = try await chatGPTClient.submit(prompt: prompt, conversationID: conversation.id, context: context)
+            chatGPTActivityConversationID = conversation.id
+            chatGPTActivityError = nil
+            chatGPTSubmissionUncertain = false
+            startChatGPTPolling()
+            return true
+        } catch {
+            chatGPTSubmissionUncertain = true
+            let description = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            chatGPTActivityError = "\(description) Refresh the ChatGPT queue to check whether it was accepted before sending again."
+            return false
+        }
+    }
+
     var selectedConversation: DesktopAIConversation? {
         conversations.first { $0.id == selectedConversationID }
     }
@@ -710,7 +828,15 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
         return !conversations.contains(where: { $0.id == routeConversationID })
     }
 
-    func select(_ id: String) { selectedConversationID = id; routeConversationID = id }
+    func select(_ id: String) {
+        selectedConversationID = id
+        routeConversationID = id
+        chatGPTActivityConversationID = nil
+        chatGPTItems = []
+        chatGPTActivityError = nil
+        chatGPTSubmissionUncertain = false
+        startChatGPTPolling()
+    }
 
     func setPreferredModel(_ model: String?) async {
         guard let client, var selected = selectedConversation, selected.canWrite else { return }
@@ -950,12 +1076,27 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
     func refresh(settings: HanasandDesktopSettings) async {
         guard !isLoading else { return }
         isLoading = true; errorMessage = nil; isUnavailable = false
+        chatGPTPollTask?.cancel()
+        chatGPTClient = nil
+        chatGPTMembership = .loading
+        chatGPTActivityConversationID = nil
+        chatGPTItems = []
+        chatGPTActivityError = nil
+        chatGPTSubmissionUncertain = false
         defer { isLoading = false }
         do {
             let api = try DesktopAIWorkspaceClient(settings: settings)
             let workspace = try await api.loadWorkspace()
             guard !Task.isCancelled else { return }
             client = api; ownerID = settings.userID; settingsSnapshot = settings
+            do {
+                let portal = try ChatGPTPromptPortalClient(settings: settings)
+                chatGPTClient = portal
+                chatGPTMembership = try await portal.hasActiveHanasandMembership() ? .member : .nonmember
+            } catch {
+                chatGPTClient = nil
+                chatGPTMembership = .error((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
             conversations = workspace.conversations.sorted { $0.updatedAt > $1.updatedAt }
             repositories = workspace.repositories
             deployments = workspace.deployments
@@ -974,6 +1115,10 @@ final class DesktopAIWorkspaceViewModel: ObservableObject {
             } else if selectedConversationID == nil || !conversations.contains(where: { $0.id == selectedConversationID }) {
                 selectedConversationID = conversations.first(where: { $0.archivedAt == nil })?.id ?? conversations.first?.id
             }
+            chatGPTActivityConversationID = nil
+            chatGPTItems = []
+            chatGPTSubmissionUncertain = false
+            startChatGPTPolling()
             await refreshDeploymentData()
             if createRouteShareConversation, !didCreateRouteShareConversation, let routeShareID {
                 let shareContext = try await ShareChatContextClient(settings: settings).load(

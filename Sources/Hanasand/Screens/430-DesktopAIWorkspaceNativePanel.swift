@@ -14,6 +14,7 @@ struct DesktopAIWorkspaceNativePanel: View {
     @State private var showArchived = false
     @State private var titleDraft = ""
     @State private var composer = ""
+    @State private var selectedProvider = "hanasand"
     @State private var showingDeleteConfirmation = false
     @State private var deploymentVMName = ""
     @State private var deploymentPort = "3000"
@@ -59,6 +60,7 @@ struct DesktopAIWorkspaceNativePanel: View {
         }
         .onChange(of: workspace.selectedConversationID) { _, _ in
             titleDraft = workspace.selectedConversation?.title ?? ""
+            workspace.startChatGPTPolling()
             Task { await workspace.refreshDeploymentData() }
         }
         .alert("Delete this conversation?", isPresented: $showingDeleteConfirmation) {
@@ -305,13 +307,13 @@ struct DesktopAIWorkspaceNativePanel: View {
             if !conversation.canWrite {
                 NativeNotice(message: "You have reviewer access. This conversation is read-only.").padding(.horizontal, 12).padding(.top, 8)
             }
-            if conversation.messages.isEmpty {
+            if conversation.messages.isEmpty && workspace.chatGPTItems.isEmpty {
                 NativeEmptyState(title: "Start the conversation", message: "Messages and replies will be saved to this Hanasand AI conversation.")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(conversation.messages) { message in
+                        ForEach(displayedMessages(for: conversation)) { message in
                             messageCard(message)
                         }
                     }
@@ -320,19 +322,66 @@ struct DesktopAIWorkspaceNativePanel: View {
                 }
             }
             Divider()
+            HStack(spacing: 8) {
+                Picker("AI provider", selection: $selectedProvider) {
+                    Text("Hanasand AI").tag("hanasand")
+                    Text("ChatGPT").tag("chatgpt")
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
+                .disabled(!conversation.canWrite || workspace.isSending || workspace.isSubmittingChatGPT)
+                Spacer(minLength: 0)
+                if selectedProvider == "chatgpt" {
+                    Button {
+                        Task { await workspace.refreshChatGPTActivity(clearUncertain: true) }
+                    } label: { Image(systemName: "arrow.clockwise") }
+                    .help("Refresh ChatGPT queue")
+                    .disabled(workspace.isRefreshingChatGPTActivity || !workspace.canUseChatGPT)
+                }
+            }
+            .padding(.horizontal, 12).padding(.top, 8)
+            if selectedProvider == "chatgpt" {
+                if !conversation.canWrite {
+                    NativeNotice(message: "Reviewer access is read-only. ChatGPT requests are unavailable.")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if workspace.chatGPTMembership == .loading {
+                    NativeNotice(message: "Verifying Hanasand organization membership…")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if case .error(let message) = workspace.chatGPTMembership {
+                    NativeNotice(message: "ChatGPT access could not be verified: \(message). Refresh the workspace to retry.")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if !workspace.canUseChatGPT {
+                    NativeNotice(message: "ChatGPT is available to active Hanasand organization members.")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if !workspace.chatGPTHistoryReady {
+                    NativeNotice(message: workspace.isRefreshingChatGPTActivity ? "Loading complete ChatGPT conversation history…" : "Loading complete ChatGPT conversation history before sending…")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if workspace.chatGPTSubmissionUncertain {
+                    NativeNotice(message: "\(workspace.chatGPTActivityError ?? "The request outcome is unknown.")")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if let error = workspace.chatGPTActivityError {
+                    NativeNotice(message: "ChatGPT queue refresh failed: \(error)")
+                        .padding(.horizontal, 12).padding(.top, 6)
+                } else if let summary = workspace.chatGPTStatusSummary {
+                    Text(summary).font(.system(size: 9)).foregroundStyle(theme.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 5)
+                }
+            }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField("Ask Hanasand AI", text: $composer, axis: .vertical)
+                TextField(selectedProvider == "chatgpt" ? "Ask ChatGPT" : "Ask Hanasand AI", text: $composer, axis: .vertical)
                     .textFieldStyle(.roundedBorder).lineLimit(1...5)
                     .onSubmit { submit() }
-                    .disabled(!conversation.canWrite || workspace.isSending)
+                    .disabled(!conversation.canWrite || workspace.isSending || workspace.isSubmittingChatGPT
+                        || (selectedProvider == "chatgpt" && (!workspace.canUseChatGPT || !workspace.chatGPTHistoryReady || workspace.chatGPTSubmissionUncertain)))
                 Button { submit() } label: {
-                    Label(workspace.isSending ? "Working" : "Send", systemImage: "arrow.up.circle.fill")
+                    Label(isProviderWorking ? "Working" : "Send", systemImage: "arrow.up.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!conversation.canWrite || workspace.isSending || composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!conversation.canWrite || isProviderWorking || composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || (selectedProvider == "chatgpt" && (!workspace.canUseChatGPT || !workspace.chatGPTHistoryReady || workspace.chatGPTSubmissionUncertain)))
             }
             .padding(12)
-            Text("Chats are saved in your account. Connected models are used when available; otherwise replies use the Hanasand AI text endpoint.")
+            Text(selectedProvider == "chatgpt" ? "ChatGPT requests are added to the shared queue and update here automatically." : "Chats are saved in your account. Connected models are used when available; otherwise replies use the Hanasand AI text endpoint.")
                 .font(.system(size: 9)).foregroundStyle(theme.textTertiary).frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .bottom], 12)
         }
     }
@@ -543,9 +592,38 @@ struct DesktopAIWorkspaceNativePanel: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         composer = ""
         Task {
-            let sent = await workspace.sendPrompt(text)
+            let sent = selectedProvider == "chatgpt"
+                ? await workspace.sendChatGPTPrompt(text)
+                : await workspace.sendPrompt(text)
             if !sent { composer = text }
         }
+    }
+
+    private var isProviderWorking: Bool { workspace.isSending || workspace.isSubmittingChatGPT }
+
+    private func displayedMessages(for conversation: DesktopAIConversation) -> [DesktopAIMessage] {
+        guard workspace.chatGPTActivityConversationID == conversation.id else { return conversation.messages }
+        let portal = workspace.chatGPTItems.flatMap { item -> [DesktopAIMessage] in
+            let pending = item.status == "queued" || item.status == "running"
+            let label: String
+            switch item.status {
+            case "queued": label = item.priority == "now" ? "Up next" : "In the queue"
+            case "running": label = "ChatGPT is working"
+            case "error": label = "Could not complete"
+            default: label = "Finished"
+            }
+            let metadata: [String: DesktopAIJSONValue] = [
+                "promptPortalId": .string(item.id), "promptPortalStatus": .string(item.status),
+                "statusText": .string(label),
+                "files": .array(item.files.map { .object(["id": .string($0.id), "name": $0.name.map(DesktopAIJSONValue.string) ?? .null]) }),
+            ]
+            let reply = pending ? "\(label)…" : (item.result?.isEmpty == false ? item.result! : item.status == "error" ? "The request could not be completed." : "Completed without a text response.")
+            return [
+                DesktopAIMessage(id: "\(item.id)-request", role: "user", content: item.prompt, modelName: "ChatGPT", metadata: metadata, createdAt: item.createdAt),
+                DesktopAIMessage(id: "\(item.id)-response", role: "assistant", content: reply, pending: pending, error: item.status == "error", modelName: "ChatGPT", metadata: metadata, createdAt: item.completedAt ?? item.startedAt ?? item.createdAt),
+            ]
+        }
+        return (conversation.messages + portal).sorted { $0.createdAt < $1.createdAt }
     }
 
     private func date(_ value: String) -> String {
