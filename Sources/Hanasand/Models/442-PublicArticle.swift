@@ -2,6 +2,7 @@ import Foundation
 
 struct PublicArticle: Decodable, Identifiable, Equatable {
     struct Metadata: Decodable, Equatable {
+        let image: String?
         let description: String?
         let estimatedMinutes: Int?
         let wordCount: Int?
@@ -13,6 +14,8 @@ struct PublicArticle: Decodable, Identifiable, Equatable {
     let modified: String
     let content: String
     let metadata: Metadata
+
+    var coverAsset: PublicArticleCoverAsset? { metadata.coverAsset }
 
     var publishedDate: Date? { Self.parseDate(created) }
     var updatedDate: Date? { Self.parseDate(modified) }
@@ -46,6 +49,38 @@ struct PublicArticle: Decodable, Identifiable, Equatable {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+}
+
+enum PublicArticleCoverAsset: String, Equatable {
+    case city = "/images/assets/city.jpg"
+    case art = "/images/assets/art.png"
+    case project = "/images/assets/project.jpg"
+    case abstract = "/images/assets/abstract.jpg"
+
+    var resourceName: String {
+        switch self {
+        case .city: "city"
+        case .art: "art"
+        case .project: "project"
+        case .abstract: "abstract"
+        }
+    }
+
+    var fileExtension: String {
+        switch self {
+        case .city, .project, .abstract: "jpg"
+        case .art: "png"
+        }
+    }
+}
+
+private extension PublicArticle.Metadata {
+    var coverAsset: PublicArticleCoverAsset? {
+        guard let image = image?.trimmingCharacters(in: .whitespacesAndNewlines), !image.isEmpty else {
+            return nil
+        }
+        return PublicArticleCoverAsset(rawValue: image)
+    }
 }
 
 struct PublicArticleCatalog: Decodable {

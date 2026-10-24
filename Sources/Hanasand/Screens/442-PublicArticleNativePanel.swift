@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PublicArticleNativePanel: View {
     @Environment(\.desktopTheme) private var theme
@@ -83,6 +84,8 @@ struct PublicArticleNativePanel: View {
             title: article.title,
             subtitle: article.publishedDate.map { "Published \($0.formatted(date: .abbreviated, time: .omitted))" } ?? "Published date unavailable"
         ) {
+            articleCover(article)
+
             if let description = article.descriptionText {
                 Text(description)
                     .font(.system(size: 13))
@@ -97,6 +100,35 @@ struct PublicArticleNativePanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    @ViewBuilder private func articleCover(_ article: PublicArticle) -> some View {
+        if let asset = article.coverAsset,
+           let url = Bundle.module.url(
+                forResource: asset.resourceName,
+                withExtension: asset.fileExtension,
+                subdirectory: "images/assets"
+           ),
+           let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity)
+                .frame(height: 142)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
+        } else {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.field)
+                .overlay {
+                    Image(systemName: "doc.richtext")
+                        .font(.system(size: 24))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .frame(height: 142)
+                .accessibilityHidden(true)
+        }
     }
 
     private func articleContent(_ article: PublicArticle) -> some View {

@@ -57,6 +57,38 @@ final class PublicArticleNativePanelTests: XCTestCase {
         XCTAssertNotNil(article.descriptionText)
     }
 
+    func testBundledArticlesResolveOnlyKnownCoverAssets() throws {
+        let catalog = try PublicArticleCatalog.bundled()
+
+        XCTAssertEqual(catalog.article(for: "bot")?.coverAsset, .city)
+        XCTAssertEqual(catalog.article(for: "cache")?.coverAsset, .art)
+        XCTAssertEqual(catalog.article(for: "event")?.coverAsset, .project)
+        XCTAssertEqual(catalog.article(for: "lsm")?.coverAsset, .abstract)
+        XCTAssertEqual(catalog.article(for: "theme")?.coverAsset, .abstract)
+        XCTAssertNil(catalog.article(for: "readme")?.coverAsset)
+
+        for asset in [PublicArticleCoverAsset.city, .art, .project, .abstract] {
+            XCTAssertNotNil(
+                Bundle.module.url(
+                    forResource: asset.resourceName,
+                    withExtension: asset.fileExtension,
+                    subdirectory: "images/assets"
+                ),
+                "Missing bundled cover resource for \(asset.rawValue)"
+            )
+        }
+    }
+
+    func testMissingOrUntrustedCoverPathsRemainAbsent() throws {
+        let missingImage = Data(#"{"id":"plain","title":"Plain","created":"2024-01-01T00:00:00Z","modified":"2024-01-01T00:00:00Z","content":"Body","metadata":{}}"#.utf8)
+        let unknownImage = Data(#"{"id":"unknown","title":"Unknown","created":"2024-01-01T00:00:00Z","modified":"2024-01-01T00:00:00Z","content":"Body","metadata":{"image":"https://example.com/cover.jpg"}}"#.utf8)
+        let traversalImage = Data(#"{"id":"traversal","title":"Traversal","created":"2024-01-01T00:00:00Z","modified":"2024-01-01T00:00:00Z","content":"Body","metadata":{"image":"/images/assets/../../private.jpg"}}"#.utf8)
+
+        XCTAssertNil(try JSONDecoder().decode(PublicArticle.self, from: missingImage).coverAsset)
+        XCTAssertNil(try JSONDecoder().decode(PublicArticle.self, from: unknownImage).coverAsset)
+        XCTAssertNil(try JSONDecoder().decode(PublicArticle.self, from: traversalImage).coverAsset)
+    }
+
     func testMarkdownParserBuildsNativeReadableBlocks() {
         let blocks = PublicArticleMarkdown.blocks(from: """
         ## Setup
