@@ -51,6 +51,53 @@ final class SecurityScannerClientTests: XCTestCase {
         XCTAssertFalse(try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner service is loading."}"#.utf8)).servicesPaused)
     }
 
+    func testCoveragePreservesAbsentNullAndLastCompleteRunWhileLatestRunIsPartial() throws {
+        var payload: [String: Any] = [
+            "assetId": "asset-1", "engine": "nmap", "state": "partial", "freshness": "stale",
+            "lastRunId": "run-partial", "lastRunAt": "2026-10-24T10:00:00Z", "status": "partial",
+            "authorizedAddresses": ["203.0.113.1", "203.0.113.2"],
+            "requestedAddresses": ["203.0.113.1", "203.0.113.2"], "coverageKnown": true,
+            "attemptedAddresses": 2, "completedAddresses": 1, "freshnessWindowHours": 24,
+            "freshnessReason": "latest run was partial",
+        ]
+
+        func decodeCoverage() throws -> SecurityScannerCoverage {
+            try JSONDecoder().decode(SecurityScannerCoverage.self, from: JSONSerialization.data(withJSONObject: payload))
+        }
+        func encodedCoverage(_ coverage: SecurityScannerCoverage) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(coverage)) as? [String: Any])
+        }
+
+        let olderServer = try decodeCoverage()
+        XCTAssertEqual(olderServer.lastCompleteRun, .notReported)
+        XCTAssertNil(olderServer.lastCompleteRunSummary)
+        XCTAssertFalse(try encodedCoverage(olderServer).keys.contains("lastCompleteRun"))
+
+        payload["lastCompleteRun"] = NSNull()
+        let noSnapshot = try decodeCoverage()
+        XCTAssertEqual(noSnapshot.lastCompleteRun, .noCompleteRun)
+        XCTAssertEqual(noSnapshot.lastCompleteRunSummary, "No complete scan recorded")
+        XCTAssertTrue(try encodedCoverage(noSnapshot)["lastCompleteRun"] is NSNull)
+
+        payload["lastCompleteRun"] = [
+            "runId": "run-complete", "at": "2026-10-20T08:30:00Z", "source": "scheduled",
+            "profile": "tcp-top-1000", "requestedAddresses": ["203.0.113.1", "203.0.113.2"],
+            "completedAddresses": 2, "completedAddressList": ["203.0.113.1", "203.0.113.2"],
+            "scopeMatchesAuthorizedSnapshot": true,
+        ] as [String: Any]
+        let previousComplete = try decodeCoverage()
+        XCTAssertEqual(previousComplete.state, "partial", "the previous complete snapshot must not replace current status")
+        XCTAssertEqual(previousComplete.lastRunId, "run-partial")
+        XCTAssertEqual(previousComplete.lastCompleteRunSummary, "Last complete: 2/2 addresses")
+        XCTAssertEqual(previousComplete.lastCompleteRunAt, "2026-10-20T08:30:00Z")
+        XCTAssertEqual(try JSONDecoder().decode(SecurityScannerCoverage.self, from: JSONEncoder().encode(previousComplete)), previousComplete)
+
+        payload["state"] = "failed"
+        let failedLatestRun = try decodeCoverage()
+        XCTAssertEqual(failedLatestRun.state, "failed")
+        XCTAssertEqual(failedLatestRun.lastCompleteRunSummary, previousComplete.lastCompleteRunSummary)
+    }
+
     func testHistoryFiltersAndLocalPagingMatchWebsiteSearchFields() throws {
         let runs = try (0..<23).map { index in
             try scannerRun(id: "run-\(index)", target: index == 4 ? "api.example.com" : "host-\(index).example.com",

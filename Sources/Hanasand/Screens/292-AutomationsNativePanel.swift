@@ -419,7 +419,9 @@ struct AutomationsNativePanel: View {
                         Text("\(issue.caseNumber) · \(issue.resolvedAt == nil ? "Open" : "Resolved") · \(issue.occurrences) occurrence\(issue.occurrences == 1 ? "" : "s")")
                             .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
                         Text(issue.summary).font(.system(size: 11, weight: .regular)).foregroundStyle(theme.textSecondary).lineLimit(4).textSelection(.enabled)
-                        Text("Last seen \(issue.lastSeenAt)").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                        Text("First seen: \(formatDateText(issue.firstSeenAt, fallback: issue.firstSeenAt)) · Last seen: \(formatDateText(issue.lastSeenAt, fallback: issue.lastSeenAt))\(issue.resolvedAt.map { " · Resolved: \(formatDateText($0, fallback: $0))" } ?? "")")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                         ForEach(Array(issue.notifications.enumerated()), id: \.offset) { item in
                             let notification = item.element
                             let delivery = notification.error.map { "Discord delivery failed: \($0)" }
@@ -428,6 +430,13 @@ struct AutomationsNativePanel: View {
                             Text(delivery)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(notification.error == nil ? theme.textTertiary : theme.danger)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let nextAttemptAt = notification.nextAttemptAt {
+                                Text("Next eligible notification \(formatDateText(nextAttemptAt, fallback: nextAttemptAt))")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(theme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }.padding(8).background(theme.cardRaised).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }

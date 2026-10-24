@@ -151,6 +151,11 @@ struct SecurityScannerNativePanel: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("\(assetName(coverage.assetId)) · \(engineName(coverage.engine))").font(.subheadline.weight(.semibold))
                                 Text("\(coverage.state.replacingOccurrences(of: "_", with: " ")) · \(coverage.freshness) · \(coverage.freshnessReason)").font(.caption).foregroundStyle(.secondary)
+                                if let lastCompleteRunSummary = coverage.lastCompleteRunSummary {
+                                    Text(coverage.lastCompleteRunAt.map { "\(lastCompleteRunSummary) · \(formatDateText($0, fallback: $0))" } ?? lastCompleteRunSummary)
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                                }
                                 if let web = coverage.webCoverage {
                                     Text("Web: \(web.urlsVisited.map(String.init) ?? "—") URLs · \(web.totalAlerts) alerts · \(web.complete ? "complete" : "partial")").font(.caption2).foregroundStyle(.secondary)
                                 }

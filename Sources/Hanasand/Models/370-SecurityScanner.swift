@@ -108,6 +108,23 @@ struct SecurityScannerCatalogEntry: Codable, Identifiable, Equatable {
     let setup: String
 }
 
+struct SecurityScannerLastCompleteRun: Codable, Equatable {
+    let runId: String?
+    let at: String?
+    let source: String
+    let profile: String?
+    let requestedAddresses: [String]
+    let completedAddresses: Int?
+    let completedAddressList: [String]?
+    let scopeMatchesAuthorizedSnapshot: Bool?
+}
+
+enum SecurityScannerLastCompleteRunField: Equatable {
+    case notReported
+    case noCompleteRun
+    case run(SecurityScannerLastCompleteRun)
+}
+
 struct SecurityScannerCoverage: Codable, Identifiable, Equatable {
     var id: String { "\(assetId):\(engine)" }
     let assetId: String
@@ -135,6 +152,106 @@ struct SecurityScannerCoverage: Codable, Identifiable, Equatable {
     let freshnessReason: String
     let verificationStatus: String?
     let webCoverage: SecurityScannerWebCoverage?
+    let lastCompleteRun: SecurityScannerLastCompleteRunField
+
+    var lastCompleteRunAt: String? {
+        guard case .run(let run) = lastCompleteRun else { return nil }
+        return run.at
+    }
+
+    var lastCompleteRunSummary: String? {
+        switch lastCompleteRun {
+        case .notReported:
+            return nil
+        case .noCompleteRun:
+            return "No complete scan recorded"
+        case .run(let run):
+            let completed = run.completedAddresses.map(String.init) ?? "unknown"
+            return "Last complete: \(completed)/\(run.requestedAddresses.count) addresses"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case assetId, engine, state, freshness, lastRunId, lastRunAt, source, profile, status
+        case authorizedAddresses, requestedAddresses, coverageKnown, attemptedAddresses
+        case reportedAttemptedAddresses, reportedCompletedAddresses, completedAddresses
+        case completedAddressList, missingAddresses, unattemptedAddresses, scopeMatchesAuthorizedSnapshot
+        case freshnessWindowHours, ageHours, freshnessReason, verificationStatus, webCoverage, lastCompleteRun
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        assetId = try values.decode(String.self, forKey: .assetId)
+        engine = try values.decode(String.self, forKey: .engine)
+        state = try values.decode(String.self, forKey: .state)
+        freshness = try values.decode(String.self, forKey: .freshness)
+        lastRunId = try values.decodeIfPresent(String.self, forKey: .lastRunId)
+        lastRunAt = try values.decodeIfPresent(String.self, forKey: .lastRunAt)
+        source = try values.decodeIfPresent(String.self, forKey: .source)
+        profile = try values.decodeIfPresent(String.self, forKey: .profile)
+        status = try values.decodeIfPresent(String.self, forKey: .status)
+        authorizedAddresses = try values.decode([String].self, forKey: .authorizedAddresses)
+        requestedAddresses = try values.decode([String].self, forKey: .requestedAddresses)
+        coverageKnown = try values.decode(Bool.self, forKey: .coverageKnown)
+        attemptedAddresses = try values.decodeIfPresent(Int.self, forKey: .attemptedAddresses)
+        reportedAttemptedAddresses = try values.decodeIfPresent(Int.self, forKey: .reportedAttemptedAddresses)
+        reportedCompletedAddresses = try values.decodeIfPresent(Int.self, forKey: .reportedCompletedAddresses)
+        completedAddresses = try values.decodeIfPresent(Int.self, forKey: .completedAddresses)
+        completedAddressList = try values.decodeIfPresent([String].self, forKey: .completedAddressList)
+        missingAddresses = try values.decodeIfPresent([String].self, forKey: .missingAddresses)
+        unattemptedAddresses = try values.decodeIfPresent([String].self, forKey: .unattemptedAddresses)
+        scopeMatchesAuthorizedSnapshot = try values.decodeIfPresent(Bool.self, forKey: .scopeMatchesAuthorizedSnapshot)
+        freshnessWindowHours = try values.decode(Int.self, forKey: .freshnessWindowHours)
+        ageHours = try values.decodeIfPresent(Double.self, forKey: .ageHours)
+        freshnessReason = try values.decode(String.self, forKey: .freshnessReason)
+        verificationStatus = try values.decodeIfPresent(String.self, forKey: .verificationStatus)
+        webCoverage = try values.decodeIfPresent(SecurityScannerWebCoverage.self, forKey: .webCoverage)
+
+        if !values.contains(.lastCompleteRun) {
+            lastCompleteRun = .notReported
+        } else if try values.decodeNil(forKey: .lastCompleteRun) {
+            lastCompleteRun = .noCompleteRun
+        } else {
+            lastCompleteRun = .run(try values.decode(SecurityScannerLastCompleteRun.self, forKey: .lastCompleteRun))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(assetId, forKey: .assetId)
+        try values.encode(engine, forKey: .engine)
+        try values.encode(state, forKey: .state)
+        try values.encode(freshness, forKey: .freshness)
+        try values.encodeIfPresent(lastRunId, forKey: .lastRunId)
+        try values.encodeIfPresent(lastRunAt, forKey: .lastRunAt)
+        try values.encodeIfPresent(source, forKey: .source)
+        try values.encodeIfPresent(profile, forKey: .profile)
+        try values.encodeIfPresent(status, forKey: .status)
+        try values.encode(authorizedAddresses, forKey: .authorizedAddresses)
+        try values.encode(requestedAddresses, forKey: .requestedAddresses)
+        try values.encode(coverageKnown, forKey: .coverageKnown)
+        try values.encodeIfPresent(attemptedAddresses, forKey: .attemptedAddresses)
+        try values.encodeIfPresent(reportedAttemptedAddresses, forKey: .reportedAttemptedAddresses)
+        try values.encodeIfPresent(reportedCompletedAddresses, forKey: .reportedCompletedAddresses)
+        try values.encodeIfPresent(completedAddresses, forKey: .completedAddresses)
+        try values.encodeIfPresent(completedAddressList, forKey: .completedAddressList)
+        try values.encodeIfPresent(missingAddresses, forKey: .missingAddresses)
+        try values.encodeIfPresent(unattemptedAddresses, forKey: .unattemptedAddresses)
+        try values.encodeIfPresent(scopeMatchesAuthorizedSnapshot, forKey: .scopeMatchesAuthorizedSnapshot)
+        try values.encode(freshnessWindowHours, forKey: .freshnessWindowHours)
+        try values.encodeIfPresent(ageHours, forKey: .ageHours)
+        try values.encode(freshnessReason, forKey: .freshnessReason)
+        try values.encodeIfPresent(verificationStatus, forKey: .verificationStatus)
+        try values.encodeIfPresent(webCoverage, forKey: .webCoverage)
+        switch lastCompleteRun {
+        case .notReported:
+            break
+        case .noCompleteRun:
+            try values.encodeNil(forKey: .lastCompleteRun)
+        case .run(let run):
+            try values.encode(run, forKey: .lastCompleteRun)
+        }
+    }
 }
 
 struct SecurityScannerWebCoverage: Codable, Equatable {

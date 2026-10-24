@@ -26,7 +26,7 @@ final class AutomationClientTests: XCTestCase {
         var captured: URLRequest?
         let client = try AutomationClient(settings: settings()) { request in
             captured = request
-            return self.response(#"{"automation":{"id":"check-1","name":"Website","prompt":"available","actionType":"agent_prompt","monitoringType":"fetch","scheduleKind":"interval","intervalMinutes":5,"status":"active","uptime":99.5,"certificateStatus":"valid","history":[{"id":"run-1","status":"completed","warning":false,"started_at":"2026-10-23T10:00:00Z"}]},"runs":[{"id":"run-1","status":"completed","warning":false,"startedAt":"2026-10-23T10:00:00Z","caseNumber":"HA-1"}],"issues":[{"id":"issue-1","caseNumber":"HA-1","kind":"failure","summary":"Timed out","occurrences":2,"firstSeenAt":"2026-10-22T10:00:00Z","lastSeenAt":"2026-10-23T10:00:00Z","resolvedAt":null,"notifications":[]}],"total":51,"nextPage":2}"#, request)
+            return self.response(#"{"automation":{"id":"check-1","name":"Website","prompt":"available","actionType":"agent_prompt","monitoringType":"fetch","scheduleKind":"interval","intervalMinutes":5,"status":"active","uptime":99.5,"certificateStatus":"valid","history":[{"id":"run-1","status":"completed","warning":false,"started_at":"2026-10-23T10:00:00Z"}]},"runs":[{"id":"run-1","status":"completed","warning":false,"startedAt":"2026-10-23T10:00:00Z","caseNumber":"HA-1"}],"issues":[{"id":"issue-1","caseNumber":"HA-1","kind":"failure","summary":"Timed out","occurrences":2,"firstSeenAt":"2026-10-22T10:00:00Z","lastSeenAt":"2026-10-23T10:00:00Z","resolvedAt":"2026-10-24T10:00:00Z","notifications":[{"nextAttemptAt":"2026-10-24T10:00:00Z","error":"temporary delivery failure"}]}],"total":51,"nextPage":2}"#, request)
         }
 
         let detail = try await client.detail(id: "check-1")
@@ -34,6 +34,10 @@ final class AutomationClientTests: XCTestCase {
         XCTAssertEqual(detail.automation.uptime, 99.5)
         XCTAssertEqual(detail.automation.history.first?.startedAt, "2026-10-23T10:00:00Z")
         XCTAssertEqual(detail.issues.first?.caseNumber, "HA-1")
+        XCTAssertEqual(detail.issues.first?.firstSeenAt, "2026-10-22T10:00:00Z")
+        XCTAssertEqual(detail.issues.first?.resolvedAt, "2026-10-24T10:00:00Z")
+        XCTAssertEqual(detail.issues.first?.notifications.first?.nextAttemptAt, "2026-10-24T10:00:00Z")
+        XCTAssertEqual(detail.issues.first?.notifications.first?.error, "temporary delivery failure")
         XCTAssertEqual(detail.nextPage, 2)
 
         _ = try await client.detail(id: "check-1", page: 2)
