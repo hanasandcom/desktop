@@ -18,6 +18,10 @@ enum GalleryPhotoUploadQueue {
     static func run<Item>(
         _ items: [Item],
         shouldStop: () -> Bool,
+        waitBeforeNext: @MainActor () async -> Void = {
+            // Match mobile's spacing for the CDN's one-upload-per-second limit.
+            try? await Task.sleep(for: .milliseconds(1_100))
+        },
         upload: (Item) async throws -> Void
     ) async -> GalleryPhotoBatchResult<Item> {
         var completed = 0
@@ -28,6 +32,9 @@ enum GalleryPhotoUploadQueue {
             do {
                 try await upload(items[index])
                 completed += 1
+                if index < items.index(before: items.endIndex), !shouldStop() {
+                    await waitBeforeNext()
+                }
             } catch {
                 return GalleryPhotoBatchResult(completedCount: completed, pending: Array(items[index...]), stopped: false, error: error.localizedDescription)
             }

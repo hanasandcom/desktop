@@ -93,8 +93,9 @@ final class GalleryPhotoUploadTests: XCTestCase {
     func testBatchProgressStopsOnlyBetweenItemsAndRetainsRemainder() async {
         let items = [1, 2, 3]
         var uploaded: [Int] = []
+        var waits = 0
         var stop = false
-        let result = await GalleryPhotoUploadQueue.run(items, shouldStop: { stop }) { item in
+        let result = await GalleryPhotoUploadQueue.run(items, shouldStop: { stop }, waitBeforeNext: { waits += 1 }) { item in
             uploaded.append(item)
             stop = true
         }
@@ -103,13 +104,30 @@ final class GalleryPhotoUploadTests: XCTestCase {
         XCTAssertEqual(result.pending, [2, 3])
         XCTAssertTrue(result.stopped)
         XCTAssertNil(result.error)
+        XCTAssertEqual(waits, 0)
+    }
+
+    @MainActor
+    func testBatchSpacesSuccessfulUploadsButNotAfterLastPhoto() async {
+        let items = ["one", "two", "three"]
+        var uploaded: [String] = []
+        var waits = 0
+        let result = await GalleryPhotoUploadQueue.run(items, shouldStop: { false }, waitBeforeNext: { waits += 1 }) { item in
+            uploaded.append(item)
+        }
+
+        XCTAssertEqual(uploaded, items)
+        XCTAssertEqual(result.completedCount, items.count)
+        XCTAssertTrue(result.pending.isEmpty)
+        XCTAssertEqual(waits, items.count - 1)
     }
 
     @MainActor
     func testBatchErrorRetainsFailedAndUnattemptedPhotosForRetry() async {
         let items = ["one", "two", "three"]
         var uploaded: [String] = []
-        let result = await GalleryPhotoUploadQueue.run(items, shouldStop: { false }) { item in
+        var waits = 0
+        let result = await GalleryPhotoUploadQueue.run(items, shouldStop: { false }, waitBeforeNext: { waits += 1 }) { item in
             uploaded.append(item)
             if item == "two" { throw GalleryAlbumClientError.requestFailed(503, "Unavailable") }
         }
@@ -118,6 +136,7 @@ final class GalleryPhotoUploadTests: XCTestCase {
         XCTAssertEqual(result.pending, ["two", "three"])
         XCTAssertFalse(result.stopped)
         XCTAssertEqual(result.error, "Unavailable (HTTP 503). Refresh before retrying.")
+        XCTAssertEqual(waits, 1)
     }
 
     func testSettingsRejectImpersonationAndMissingCredentials() {
