@@ -12,6 +12,8 @@ import WebKit
 
 enum NotesNativePanelLayout {
     static let stackedBreakpoint: CGFloat = 720
+    static let analyticsColumnBreakpoint: CGFloat = 1_020
+    static let analyticsSidebarWidth: CGFloat = 210
 
     static func usesStackedLayout(contentWidth: CGFloat) -> Bool {
         contentWidth < stackedBreakpoint
@@ -19,6 +21,53 @@ enum NotesNativePanelLayout {
 
     static func sidebarWidth(contentWidth: CGFloat) -> CGFloat {
         min(260, max(200, contentWidth * 0.32))
+    }
+}
+
+enum NotesAnalyticsPresentation {
+    static func wordCount(_ content: String) -> Int {
+        var words = 0
+        var insideWord = false
+        var hasWord = false
+        for scalar in content.unicodeScalars {
+            if isWebsiteWhitespace(scalar) {
+                insideWord = false
+            } else if !insideWord {
+                words += 1
+                insideWord = true
+                hasWord = true
+            }
+        }
+        // The website trims before splitting, so whitespace-only content has no words.
+        return hasWord ? words : 0
+    }
+
+    static func recentNotes(_ notes: [DashboardNote], query: String, limit: Int = 4) -> [DashboardNote] {
+        let filtered = NotesSearch.filter(notes, query: query)
+        return filtered.sorted { timestamp($0.updatedAt) > timestamp($1.updatedAt) }.prefix(max(0, limit)).map { $0 }
+    }
+
+    static func updatedLabel(for note: DashboardNote?) -> String {
+        guard let note else { return "New note" }
+        return formatDateText(note.updatedAt, fallback: note.source)
+    }
+
+    private static func timestamp(_ value: String?) -> Date {
+        guard let value, !value.isEmpty else { return .distantPast }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? .distantPast
+    }
+
+    private static func isWebsiteWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0009...0x000D, 0x0020, 0x00A0, 0x1680, 0x2000...0x200A,
+             0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF:
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -40,12 +89,24 @@ struct NotesNativePanel: View {
     var body: some View {
         GeometryReader { geometry in
             Group {
-                if !NotesNativePanelLayout.usesStackedLayout(contentWidth: geometry.size.width) {
+                if geometry.size.width >= NotesNativePanelLayout.analyticsColumnBreakpoint {
                     HStack(alignment: .top, spacing: 16) {
                         notesSidebar
                             .frame(width: NotesNativePanelLayout.sidebarWidth(contentWidth: geometry.size.width), alignment: .topLeading)
                         noteEditor
                             .frame(maxWidth: .infinity, alignment: .topLeading)
+                        notesAnalytics(compact: false)
+                            .frame(width: NotesNativePanelLayout.analyticsSidebarWidth, alignment: .topLeading)
+                    }
+                } else if !NotesNativePanelLayout.usesStackedLayout(contentWidth: geometry.size.width) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(alignment: .top, spacing: 16) {
+                            notesSidebar
+                                .frame(width: NotesNativePanelLayout.sidebarWidth(contentWidth: geometry.size.width), alignment: .topLeading)
+                            noteEditor
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                        notesAnalytics(compact: true)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
@@ -53,6 +114,7 @@ struct NotesNativePanel: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                         noteEditor
                             .frame(maxWidth: .infinity, alignment: .topLeading)
+                        notesAnalytics(compact: true)
                     }
                 }
             }
@@ -204,5 +266,82 @@ struct NotesNativePanel: View {
                     .disabled(model.noteSaveConflict)
                 }
             }
+    }
+
+    private func notesAnalytics(compact: Bool) -> some View {
+        let selected = model.notes.first { $0.id == model.selectedNoteID }
+        let recent = NotesAnalyticsPresentation.recentNotes(model.notes, query: searchQuery)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Notes")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(theme.text)
+            if compact {
+                HStack(alignment: .top, spacing: 10) {
+                    analyticsFact(label: "Notes", value: String(model.notes.count))
+                    analyticsFact(label: "Words", value: String(NotesAnalyticsPresentation.wordCount(model.noteDraftContent)))
+                    analyticsFact(label: "Updated", value: NotesAnalyticsPresentation.updatedLabel(for: selected))
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    analyticsFact(label: "Notes", value: String(model.notes.count))
+                    analyticsFact(label: "Words", value: String(NotesAnalyticsPresentation.wordCount(model.noteDraftContent)))
+                    analyticsFact(label: "Updated", value: NotesAnalyticsPresentation.updatedLabel(for: selected))
+                }
+            }
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Recent")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(theme.textTertiary)
+                ForEach(recent) { note in
+                    Button {
+                        model.selectNote(note)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(note.title.isEmpty ? "Untitled" : note.title)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.text)
+                                .lineLimit(1)
+                            Text(formatDateText(note.updatedAt, fallback: note.source))
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(theme.textTertiary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if recent.isEmpty, !model.notes.isEmpty {
+                    Text("Search has no matches.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textTertiary)
+                }
+            }
+            .padding(10)
+            .background(theme.cardRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(theme.field)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func analyticsFact(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(theme.textTertiary)
+            Text(value)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(theme.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(value)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.cardRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 }
