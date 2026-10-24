@@ -62,13 +62,7 @@ struct CasesWorkspaceNativePanel: View {
     @State private var moreIntelligenceCases: [IntelligenceCaseRow] = []
     @State private var cursor: String?
     @State private var selectedID = ""
-    @State private var search = ""
-    @State private var status = "active"
-    @State private var severity = "all"
-    @State private var source = "all"
-    @State private var owner = "all"
-    @State private var resolution = "all"
-    @State private var review = "all"
+    @State private var filters = CasesWorkspaceFilters()
     @State private var selectedForMerge: Set<String> = []
     @State private var mergeTarget = ""
     @State private var pendingMerge = false
@@ -97,16 +91,16 @@ struct CasesWorkspaceNativePanel: View {
     private var visibleRows: [CasesWorkspaceRow] {
         allRows.filter { row in
             let active = !["resolved", "closed", "suppressed", "false_positive"].contains(row.status.lowercased())
-            let statusMatches = status == "all" || (status == "active" ? active : row.status == status)
-            let severityMatches = severity == "all" || row.severity.lowercased() == severity
-            let sourceMatches = source == "all" || row.source.lowercased() == source
-            let ownerMatches = owner == "all" || (owner == "unassigned" ? row.owner.isEmpty : row.owner == owner)
+            let statusMatches = filters.status == "all" || (filters.status == "active" ? active : row.status == filters.status)
+            let severityMatches = filters.severity == "all" || row.severity.lowercased() == filters.severity
+            let sourceMatches = filters.source == "all" || row.source.lowercased() == filters.source
+            let ownerMatches = filters.owner == "all" || (filters.owner == "unassigned" ? row.owner.isEmpty : row.owner == filters.owner)
             let resolutionType = row.monitoringCase?.resolutionType ?? row.intelligenceCase?.raw["resolution"]?["type"]?.stringValue ?? ""
-            let resolutionMatches = resolution == "all" || resolutionType == resolution
-            let reviewMatches = review == "all" || review == "pending" && row.needsHumanReview
-                || review == "confirmed" && row.humanReviewed
-            let searchMatches = search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || ([row.id, row.title, row.summary, row.owner, row.source] + row.context).joined(separator: " ").localizedCaseInsensitiveContains(search)
+            let resolutionMatches = filters.resolution == "all" || resolutionType == filters.resolution
+            let reviewMatches = filters.review == "all" || filters.review == "pending" && row.needsHumanReview
+                || filters.review == "confirmed" && row.humanReviewed
+            let searchMatches = filters.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || ([row.id, row.title, row.summary, row.owner, row.source] + row.context).joined(separator: " ").localizedCaseInsensitiveContains(filters.search)
             return statusMatches && severityMatches && sourceMatches && ownerMatches && resolutionMatches && reviewMatches && searchMatches
         }
     }
@@ -138,7 +132,7 @@ struct CasesWorkspaceNativePanel: View {
         VStack(alignment: .leading, spacing: 12) {
             NativeGroupPanel(title: "Cases", subtitle: routeOrganizationID ?? (model.selectedOrganizationID.isEmpty ? "Personal workspace" : model.selectedOrganizationID)) {
                 HStack(spacing: 8) {
-                    SearchFieldRow(placeholder: "Search cases", text: $search)
+                    SearchFieldRow(placeholder: "Search cases", text: $filters.search)
                     ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await load(reset: true) } }
                         .disabled(isLoading || isWriting)
                     ActionButton(title: "Create case", icon: "plus") { prepareCreate() }.disabled(isWriting || mutationReview.isLocked)
@@ -190,8 +184,8 @@ struct CasesWorkspaceNativePanel: View {
         }
         .task { await load(reset: true) }
         .onChange(of: model.selectedOrganizationID) { _, _ in Task { await load(reset: true) } }
-        .onChange(of: resolution) { _, value in if value != "all" { status = "all" } }
-        .onChange(of: review) { _, value in if value != "all" { status = "all" } }
+        .onChange(of: filters.resolution) { _, value in if value != "all" { filters.status = "all" } }
+        .onChange(of: filters.review) { _, value in if value != "all" { filters.status = "all" } }
         .confirmationDialog("Merge monitoring cases?", isPresented: $pendingMerge, titleVisibility: .visible) {
             ForEach(mergeableRows) { row in
                 Button("Merge into \(row.title)", role: .destructive) {
@@ -215,29 +209,32 @@ struct CasesWorkspaceNativePanel: View {
     }
 
     @ViewBuilder private var filterPickers: some View {
-        Picker("Status", selection: $status) {
+        Picker("Status", selection: $filters.status) {
             Text("Active").tag("active"); Text("All statuses").tag("all")
             ForEach(["open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
         }.frame(maxWidth: 175)
-        Picker("Severity", selection: $severity) {
+        Picker("Severity", selection: $filters.severity) {
             Text("All severity").tag("all")
             ForEach(["critical", "high", "medium", "low"], id: \.self) { Text($0.capitalized).tag($0) }
         }.frame(maxWidth: 150)
-        Picker("Source", selection: $source) {
+        Picker("Source", selection: $filters.source) {
             Text("All sources").tag("all")
             ForEach(["monitoring", "security", "intelligence", "manual"], id: \.self) { Text($0.capitalized).tag($0) }
         }.frame(maxWidth: 155)
-        Picker("Owner", selection: $owner) {
+        Picker("Owner", selection: $filters.owner) {
             Text("All owners").tag("all"); Text("Unassigned").tag("unassigned")
             ForEach(Array(Set(allRows.map(\.owner).filter { !$0.isEmpty })).sorted(), id: \.self) { Text($0).tag($0) }
         }.frame(maxWidth: 180)
-        Picker("Resolved by", selection: $resolution) {
+        Picker("Resolved by", selection: $filters.resolution) {
             Text("All resolvers").tag("all")
             ForEach(["human", "ai", "automation", "unknown"], id: \.self) { Text($0.capitalized).tag($0) }
         }.frame(maxWidth: 160)
-        Picker("Human review", selection: $review) {
+        Picker("Human review", selection: $filters.review) {
             Text("All review states").tag("all"); Text("Pending review").tag("pending"); Text("Confirmed").tag("confirmed")
         }.frame(maxWidth: 170)
+        ActionButton(title: "Reset filters", icon: "arrow.counterclockwise") {
+            filters.reset()
+        }.disabled(!filters.hasActiveFilters)
     }
 
     private func caseRow(_ row: CasesWorkspaceRow) -> some View {
