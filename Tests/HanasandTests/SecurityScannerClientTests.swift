@@ -17,13 +17,14 @@ final class SecurityScannerClientTests: XCTestCase {
 
     func testDashboardUsesAuthenticatedScopedNoCookieRequestAndDecodesEmptyState() async throws {
         var captured: URLRequest?
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             captured = request
-            return (Data(#"{"assets":[],"engines":[],"runs":[],"assessments":[],"findings":[],"scannerError":"Scanner service paused"}"#.utf8), self.response(request, 200))
+            return (Data(#"{"assets":[],"engines":[],"runs":[],"assessments":[],"findings":[],"scannerError":"Scanner service paused","execution":{"enabled":false,"state":"paused","reason":"maintenance"}}"#.utf8), self.response(request, 200))
         })
         let dashboard = try await client.dashboard()
         XCTAssertTrue(dashboard.assets.isEmpty)
         XCTAssertEqual(dashboard.scannerError, "Scanner service paused")
+        XCTAssertEqual(dashboard.execution?.enabled, false)
         XCTAssertEqual(captured?.url?.host, "scanner.hanasand.com")
         XCTAssertEqual(captured?.url?.path, "/api/v1/uvm/dashboard")
         XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org-1")
@@ -46,9 +47,61 @@ final class SecurityScannerClientTests: XCTestCase {
             XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.servicesPaused.localizedDescription)
         }
         XCTAssertEqual(sent, 0, "paused write guard must run before membership or scanner requests")
-        let dashboard = try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner services are stopped pending disk expansion."}"#.utf8))
+        let dashboard = try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner services are stopped pending disk expansion.","execution":{"enabled":false,"state":"paused","reason":"pending_disk_expansion"}}"#.utf8))
         XCTAssertTrue(dashboard.servicesPaused)
-        XCTAssertFalse(try JSONDecoder().decode(SecurityScannerDashboard.self, from: Data(#"{"scannerError":"Scanner service is loading."}"#.utf8)).servicesPaused)
+    }
+
+    func testClientDefaultsToFailClosedWithoutDashboardReadiness() async throws {
+        var sent = 0
+        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+            sent += 1
+            return (Data(), self.response(request, 200))
+        })
+        do {
+            _ = try await client.createAsset(hostname: "example.com")
+            XCTFail("missing readiness must reject writes")
+        } catch {
+            XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.servicesPaused.localizedDescription)
+        }
+        XCTAssertEqual(sent, 0, "missing dashboard readiness must block before transport")
+    }
+
+    func testScannerReadinessFailsClosedAndBlocksWritesBeforeTransport() async throws {
+        let decoder = JSONDecoder()
+        let cases: [(String, Bool)] = [
+            (#"{}"#, true),
+            (#"{"execution":{"enabled":false,"state":"paused","reason":"maintenance"}}"#, true),
+            (#"{"execution":{"enabled":true,"state":"enabled","reason":null}}"#, false),
+            (#"{"execution":{"enabled":true,"state":"enabled","reason":null},"scannerError":"Scanner service is unavailable."}"#, true),
+            (#"{"execution":{"enabled":true,"state":"enabled","reason":null},"scannerError":""}"#, true),
+        ]
+        for (payload, expectedPaused) in cases {
+            XCTAssertEqual(try decoder.decode(SecurityScannerDashboard.self, from: Data(payload.utf8)).servicesPaused, expectedPaused)
+        }
+
+        var sent = 0
+        for payload in [
+            #"{}"#,
+            #"{"execution":{"enabled":false,"state":"paused","reason":"maintenance"}}"#,
+            #"{"execution":{"enabled":true,"state":"enabled","reason":null},"scannerError":"Scanner service is unavailable."}"#,
+            #"{"execution":{"enabled":true,"state":"enabled","reason":null},"scannerError":""}"#,
+        ] {
+            let dashboard = try decoder.decode(SecurityScannerDashboard.self, from: Data(payload.utf8))
+            let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: dashboard.servicesPaused, send: { request in
+                sent += 1
+                return (Data(), self.response(request, 200))
+            })
+            do {
+                _ = try await client.createAsset(hostname: "example.com")
+                XCTFail("unready scanner must reject writes")
+            } catch {
+                XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.servicesPaused.localizedDescription)
+            }
+        }
+        XCTAssertEqual(sent, 0, "readiness guard must run before identity membership or scanner requests")
+
+        let ready = try decoder.decode(SecurityScannerDashboard.self, from: Data(#"{"execution":{"enabled":true,"state":"enabled","reason":null}}"#.utf8))
+        XCTAssertFalse(ready.servicesPaused)
     }
 
     func testCoveragePreservesAbsentNullAndLastCompleteRunWhileLatestRunIsPartial() throws {
@@ -140,7 +193,7 @@ final class SecurityScannerClientTests: XCTestCase {
     func testUDPProfileIsSerializedForManualAndScheduledNmapScans() async throws {
         let asset = scannerAsset()
         var capturedBodies: [[String: Any]] = []
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             if request.url?.host == "identity.hanasand.com" {
                 return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
             }
@@ -179,7 +232,7 @@ final class SecurityScannerClientTests: XCTestCase {
 
     func testHistoryUsesRunsEnvelopeAndRunDetailUsesDirectRunContract() async throws {
         let run = #"{"id":"run-1","scannerRunId":null,"requestId":"request-1","assetId":"asset-1","target":"example.com","engine":"nmap","profile":"tcp-top-1000","status":"succeeded","createdAt":"2026-10-23T10:00:00Z","startedAt":null,"finishedAt":null,"error":null,"engineVersion":null,"rawXmlSha256":null,"coverage":null,"hosts":[{"address":"203.0.113.5","status":"up","timedOut":false,"ports":[{"port":443,"protocol":"tcp","state":"open","service":"https","product":"nginx","version":"1.2","extraInfo":null,"scriptResults":[{"id":"http-title","output":"Example","truncated":false}]}],"scriptResults":[]}],"findings":[]}"#
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             if request.url?.path == "/api/v1/uvm/runs" {
                 return (Data("{\"runs\":[\(run)],\"nextCursor\":\"older\"}".utf8), self.response(request, 200))
             }
@@ -195,7 +248,7 @@ final class SecurityScannerClientTests: XCTestCase {
 
     func testCreateAssetRevalidatesActiveEditorMembershipAndSubmitsScopedRequest() async throws {
         var requests: [URLRequest] = []
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             requests.append(request)
             if request.url?.host == "identity.hanasand.com" {
                 return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
@@ -217,7 +270,7 @@ final class SecurityScannerClientTests: XCTestCase {
 
     func testViewerRoleCannotCreateAsset() async throws {
         var scannerWrites = 0
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             if request.url?.host == "identity.hanasand.com" {
                 return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"viewer","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
             }
@@ -230,7 +283,7 @@ final class SecurityScannerClientTests: XCTestCase {
     }
 
     func testScanCannotBeSubmittedWithoutExplicitAuthorization() async throws {
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in (Data(), self.response(request, 200)) })
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in (Data(), self.response(request, 200)) })
         let asset = SecurityScannerAsset(id: "asset-1", hostname: "example.com", verificationStatus: "verified", verificationRecordName: "", verificationRecordValue: "", verificationMethod: "dns_txt", verifiedAt: nil, scanAuthorizedAt: nil, authorizedAddresses: ["203.0.113.1"], scheduleEnabled: false, schedulePlan: [], scheduleEngine: "nmap", scheduleScanId: nil, scheduleProfile: nil, zapApiDefinitionPath: nil, intervalMinutes: 60, nextRunAt: nil, createdAt: "2026-10-23T10:00:00Z")
         do { _ = try await client.runScan(asset: asset, engine: .nmap, authorized: false); XCTFail("authorization must be required") }
         catch { XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.authorizationRequired.localizedDescription) }
@@ -251,7 +304,7 @@ final class SecurityScannerClientTests: XCTestCase {
         for engine in SecurityScannerEngineID.allCases {
             var capturedPath: String?
             var capturedBody: [String: Any]?
-            let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+            let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
                 if request.url?.host == "identity.hanasand.com" {
                     return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
                 }
@@ -283,7 +336,7 @@ final class SecurityScannerClientTests: XCTestCase {
 
     func testSchedulePreservesEngineOrderAndIncludesSafeDefaultProfiles() async throws {
         let asset = scannerAsset()
-        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+        let client = try SecurityScannerClient(settings: scannerSettings(), servicesPaused: false, send: { request in
             if request.url?.host == "identity.hanasand.com" {
                 return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
             }

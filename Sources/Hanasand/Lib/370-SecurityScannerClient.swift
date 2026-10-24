@@ -13,7 +13,7 @@ struct SecurityScannerClient {
     var onRefreshedToken: ((String) -> Void)?
 
     init(settings: HanasandDesktopSettings, baseURL: URL = URL(string: "https://scanner.hanasand.com/api")!,
-         servicesPaused: Bool = false,
+         servicesPaused: Bool = true,
          send: ((URLRequest) async throws -> (Data, URLResponse))? = nil,
          onRefreshedToken: ((String) -> Void)? = nil) throws {
         let userID = settings.userID.trimmingCharacters(in: .whitespacesAndNewlines)

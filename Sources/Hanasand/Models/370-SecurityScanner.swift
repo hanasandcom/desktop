@@ -270,6 +270,12 @@ struct SecurityScannerWebCoverage: Codable, Equatable {
     let complete: Bool
 }
 
+struct SecurityScannerExecution: Codable, Equatable {
+    let enabled: Bool?
+    let state: String?
+    let reason: String?
+}
+
 struct SecurityScannerDashboard: Codable, Equatable {
     var assets: [SecurityScannerAsset] = []
     var coverage: [SecurityScannerCoverage] = []
@@ -282,17 +288,18 @@ struct SecurityScannerDashboard: Codable, Equatable {
     var findings: [SecurityScannerFinding] = []
     var findingsNextCursor: String?
     var scannerError: String?
+    var execution: SecurityScannerExecution?
     var tenableIntegration: SecurityScannerTenableIntegration?
     var tenableScans: [SecurityScannerTenableScan] = []
     var findingSummary: SecurityScannerFindingSummary?
 
     var servicesPaused: Bool {
-        (scannerError ?? "").localizedCaseInsensitiveContains("stopped pending disk expansion")
+        scannerError != nil || execution?.enabled != true
     }
 
     private enum CodingKeys: String, CodingKey {
         case assets, coverage, engines, scannerCatalog, runs, runsNextCursor, assessments, assessmentsNextCursor
-        case findings, findingsNextCursor, scannerError, tenableIntegration, tenableScans, findingSummary
+        case findings, findingsNextCursor, scannerError, execution, tenableIntegration, tenableScans, findingSummary
     }
 
     init() {}
@@ -310,6 +317,7 @@ struct SecurityScannerDashboard: Codable, Equatable {
         findings = try values.decodeIfPresent([SecurityScannerFinding].self, forKey: .findings) ?? []
         findingsNextCursor = try values.decodeIfPresent(String.self, forKey: .findingsNextCursor)
         scannerError = try values.decodeIfPresent(String.self, forKey: .scannerError)
+        execution = try values.decodeIfPresent(SecurityScannerExecution.self, forKey: .execution)
         tenableIntegration = try values.decodeIfPresent(SecurityScannerTenableIntegration.self, forKey: .tenableIntegration)
         tenableScans = try values.decodeIfPresent([SecurityScannerTenableScan].self, forKey: .tenableScans) ?? []
         findingSummary = try values.decodeIfPresent(SecurityScannerFindingSummary.self, forKey: .findingSummary)

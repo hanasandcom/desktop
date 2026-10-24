@@ -52,7 +52,7 @@ struct SecurityScannerNativePanel: View {
 
     private var snapshot: SecurityScannerDashboard { dashboard ?? SecurityScannerDashboard() }
     private var client: SecurityScannerClient? {
-        try? SecurityScannerClient(settings: model.settings, servicesPaused: snapshot.servicesPaused, onRefreshedToken: { token in
+        try? SecurityScannerClient(settings: model.settings, servicesPaused: snapshot.servicesPaused || error != nil, onRefreshedToken: { token in
             guard !token.isEmpty else { return }
             try? DesktopCredentialStore.write(token, for: .authToken)
             model.settings.authToken = token
@@ -62,7 +62,7 @@ struct SecurityScannerNativePanel: View {
         do { _ = try SecurityScannerClient(settings: model.settings); return "Security Scanner is unavailable." }
         catch { return error.localizedDescription }
     }
-    private var writeDisabled: Bool { snapshot.servicesPaused || !model.hasHanasandAuth || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty || busy.isEmpty == false }
+    private var writeDisabled: Bool { snapshot.servicesPaused || error != nil || !model.hasHanasandAuth || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty || busy.isEmpty == false }
     private var scannerNotice: String? {
         guard let message = dashboard?.scannerError?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else { return nil }
         return message
@@ -77,7 +77,7 @@ struct SecurityScannerNativePanel: View {
             } else {
                 if let error { CompactInfoCard(title: "Scanner connection", lines: [error]) }
                 if snapshot.servicesPaused {
-                    CompactInfoCard(title: "Scanner services paused", lines: [scannerNotice ?? "Scanner services are stopped pending disk expansion. New scans and scanner changes are paused."])
+                    CompactInfoCard(title: "Scanner services paused", lines: [scannerNotice ?? "Scanner readiness is not confirmed. Refresh to check again. New scans and scanner changes are paused."])
                 } else if let scannerNotice { CompactInfoCard(title: "Scanner status", lines: [scannerNotice]) }
                 if let notice { CompactInfoCard(title: "Scanner", lines: [notice]) }
                 if loading && dashboard == nil { ProgressView("Loading scanner data…") }
@@ -191,11 +191,11 @@ struct SecurityScannerNativePanel: View {
             NativeGroupPanel(title: "Add an authorized asset", subtitle: "Verify domain control before scanning") {
                 ViewThatFits(in: .horizontal) {
                     HStack {
-                        TextField("example.com", text: $hostname).textFieldStyle(.roundedBorder)
+                        TextField("example.com", text: $hostname).textFieldStyle(.roundedBorder).disabled(writeDisabled)
                         addAssetButton
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        TextField("example.com", text: $hostname).textFieldStyle(.roundedBorder)
+                        TextField("example.com", text: $hostname).textFieldStyle(.roundedBorder).disabled(writeDisabled)
                         addAssetButton
                     }
                 }
@@ -214,18 +214,18 @@ struct SecurityScannerNativePanel: View {
     private func nmapProfilePicker(_ asset: SecurityScannerAsset) -> some View {
         Picker("Nmap profile", selection: Binding(get: { nmapProfiles[asset.id] ?? .top1000 }, set: { nmapProfiles[asset.id] = $0 })) {
             ForEach(SecurityScannerNmapProfile.allCases) { Text($0.title).tag($0) }
-        }.frame(maxWidth: 250)
+        }.frame(maxWidth: 250).disabled(writeDisabled)
     }
 
     private func authorizationToggle(_ asset: SecurityScannerAsset) -> some View {
         Toggle("I am authorized to scan", isOn: Binding(get: { authorization.contains(asset.id) }, set: { enabled in
             if enabled { authorization.insert(asset.id) } else { authorization.remove(asset.id) }
-        })).toggleStyle(.checkbox)
+        })).toggleStyle(.checkbox).disabled(writeDisabled)
     }
 
     private func zapPathField(_ asset: SecurityScannerAsset) -> some View {
         TextField("OpenAPI definition path (optional)", text: Binding(get: { zapDefinitionPaths[asset.id] ?? asset.zapApiDefinitionPath ?? "" }, set: { zapDefinitionPaths[asset.id] = $0 }))
-            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity).disabled(writeDisabled)
     }
 
     private func saveZapDefinitionButton(_ asset: SecurityScannerAsset) -> some View {
@@ -234,11 +234,11 @@ struct SecurityScannerNativePanel: View {
 
     private func scheduleIntervalField(_ asset: SecurityScannerAsset) -> some View {
         TextField("Schedule interval in minutes", text: Binding(get: { scheduleIntervals[asset.id] ?? String(asset.intervalMinutes) }, set: { scheduleIntervals[asset.id] = $0 }))
-            .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
+            .textFieldStyle(.roundedBorder).frame(maxWidth: 200).disabled(writeDisabled)
     }
 
     private func scheduleEnabledToggle(_ asset: SecurityScannerAsset) -> some View {
-        Toggle("Schedule enabled", isOn: Binding(get: { scheduleEnabled[asset.id] ?? asset.scheduleEnabled }, set: { scheduleEnabled[asset.id] = $0 })).toggleStyle(.checkbox)
+        Toggle("Schedule enabled", isOn: Binding(get: { scheduleEnabled[asset.id] ?? asset.scheduleEnabled }, set: { scheduleEnabled[asset.id] = $0 })).toggleStyle(.checkbox).disabled(writeDisabled)
     }
 
     private func saveScheduleButton(_ asset: SecurityScannerAsset) -> some View {
@@ -279,7 +279,7 @@ struct SecurityScannerNativePanel: View {
                 if let tenable = snapshot.tenableIntegration, tenable.configured {
                     Picker("Tenable configuration", selection: Binding(get: { tenableScanIDs[asset.id] ?? snapshot.tenableScans.first(where: \.enabled)?.id ?? "" }, set: { tenableScanIDs[asset.id] = $0 })) {
                         ForEach(snapshot.tenableScans.filter(\.enabled)) { Text($0.name).tag($0.id) }
-                    }.frame(maxWidth: 340)
+                    }.frame(maxWidth: 340).disabled(writeDisabled)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack {
@@ -314,18 +314,18 @@ struct SecurityScannerNativePanel: View {
                             if enabled, !values.contains(engine.rawValue) { values.append(engine.rawValue) }
                             if !enabled { values.removeAll { $0 == engine.rawValue } }
                             scheduleEngines[asset.id] = values
-                        })).toggleStyle(.checkbox).disabled(!engineAvailable(engine))
+                        })).toggleStyle(.checkbox).disabled(writeDisabled || !engineAvailable(engine))
                     }
                 }
                 if chosenEngines.contains("nmap") {
                     Picker("Scheduled Nmap profile", selection: Binding(get: { nmapProfiles["schedule:\(asset.id)"] ?? .top1000 }, set: { nmapProfiles["schedule:\(asset.id)"] = $0 })) {
                         ForEach(SecurityScannerNmapProfile.allCases) { Text($0.title).tag($0) }
-                    }.frame(maxWidth: 320)
+                    }.frame(maxWidth: 320).disabled(writeDisabled)
                 }
                 if chosenEngines.contains("tenable-vm") {
                     Picker("Scheduled Tenable scan", selection: Binding(get: { tenableScanIDs["schedule:\(asset.id)"] ?? snapshot.tenableScans.first(where: \.enabled)?.id ?? "" }, set: { tenableScanIDs["schedule:\(asset.id)"] = $0 })) {
                         ForEach(snapshot.tenableScans.filter(\.enabled)) { Text($0.name).tag($0.id) }
-                    }.frame(maxWidth: 320)
+                    }.frame(maxWidth: 320).disabled(writeDisabled)
                 }
                 Text(asset.schedulePlan?.map { engineName($0.engine) }.joined(separator: " → ") ?? "\(asset.scheduleEnabled ? "Scheduled" : "No schedule") · every \(asset.intervalMinutes) min").font(.caption).foregroundStyle(.secondary)
             }
@@ -338,27 +338,27 @@ struct SecurityScannerNativePanel: View {
                 let verified = snapshot.assets.filter { $0.verificationStatus == "verified" }
                 if verified.isEmpty { NativeEmptyState(title: "No verified assets", message: "Add an asset and verify domain control before starting an assessment.") }
                 ForEach(verified) { asset in
-                    Toggle("\(asset.hostname) · \(asset.authorizedAddresses.count) authorized address(es)", isOn: Binding(get: { selectedAssets.contains(asset.id) }, set: { checked in if checked { selectedAssets.insert(asset.id) } else { selectedAssets.remove(asset.id) } })).toggleStyle(.checkbox)
+                    Toggle("\(asset.hostname) · \(asset.authorizedAddresses.count) authorized address(es)", isOn: Binding(get: { selectedAssets.contains(asset.id) }, set: { checked in if checked { selectedAssets.insert(asset.id) } else { selectedAssets.remove(asset.id) } })).toggleStyle(.checkbox).disabled(writeDisabled)
                 }
                 Divider()
                 ForEach(SecurityScannerEngineID.allCases) { engine in
                     Toggle("\(engine.title) · \(engineAvailable(engine) ? "Available" : "Unavailable")", isOn: Binding(get: { selectedEngines.contains(engine.rawValue) }, set: { checked in
                         if checked, !selectedEngines.contains(engine.rawValue) { selectedEngines.append(engine.rawValue) }
                         if !checked { selectedEngines.removeAll { $0 == engine.rawValue } }
-                    })).toggleStyle(.checkbox).disabled(!engineAvailable(engine))
+                    })).toggleStyle(.checkbox).disabled(writeDisabled || !engineAvailable(engine))
                 }
                 if selectedEngines.contains(SecurityScannerEngineID.nmap.rawValue) {
-                    Picker("Nmap coverage", selection: $assessmentNmapProfile) { ForEach(SecurityScannerNmapProfile.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 330)
+                    Picker("Nmap coverage", selection: $assessmentNmapProfile) { ForEach(SecurityScannerNmapProfile.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 330).disabled(writeDisabled)
                 }
                 if selectedEngines.contains(SecurityScannerEngineID.tenableVM.rawValue) {
                     Picker("Tenable scan configuration", selection: $assessmentScanID) {
                         Text("Choose configuration").tag("")
                         ForEach(snapshot.tenableScans.filter(\.enabled)) { Text($0.name).tag($0.id) }
-                    }.frame(maxWidth: 330)
+                    }.frame(maxWidth: 330).disabled(writeDisabled)
                 }
                 Text("Each engine runs across the selected assets before the next engine. The scanner rechecks DNS and public IP scope at launch; this is not a penetration test.").font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Toggle("I am authorized to scan the selected assets and public IPs", isOn: Binding(get: { !selectedAssets.isEmpty && selectedAssets.isSubset(of: authorization) }, set: { allowed in if allowed { authorization.formUnion(selectedAssets) } else { authorization.subtract(selectedAssets) } })).toggleStyle(.checkbox)
+                    Toggle("I am authorized to scan the selected assets and public IPs", isOn: Binding(get: { !selectedAssets.isEmpty && selectedAssets.isSubset(of: authorization) }, set: { allowed in if allowed { authorization.formUnion(selectedAssets) } else { authorization.subtract(selectedAssets) } })).toggleStyle(.checkbox).disabled(writeDisabled)
                     ActionButton(title: busy == "assessment" ? "Starting…" : "Start assessment", icon: "play.fill") { Task { await startAssessment() } }
                         .disabled(writeDisabled || selectedAssets.isEmpty || selectedEngines.isEmpty || !selectedAssets.isSubset(of: authorization) || (selectedEngines.contains("tenable-vm") && assessmentScanID.isEmpty))
                 }
@@ -420,9 +420,9 @@ struct SecurityScannerNativePanel: View {
                     ForEach(snapshot.tenableScans) { scan in Text("\(scan.enabled ? "✓" : "–") \(scan.name) · \(scan.status ?? "unknown") · targets: \(scan.targets)").font(.caption).textSelection(.enabled) }
                     ActionButton(title: busy == "tenable:disconnect" ? "Disconnecting…" : "Disconnect Tenable", icon: "link.badge.minus") { Task { await disconnectTenable() } }.disabled(writeDisabled)
                 } else {
-                    Picker("Region", selection: $tenableRegion) { ForEach(["us", "eu", "de", "au", "ca", "jp"], id: \.self) { Text($0.uppercased()).tag($0) } }.frame(maxWidth: 200)
-                    SecureField("Access key", text: $tenableAccessKey).textFieldStyle(.roundedBorder)
-                    SecureField("Secret key", text: $tenableSecretKey).textFieldStyle(.roundedBorder)
+                    Picker("Region", selection: $tenableRegion) { ForEach(["us", "eu", "de", "au", "ca", "jp"], id: \.self) { Text($0.uppercased()).tag($0) } }.frame(maxWidth: 200).disabled(writeDisabled)
+                    SecureField("Access key", text: $tenableAccessKey).textFieldStyle(.roundedBorder).disabled(writeDisabled)
+                    SecureField("Secret key", text: $tenableSecretKey).textFieldStyle(.roundedBorder).disabled(writeDisabled)
                     ActionButton(title: busy == "tenable:connect" ? "Checking…" : "Connect and verify", icon: "link") { Task { await configureTenable() } }.disabled(writeDisabled || tenableAccessKey.isEmpty || tenableSecretKey.isEmpty)
                     Text("Credentials are sent only to the scanner API over HTTPS. The service validates them before saving.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -613,8 +613,8 @@ struct SecurityScannerNativePanel: View {
             if let evidence = finding.evidence { DisclosureGroup("Evidence") { Text(evidence).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) } }
             Picker("Triage status", selection: Binding(get: { findingStates[finding.id] ?? finding.status }, set: { findingStates[finding.id] = $0 })) {
                 ForEach(["open", "in_progress", "pending_verification", "accepted_risk", "false_positive", "resolved"], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
-            }.frame(maxWidth: 260)
-            TextField("Triage note", text: Binding(get: { findingNotes[finding.id] ?? finding.triageNote ?? "" }, set: { findingNotes[finding.id] = $0 }), axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(2...5)
+            }.frame(maxWidth: 260).disabled(writeDisabled)
+            TextField("Triage note", text: Binding(get: { findingNotes[finding.id] ?? finding.triageNote ?? "" }, set: { findingNotes[finding.id] = $0 }), axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(2...5).disabled(writeDisabled)
             ActionButton(title: busy == "finding:\(finding.id)" ? "Saving…" : "Save triage", icon: "checkmark") { Task { await updateFinding(finding) } }.disabled(writeDisabled)
         }
     }
@@ -780,7 +780,7 @@ struct SecurityScannerNativePanel: View {
             runCursor = dashboard?.runsNextCursor
             assessmentCursor = dashboard?.assessmentsNextCursor
             findingCursor = dashboard?.findingsNextCursor
-        } catch { if !quiet || dashboard == nil { self.error = error.localizedDescription } }
+        } catch { self.error = error.localizedDescription }
     }
 
     @MainActor private func addAsset() async {
