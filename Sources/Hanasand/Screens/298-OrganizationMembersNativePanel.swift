@@ -25,24 +25,28 @@ private struct PendingOrganizationInviteRevoke: Identifiable {
 struct OrganizationMembersNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @State private var searchText = ""
+    @State private var memberFilters = OrganizationMemberFiltering()
     @State private var pendingMemberChange: PendingOrganizationMemberChange?
     @State private var pendingInviteRevoke: PendingOrganizationInviteRevoke?
 
     private var filteredMembers: [DashboardOrganizationMember] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.organizationMembersPage?.members ?? [] }
-        return (model.organizationMembersPage?.members ?? []).filter {
-            $0.name.localizedCaseInsensitiveContains(query)
-                || ($0.email ?? "").localizedCaseInsensitiveContains(query)
-                || $0.userId.localizedCaseInsensitiveContains(query)
-                || $0.role.localizedCaseInsensitiveContains(query)
-                || $0.status.localizedCaseInsensitiveContains(query)
-        }
+        memberFilters.matching(model.organizationMembersPage?.members ?? [])
+    }
+
+    private var loadedMembers: [DashboardOrganizationMember] {
+        model.organizationMembersPage?.members ?? []
+    }
+
+    private var memberRoles: [String] {
+        OrganizationMemberFiltering.countsByRole(in: loadedMembers).keys.sorted()
+    }
+
+    private var memberStatuses: [String] {
+        OrganizationMemberFiltering.countsByStatus(in: loadedMembers).keys.sorted()
     }
 
     private var filteredInvites: [DashboardOrganizationInvite] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = memberFilters.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return model.organizationInvites }
         return model.organizationInvites.filter {
             $0.email.localizedCaseInsensitiveContains(query)
@@ -71,9 +75,22 @@ struct OrganizationMembersNativePanel: View {
             } else if model.isLoadingOrganizationMembers && model.organizationMembersPage == nil {
                 NativeEmptyState(title: "Loading team", message: "Verifying current organization membership.")
             } else if let page = model.organizationMembersPage {
-                SearchFieldRow(placeholder: "Search members and invitations", text: $searchText)
+                SearchFieldRow(placeholder: "Search members and invitations", text: $memberFilters.searchText)
+                memberFilterControls
+                HStack(spacing: 6) {
+                    Text("Showing \(filteredMembers.count) of \(loadedMembers.count) members")
+                    if memberFilters.hasActiveFilters {
+                        Button("Clear filters") { memberFilters = OrganizationMemberFiltering() }
+                            .buttonStyle(.link)
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
                 if filteredMembers.isEmpty {
-                    NativeEmptyState(title: searchText.isEmpty ? "No active members" : "No matching members", message: searchText.isEmpty ? "This organization has no active members to display." : "Try another search.")
+                    NativeEmptyState(
+                        title: loadedMembers.isEmpty ? "No active members" : "No matching members",
+                        message: loadedMembers.isEmpty ? "This organization has no active members to display." : "No members match the current search and filters. Clear filters or try another search."
+                    )
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                         ForEach(filteredMembers) { member in memberCard(member, actorRole: page.organization.role ?? "") }
@@ -102,6 +119,10 @@ struct OrganizationMembersNativePanel: View {
             }
         }
         .task(id: model.selectedOrganizationID) { await model.loadOrganizationMembers() }
+        .onChange(of: model.selectedOrganizationID) { _, _ in
+            memberFilters.role = "all"
+            memberFilters.status = "all"
+        }
         .confirmationDialog(memberChangeTitle, isPresented: Binding(get: { pendingMemberChange != nil }, set: { if !$0 { pendingMemberChange = nil } }), titleVisibility: .visible) {
             if let change = pendingMemberChange {
                 Button(change.action == "remove" ? "Remove member" : "Change role", role: .destructive) {
@@ -122,6 +143,27 @@ struct OrganizationMembersNativePanel: View {
                 Button("Cancel", role: .cancel) { self.pendingInviteRevoke = nil }
             }
         } message: { Text(pendingInviteRevoke?.invite.email ?? "") }
+    }
+
+    private var memberFilterControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            filterRow(title: "Role", values: memberRoles, counts: OrganizationMemberFiltering.countsByRole(in: loadedMembers), selection: $memberFilters.role)
+            filterRow(title: "Status", values: memberStatuses, counts: OrganizationMemberFiltering.countsByStatus(in: loadedMembers), selection: $memberFilters.status)
+        }
+    }
+
+    private func filterRow(title: String, values: [String], counts: [String: Int], selection: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textSecondary)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), alignment: .leading)], alignment: .leading, spacing: 6) {
+                FilterChip(title: "All (\(loadedMembers.count))", active: selection.wrappedValue == "all") { selection.wrappedValue = "all" }
+                ForEach(values, id: \.self) { value in
+                    FilterChip(title: "\(value.capitalized) (\(counts[value] ?? 0))", active: selection.wrappedValue == value) {
+                        selection.wrappedValue = value
+                    }
+                }
+            }
+        }
     }
 
     private var memberChangeTitle: String {
