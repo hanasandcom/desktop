@@ -40,14 +40,16 @@ struct BackupNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), alignment: .leading)], alignment: .leading, spacing: 10) {
                 ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await refresh() } }
                     .disabled(isLoading || isOperating)
                 ActionButton(title: "Restore drill", icon: "arrow.counterclockwise") {
                     model.openNativeDashboard(path: "/db/restore", label: "Restore drill", query: selectedFile.map { ["file": $0.file] } ?? [:])
                 }
-                Spacer()
-                ActionButton(title: isOperating ? "Working…" : "Backup now", icon: "externaldrive.badge.timemachine") { Task { await runBackup() } }
+                ActionButton(title: isOperating ? "Working…" : "Backup now", icon: "externaldrive.badge.timemachine") {
+                    guard confirmBackup() else { return }
+                    Task { await runBackup() }
+                }
                     .disabled(!writesEnabled)
             }
 
@@ -144,14 +146,17 @@ struct BackupNativePanel: View {
                         }
                     }
                     if let file = filteredFiles.first(where: { $0.id == selectedFileID }) {
-                        HStack(spacing: 10) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 10) {
                             FeatureCard(title: "Created", value: formatDateText(file.mtime, fallback: "Unknown"), icon: "calendar")
                             FeatureCard(title: "Size", value: file.size ?? "Unavailable", icon: "externaldrive")
                             FeatureCard(title: "Verification", value: file.verified ? "Verified" : "Unverified", icon: file.verified ? "checkmark.shield" : "exclamationmark.shield")
                         }
                         CompactInfoCard(title: "Checksum", lines: [file.checksumSha256 ?? "Not recorded", file.verifiedAt.map { "Verified \(formatDateText($0, fallback: $0))" } ?? ""])
-                        HStack(spacing: 10) {
-                            ActionButton(title: "Verify archive", icon: "checkmark.shield") { Task { await runFileAction(.verify, file: file) } }
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), alignment: .leading)], alignment: .leading, spacing: 10) {
+                            ActionButton(title: "Verify archive", icon: "checkmark.shield") {
+                                guard confirmVerify(file) else { return }
+                                Task { await runFileAction(.verify, file: file) }
+                            }
                                 .disabled(!writesEnabled)
                             ActionButton(title: "Delete archive", icon: "trash", tone: .danger) { confirmDelete(file) }
                                 .disabled(!writesEnabled)
@@ -198,6 +203,26 @@ struct BackupNativePanel: View {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { await runFileAction(.delete, file: file) }
+    }
+
+    private func confirmVerify(_ file: NativeBackupFile) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Verify backup archive?"
+        alert.informativeText = "Verify \(file.file) and update its verification metadata? The operation continues on the server if this screen closes."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Verify archive")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmBackup() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Create and verify a backup?"
+        alert.informativeText = "Create a backup of the configured database. Retention may remove older archives, and the operation continues on the server if this screen closes."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Backup now")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func runFileAction(_ action: FileAction, file: NativeBackupFile) async {

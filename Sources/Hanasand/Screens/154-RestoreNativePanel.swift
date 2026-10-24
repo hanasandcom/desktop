@@ -6,6 +6,7 @@ struct RestoreNativePanel: View {
     @State private var dashboard: NativeBackupDashboard?
     @State private var access: NativeDatabaseAccess?
     @State private var selectedFileID = ""
+    @State private var didChooseArchive = false
     @State private var targetDatabase = Self.defaultTarget
     @State private var confirmation = ""
     @State private var operationResult: NativeBackupOperation?
@@ -47,7 +48,7 @@ struct RestoreNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), alignment: .leading)], alignment: .leading, spacing: 10) {
                 ActionButton(title: isLoading ? "Refreshing…" : "Refresh files", icon: "arrow.clockwise") { Task { await refresh() } }
                     .disabled(isLoading || isOperating)
                 ActionButton(title: "Back to backups", icon: "externaldrive.badge.timemachine") {
@@ -59,10 +60,9 @@ struct RestoreNativePanel: View {
                     model.openNativeDashboard(path: "/db/restore", label: isLiveRestore ? "Restore drill" : "Restore live database", query: query)
                     confirmation = ""
                 }
-                Spacer()
             }
             if !errorMessage.isEmpty { NativeNotice(message: errorMessage, title: "Restore drill request failed") }
-            if !operationMessage.isEmpty { NativeNotice(message: operationMessage, title: "Restore drill", tone: .success) }
+            if !operationMessage.isEmpty { NativeNotice(message: operationMessage, title: isLiveRestore ? "Live restore" : "Restore drill", tone: .success) }
             if reviewRequired {
                 NativeNotice(message: "Refresh and review the current archives and operation history before another submission. Server operations may continue after this screen closes.", title: "Review required", tone: .info)
             }
@@ -71,19 +71,24 @@ struct RestoreNativePanel: View {
             }
             if let dashboard {
                 ForEach(dashboard.errors, id: \.self) { error in NativeNotice(message: error, title: "Backup data unavailable") }
+                if let requestedFile = model.selectedNativeDashboardQuery["file"], !didChooseArchive,
+                   dashboard.files.first(where: { $0.file == requestedFile }) == nil {
+                    NativeNotice(message: "The requested archive is no longer available. Choose an archive from the current list before restoring.", title: "Archive unavailable", tone: .info)
+                }
                 if access?.allowed != true || access?.canEdit != true {
-                    NativeNotice(message: "Restore drills require verified active owner, administrator or editor access. Impersonation is read-only.", title: "Read-only access", tone: .info)
+                    NativeNotice(message: "Restore operations require verified active owner, administrator or editor access. Impersonation is read-only.", title: "Read-only access", tone: .info)
                 }
                 drillControls(dashboard)
                 if let operation = restoreOperation { operationProgress(operation) }
                 drillHistoryPanel
             }
         }
-        .task(id: credentialScope) {
+        .task(id: "\(credentialScope)|\(model.selectedNativeDashboardQuery["file"] ?? "")") {
             client = nil
             dashboard = nil
             access = nil
             operationResult = nil
+            didChooseArchive = false
             await refresh()
         }
         .task(id: activeOperation?.id ?? operationResult?.id) { await refreshWhileOperationRuns() }
@@ -98,13 +103,16 @@ struct RestoreNativePanel: View {
             if value.files.isEmpty {
                 Text("No backup archive is available. Refresh after an archive is reported.").font(.system(size: 12))
             } else {
-                Picker("Backup archive", selection: $selectedFileID) {
+                Picker("Backup archive", selection: Binding(
+                    get: { selectedFileID },
+                    set: { selectedFileID = $0; didChooseArchive = true }
+                )) {
                     ForEach(value.files) { file in
                         Text("\(file.file) · \(file.size ?? "size unknown") · \(file.verified ? "verified" : "verify during drill")").tag(file.id)
                     }
                 }
                 if let file = selectedFile {
-                    HStack(spacing: 10) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), alignment: .leading)], alignment: .leading, spacing: 10) {
                         FeatureCard(title: "Measured file", value: file.size ?? "Not reported", icon: "externaldrive")
                         FeatureCard(title: "Verification", value: file.verified ? "Verified" : "Checked during drill", icon: "checkmark.shield")
                         FeatureCard(title: "Release commit", value: String(file.releaseCommit?.prefix(12) ?? "Not reported"), icon: "number")
@@ -123,7 +131,7 @@ struct RestoreNativePanel: View {
                 TextField("Type RESTORE \(isLiveRestore ? liveDatabase : targetDatabase) to confirm", text: $confirmation)
                     .textFieldStyle(.roundedBorder)
                 ActionButton(title: activeOperation.map { "\($0.stage.replacingOccurrences(of: "_", with: " ").capitalized)…" } ?? (isOperating ? "Starting restore…" : (isLiveRestore ? "Restore live database" : "Run isolated restore drill")), icon: isLiveRestore ? "exclamationmark.triangle" : "checkmark.shield", tone: isLiveRestore ? .danger : .normal) {
-                    Task { await runDrill() }
+                    confirmRestore()
                 }
                 .disabled(!canRun)
             }
@@ -183,6 +191,20 @@ struct RestoreNativePanel: View {
         }
     }
 
+    private func confirmRestore() {
+        guard let file = selectedFile else { return }
+        let alert = NSAlert()
+        alert.messageText = isLiveRestore ? "Restore the live database?" : "Run isolated restore drill?"
+        alert.informativeText = isLiveRestore
+            ? "Replace all data in \(liveDatabase) with \(file.file). Database requests may briefly fail while it switches. This cannot be undone."
+            : "Restore \(file.file) into temporary database \(targetDatabase), check its table shape, and remove the temporary target."
+        alert.alertStyle = isLiveRestore ? .critical : .informational
+        alert.addButton(withTitle: isLiveRestore ? "Restore live database" : "Run restore drill")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await runDrill() }
+    }
+
     private func refreshWhileOperationRuns() async {
         guard shouldRefreshOperation else { return }
         while !Task.isCancelled, shouldRefreshOperation {
@@ -210,10 +232,12 @@ struct RestoreNativePanel: View {
             client = value
             access = permissions
             dashboard = data
-            let requestedFile = model.selectedNativeDashboardQuery["file"]
-            selectedFileID = data.files.first(where: { $0.file == requestedFile })?.id
-                ?? data.files.first(where: { $0.id == selectedFileID })?.id
-                ?? data.files.first?.id ?? ""
+            selectedFileID = preferredNativeRestoreFileID(
+                files: data.files,
+                requestedFile: model.selectedNativeDashboardQuery["file"],
+                currentFileID: selectedFileID,
+                didChooseArchive: didChooseArchive
+            )
             if let operationResult,
                let refreshed = backupOperation(withID: operationResult.id, in: data) {
                 self.operationResult = refreshed
@@ -239,4 +263,11 @@ struct RestoreNativePanel: View {
         let matches = operation.sourceIntegrity?.tables == restored.tables ? "passed" : "unavailable"
         return "\(restored.schemas) schemas, \(restored.tables) tables, source match \(matches). Temporary target removed: \(operation.targetRemoved == true ? "yes" : "no")."
     }
+}
+
+func preferredNativeRestoreFileID(files: [NativeBackupFile], requestedFile: String?, currentFileID: String, didChooseArchive: Bool) -> String {
+    if !didChooseArchive, let requestedFile {
+        return files.first(where: { $0.file == requestedFile })?.id ?? ""
+    }
+    return files.first(where: { $0.id == currentFileID })?.id ?? files.first?.id ?? ""
 }

@@ -15,10 +15,15 @@ struct HostsNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                SearchFieldRow(placeholder: "Search hosts by name, address, or system", text: $model.hostAccessSearch)
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadHostOverview() } }
-                ActionButton(title: "SSH keys", icon: "key.horizontal") { model.openNativeDashboard(path: "/profile", label: "Profile") }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    hostSearchField
+                    hostToolbarActions
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    hostSearchField
+                    hostToolbarActions
+                }
             }
 
             if model.isLoadingHostOverview {
@@ -53,6 +58,18 @@ struct HostsNativePanel: View {
                   let host = model.hostOverview?.hosts.first(where: { $0.id.rawValue == initialConsoleHostID }) else { return }
             consoleHost = host
             self.initialConsoleHostID = nil
+        }
+    }
+
+    private var hostSearchField: some View {
+        SearchFieldRow(placeholder: "Search hosts by name, address, or system", text: $model.hostAccessSearch)
+    }
+
+    private var hostToolbarActions: some View {
+        HStack(spacing: 10) {
+            ActionButton(title: model.isLoadingHostOverview ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await model.loadHostOverview() } }
+                .disabled(model.isLoadingHostOverview)
+            ActionButton(title: "SSH keys", icon: "key.horizontal") { model.openNativeDashboard(path: "/profile", label: "Profile") }
         }
     }
 
@@ -113,18 +130,16 @@ struct HostsNativePanel: View {
                     NativeEmptyState(title: model.hostUserSearch.isEmpty ? "No SSH keys reported" : "No matching users", message: model.hostUserSearch.isEmpty ? "The service did not report any recognized SSH keys." : "Try another name or username.")
                 } else {
                     ForEach(users.prefix(model.visibleHostUserLimit)) { user in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("\(user.name) · @\(user.username)")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(theme.text)
-                                if user.id == model.userIDForRequests {
-                                    Text("This account")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(theme.textSecondary)
-                                }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(user.name) · @\(user.username)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if user.id == model.userIDForRequests {
+                                Text("This account")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.textSecondary)
                             }
-                            Spacer()
                             Text(user.keyCount.map { "\($0) \($0 == 1 ? "key" : "keys")" } ?? "Key count not reported")
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(theme.textSecondary)
@@ -166,14 +181,15 @@ struct HostUpdatesNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Picker("Host", selection: $model.selectedHostUpdatesHost) {
-                    ForEach(HostUpdateTarget.allCases) { host in Text(host.title).tag(host) }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    hostPicker
+                    refreshButton
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
-                .onChange(of: model.selectedHostUpdatesHost) { _, host in Task { await model.loadHostUpdateStatus(for: host) } }
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadHostUpdateStatus(for: model.selectedHostUpdatesHost) } }
+                VStack(alignment: .leading, spacing: 8) {
+                    hostPicker
+                    refreshButton
+                }
             }
 
             if model.isLoadingHostUpdates {
@@ -191,6 +207,22 @@ struct HostUpdatesNativePanel: View {
                 .font(.system(size: 12))
                 .foregroundStyle(theme.textSecondary)
         }
+    }
+
+    private var hostPicker: some View {
+        Picker("Host", selection: $model.selectedHostUpdatesHost) {
+            ForEach(HostUpdateTarget.allCases) { host in Text(host.title).tag(host) }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 300)
+        .onChange(of: model.selectedHostUpdatesHost) { _, host in Task { await model.loadHostUpdateStatus(for: host) } }
+    }
+
+    private var refreshButton: some View {
+        ActionButton(title: model.isLoadingHostUpdates ? "Checking…" : "Refresh", icon: "arrow.clockwise") {
+            Task { await model.loadHostUpdateStatus(for: model.selectedHostUpdatesHost) }
+        }
+        .disabled(model.isLoadingHostUpdates)
     }
 
     private func updateOverview(_ data: HostUpdateEnvelope) -> some View {
@@ -218,7 +250,7 @@ struct HostUpdatesNativePanel: View {
     }
 
     @ViewBuilder private func updateContents(_ data: HostUpdateEnvelope) -> some View {
-        HStack(spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 165), spacing: 8)], alignment: .leading, spacing: 8) {
             ForEach(HostUpdateView.allCases) { view in
                 Button("\(view.title) · \(count(for: view, data: data))") {
                     model.selectedHostUpdatesView = view
@@ -227,6 +259,7 @@ struct HostUpdatesNativePanel: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(model.selectedHostUpdatesView == view ? theme.accent : theme.card)
+                .frame(maxWidth: .infinity)
             }
         }
 

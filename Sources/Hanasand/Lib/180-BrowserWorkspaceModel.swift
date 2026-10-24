@@ -254,12 +254,13 @@ final class BrowserWorkspaceModel: ObservableObject {
             // native panel and is not sent to the CDN as a filter.
             section = websiteGalleryAlbumsRoute ? "galleryAlbums" : "gallery"
         }
-
         let parts = path.split(separator: "/").map(String.init)
         let urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let queryItems = urlComponents?.queryItems ?? []
         func queryValue(_ key: String) -> String? { queryItems.first(where: { $0.name == key })?.value }
         var routeQuery = Dictionary(queryItems.compactMap { item in item.value.map { (item.name, $0) } }, uniquingKeysWith: { first, _ in first })
+        // Native Gallery album handoff uses the existing Images route; the
+        // Images panel validates albumId against the signed-in user's albums.
         if let fragment = urlComponents?.fragment, !fragment.isEmpty,
            let fragmentComponents = URLComponents(string: "https://fragment.invalid/?\(fragment)") {
             for item in fragmentComponents.queryItems ?? [] where routeQuery[item.name] == nil {

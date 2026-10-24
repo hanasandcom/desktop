@@ -179,6 +179,16 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://example.com/dashboard"))
     }
 
+    func testGalleryAlbumHandoffKeepsAlbumSelectionOnTheNativeImagesRoute() {
+        let route = BrowserWorkspaceModel.nativeRoute(
+            for: "https://hanasand.com/images/library?albumId=album%2Fsummer"
+        )
+
+        XCTAssertEqual(route?.path, "/images/library")
+        XCTAssertEqual(route?.query["albumId"], "album/summer")
+        XCTAssertNil(route?.detailID)
+    }
+
     func testUnsupportedFirstPartyRoutesStayInAppAndAreNotReportedAsOpened() throws {
         let route = try XCTUnwrap(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/not-native-yet"))
         XCTAssertFalse(BrowserWorkspaceModel.hasNativeDestination(for: route.path))

@@ -16,4 +16,14 @@ final class NativeBackupArchiveFilteringTests: XCTestCase {
         XCTAssertEqual(selectedNativeBackupFile(files, id: "core-core-2026-10-24.sql.gz", service: "core", date: "", search: "")?.file, "core-2026-10-24.sql.gz")
         XCTAssertNil(selectedNativeBackupFile(files, id: "core-core-2026-10-24.sql.gz", service: "analytics", date: "", search: ""), "A filtered-out archive must not prefill restore")
     }
+
+    func testRestoreRouteDoesNotSilentlyReplaceUnavailableRequestedArchive() {
+        let files = [
+            NativeBackupFile(service: "core", file: "core-current.sql.gz", mtime: nil, size: nil, sizeBytes: nil, verified: true, checksumSha256: nil, verifiedAt: nil, releaseCommit: nil),
+        ]
+
+        XCTAssertEqual(preferredNativeRestoreFileID(files: files, requestedFile: "core-current.sql.gz", currentFileID: "", didChooseArchive: false), files[0].id)
+        XCTAssertEqual(preferredNativeRestoreFileID(files: files, requestedFile: "core-removed.sql.gz", currentFileID: "", didChooseArchive: false), "")
+        XCTAssertEqual(preferredNativeRestoreFileID(files: files, requestedFile: "core-removed.sql.gz", currentFileID: files[0].id, didChooseArchive: true), files[0].id)
+    }
 }

@@ -18,6 +18,29 @@ struct APIReferenceLoadedDocument {
     let rawJSON: String
 }
 
+enum APIReferenceJSONPages {
+    static let pageSize = 8_000
+
+    static func split(_ value: String) -> [String] {
+        let units = Array(value.utf16)
+        guard !units.isEmpty else { return [""] }
+
+        var pages: [String] = []
+        var start = 0
+        while start < units.count {
+            var end = min(start + pageSize, units.count)
+            if end < units.count,
+               (0xD800...0xDBFF).contains(units[end - 1]),
+               (0xDC00...0xDFFF).contains(units[end]) {
+                end -= 1
+            }
+            pages.append(String(decoding: units[start..<end], as: UTF16.self))
+            start = end
+        }
+        return pages
+    }
+}
+
 struct APIReferenceClient {
     static let documentLimit = 2 * 1024 * 1024
     private let transport: APIReferenceTransport
@@ -66,6 +89,8 @@ struct APIReferenceClient {
 
 @MainActor
 final class APIReferenceModel: ObservableObject {
+    static let entryPageSize = 30
+
     enum Section: String, CaseIterable, Identifiable {
         case publicAPI = "Public API"
         case applicationAPI = "Application API"
@@ -82,6 +107,7 @@ final class APIReferenceModel: ObservableObject {
     @Published var section: Section = .publicAPI
     @Published var expandedRows: Set<String> = []
     @Published var expandedSchemas: Set<String> = []
+    @Published private(set) var visibleEntryCount = APIReferenceModel.entryPageSize
 
     private let client: APIReferenceClient
     private var requestGeneration = 0
@@ -109,6 +135,24 @@ final class APIReferenceModel: ObservableObject {
         (document?.schemas ?? [:]).filter { name, value in
             query.isEmpty || "\(name) \(value.prettyJSON)".localizedCaseInsensitiveContains(query.trimmingCharacters(in: .whitespacesAndNewlines))
         }.sorted { $0.key < $1.key }
+    }
+
+    var visibleEntryTotal: Int {
+        section == .schemas ? filteredSchemas.count : operationRows.count
+    }
+
+    func setQuery(_ value: String) {
+        query = value
+        visibleEntryCount = Self.entryPageSize
+    }
+
+    func selectSection(_ value: Section) {
+        section = value
+        visibleEntryCount = Self.entryPageSize
+    }
+
+    func showMoreEntries() {
+        visibleEntryCount = min(visibleEntryCount + Self.entryPageSize, visibleEntryTotal)
     }
 
     func refresh(websiteBaseURL: String) async {

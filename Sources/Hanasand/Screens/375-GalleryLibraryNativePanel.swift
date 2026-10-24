@@ -139,6 +139,13 @@ struct GalleryLibraryNativePanel: View {
             albumTimeline = []
             preview = nil
         }
+        .onChange(of: model.selectedNativeDashboardQuery["albumId"]) { _, requestedID in
+            guard let requestedID, !requestedID.isEmpty else {
+                if selectedAlbumID != nil { collection = "all" }
+                return
+            }
+            selectRequestedAlbum(requestedID, from: albums)
+        }
         .onChange(of: collection) { _, _ in
             selectedMonth = ""
             albumTimeline = []
@@ -260,10 +267,25 @@ struct GalleryLibraryNativePanel: View {
             let loaded = try await GalleryAlbumClient(settings: settings).listAlbums()
             guard fingerprint == sessionFingerprint else { return }
             albums = loaded
+            if let requestedID = model.selectedNativeDashboardQuery["albumId"], !requestedID.isEmpty {
+                selectRequestedAlbum(requestedID, from: loaded)
+            }
         } catch {
             guard fingerprint == sessionFingerprint else { return }
             albumError = error.localizedDescription
         }
+    }
+
+    @MainActor private func selectRequestedAlbum(_ requestedID: String, from availableAlbums: [GalleryAlbum]) {
+        guard availableAlbums.contains(where: { $0.id == requestedID }) else {
+            albumError = "The requested album is not available to this account."
+            return
+        }
+        albumError = ""
+        search = ""
+        selectedMonth = ""
+        albumTimeline = []
+        collection = "album:\(requestedID)"
     }
 
     private func copyFileURL(_ file: GalleryLibraryItem) {

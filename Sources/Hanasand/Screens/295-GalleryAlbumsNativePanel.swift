@@ -108,16 +108,23 @@ struct GalleryAlbumsNativePanel: View {
 
     private var albumList: some View {
         NativeGroupPanel(title: "Your albums", subtitle: "Private by default · shared albums also appear here") {
-            HStack(spacing: 8) {
-                TextField("New album name", text: $nameDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(busy)
-                ActionButton(title: "Create album", icon: "plus", tone: .normal) {
-                    Task { await createAlbum() }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    TextField("New album name", text: $nameDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(busy)
+                    createAlbumButton
+                    refreshAlbumsButton
                 }
-                .disabled(busy || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await refreshAlbums() } }
-                    .disabled(busy)
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("New album name", text: $nameDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(busy)
+                    HStack(spacing: 8) {
+                        createAlbumButton
+                        refreshAlbumsButton
+                    }
+                }
             }
             if albums.isEmpty && !busy {
                 NativeEmptyState(title: "No albums yet", message: "Create an album, then add photos already uploaded to your library.")
@@ -145,23 +152,26 @@ struct GalleryAlbumsNativePanel: View {
         }
     }
 
+    private var createAlbumButton: some View {
+        ActionButton(title: "Create album", icon: "plus", tone: .normal) {
+            Task { await createAlbum() }
+        }
+        .disabled(busy || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private var refreshAlbumsButton: some View {
+        ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await refreshAlbums() } }
+            .disabled(busy)
+    }
+
     @ViewBuilder private func albumDetail(_ album: GalleryAlbumDetail) -> some View {
         NativeGroupPanel(title: album.name, subtitle: "\(album.total) items · \(album.role) · \(album.isPublic ? "Public link enabled" : "Private")") {
-            HStack(spacing: 8) {
-                ActionButton(title: "All albums", icon: "chevron.left") { self.album = nil; selectedMonth = ""; showPicker = false; error = "" }
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await open(album.id, offset: offset, month: selectedMonth) } }
-                if GalleryAlbumAccess.canLeave(album, currentUserId: model.userIDForRequests) {
-                    ActionButton(title: "Leave shared album", icon: "rectangle.portrait.and.arrow.right", tone: .danger) {
-                        confirmLeaveAlbum = true
-                    }
-                    .disabled(busy)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    albumNavigationButtons(album)
                 }
-                if canAddItems {
-                    ActionButton(title: showPicker ? "Close picker" : "Add library photos", icon: "photo.badge.plus") {
-                        showPicker.toggle(); selectedFiles.removeAll()
-                        if showPicker { Task { await loadLibrary(offset: 0) } }
-                    }
-                    .disabled(busy)
+                VStack(alignment: .leading, spacing: 8) {
+                    albumNavigationButtons(album, stacked: true)
                 }
             }
             if canManage {
@@ -291,6 +301,41 @@ struct GalleryAlbumsNativePanel: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private func albumNavigationButtons(_ album: GalleryAlbumDetail, stacked: Bool = false) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 8) { albumNavigationActions(album) }
+        } else {
+            HStack(spacing: 8) { albumNavigationActions(album) }
+        }
+    }
+
+    @ViewBuilder private func albumNavigationActions(_ album: GalleryAlbumDetail) -> some View {
+        ActionButton(title: "All albums", icon: "chevron.left") { self.album = nil; selectedMonth = ""; showPicker = false; error = "" }
+        ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await open(album.id, offset: offset, month: selectedMonth) } }
+        viewAlbumPhotosButton(album)
+        if GalleryAlbumAccess.canLeave(album, currentUserId: model.userIDForRequests) {
+            ActionButton(title: "Leave shared album", icon: "rectangle.portrait.and.arrow.right", tone: .danger) { confirmLeaveAlbum = true }
+                .disabled(busy)
+        }
+        if canAddItems { addAlbumPhotosButton }
+    }
+
+    private func viewAlbumPhotosButton(_ album: GalleryAlbumDetail) -> some View {
+        ActionButton(title: "View photos", icon: "photo.on.rectangle.angled") {
+            model.openNativeDashboard(path: "/images/library", label: "Images", query: ["albumId": album.id])
+        }
+        .disabled(busy)
+        .help("Open this album in the Images library")
+    }
+
+    private var addAlbumPhotosButton: some View {
+        ActionButton(title: showPicker ? "Close picker" : "Add library photos", icon: "photo.badge.plus") {
+            showPicker.toggle(); selectedFiles.removeAll()
+            if showPicker { Task { await loadLibrary(offset: 0) } }
+        }
+        .disabled(busy)
     }
 
     private func makeClient() -> GalleryAlbumClient? { try? GalleryAlbumClient(settings: model.settings) }

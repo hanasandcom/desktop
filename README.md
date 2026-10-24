@@ -1,6 +1,6 @@
 # Hanasand Desktop
 
-Native macOS client for Hanasand account, mail, AI, and control workflows. It also runs an embedded Swift command bridge that the signed-in mobile app can discover over the local network.
+Native macOS client for Hanasand account, content, security, infrastructure, organization, and developer workflows. It also runs an embedded Swift command bridge that the signed-in mobile app can discover over the local network.
 
 ## Run the macOS app
 

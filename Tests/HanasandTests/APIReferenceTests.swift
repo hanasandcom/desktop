@@ -115,6 +115,21 @@ final class APIReferenceTests: XCTestCase {
         XCTAssertEqual(next?["$ref"], .string("#/components/schemas/Node"))
     }
 
+    func testJSONPagingUsesMobileSizedPagesAndPreservesUnicodeBoundaries() {
+        let ascii = String(repeating: "x", count: APIReferenceJSONPages.pageSize * 2 + 1)
+        let pages = APIReferenceJSONPages.split(ascii)
+        XCTAssertEqual(pages.map { $0.utf16.count }, [8_000, 8_000, 1])
+        XCTAssertEqual(pages.joined(), ascii)
+
+        let unicode = String(repeating: "a", count: APIReferenceJSONPages.pageSize - 1) + "😀" + "tail"
+        let unicodePages = APIReferenceJSONPages.split(unicode)
+        XCTAssertEqual(unicodePages.count, 2)
+        XCTAssertEqual(unicodePages.first?.utf16.count, APIReferenceJSONPages.pageSize - 1)
+        XCTAssertEqual(unicodePages.joined(), unicode)
+        XCTAssertTrue(unicodePages[1].hasPrefix("😀"))
+        XCTAssertEqual(APIReferenceJSONPages.split("").count, 1)
+    }
+
     func testRejectsMalformedOrOversizedContractsAndNonOpenAPIResponses() {
         for value in ["{}", "not-json", #"{"openapi":"2.0","info":{"title":"old","version":"1"},"paths":{}}"#, #"{"openapi":"3.1.0","info":{"title":"missing version"},"paths":{}}"#, #"{"openapi":"3.1.0","info":{"title":"broken","version":"1"},"paths":{"bad":{}}}"#] {
             XCTAssertThrowsError(try APIReferenceDocument.decode(Data(value.utf8)))
@@ -161,6 +176,30 @@ final class APIReferenceTests: XCTestCase {
         model.section = APIReferenceModel.Section.schemas
         model.query = "id"
         XCTAssertEqual(model.filteredSchemas.map { $0.0 }, ["Actor"])
+    }
+
+    @MainActor
+    func testResultPagingMatchesMobileBatchBehaviorAndResetsOnSearchAndSectionChanges() async throws {
+        let transport = APIReferenceStubTransport(data: Data(contract.utf8), status: 200)
+        let model = APIReferenceModel(client: APIReferenceClient(transport: transport))
+        await model.refresh(websiteBaseURL: "https://hanasand.com")
+
+        model.selectSection(.applicationAPI)
+        XCTAssertEqual(model.visibleEntryTotal, 36)
+        XCTAssertEqual(model.visibleEntryCount, APIReferenceModel.entryPageSize)
+        model.showMoreEntries()
+        XCTAssertEqual(model.visibleEntryCount, 36)
+
+        model.setQuery("billing")
+        XCTAssertEqual(model.visibleEntryCount, APIReferenceModel.entryPageSize)
+        XCTAssertEqual(model.visibleEntryTotal, 2)
+
+        model.setQuery("")
+        model.showMoreEntries()
+        XCTAssertEqual(model.visibleEntryCount, 36)
+        model.selectSection(.schemas)
+        XCTAssertEqual(model.visibleEntryCount, APIReferenceModel.entryPageSize)
+        XCTAssertEqual(model.visibleEntryTotal, 3)
     }
 
     @MainActor
