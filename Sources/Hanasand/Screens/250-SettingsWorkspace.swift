@@ -10,12 +10,87 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct NativeSettingsConfigurationDraft: Equatable {
+    var websiteBaseURL: String
+    var apiBaseURL: String
+    var internalAPIBaseURL: String
+    var cdnBaseURL: String
+    var codexAPIPath: String
+    var aiAPIURL: String
+    var desktopAgentBaseURL: String
+    var vpnURLScheme: String
+    var rdpHost: String
+    var vncHost: String
+    var rdpUser: String
+    var remoteDesktopProtocol: String
+    var remoteDesktopTunnelCommand: String
+    var serverBaseURL: String
+    var serverStartPath: String
+    var serverStopPath: String
+    var serverLogsPath: String
+
+    init(settings: HanasandDesktopSettings) {
+        websiteBaseURL = settings.websiteBaseURL
+        apiBaseURL = settings.apiBaseURL
+        internalAPIBaseURL = settings.internalAPIBaseURL
+        cdnBaseURL = settings.cdnBaseURL
+        codexAPIPath = settings.codexAPIPath
+        aiAPIURL = settings.aiAPIURL
+        desktopAgentBaseURL = settings.desktopAgentBaseURL
+        vpnURLScheme = settings.vpnURLScheme
+        rdpHost = settings.rdpHost
+        vncHost = settings.vncHost
+        rdpUser = settings.rdpUser
+        remoteDesktopProtocol = settings.remoteDesktopProtocol
+        remoteDesktopTunnelCommand = settings.remoteDesktopTunnelCommand
+        serverBaseURL = settings.serverBaseURL
+        serverStartPath = settings.serverStartPath
+        serverStopPath = settings.serverStopPath
+        serverLogsPath = settings.serverLogsPath
+    }
+
+    func applying(to current: HanasandDesktopSettings) -> HanasandDesktopSettings {
+        var updated = current
+        updated.websiteBaseURL = websiteBaseURL
+        updated.apiBaseURL = apiBaseURL
+        updated.internalAPIBaseURL = internalAPIBaseURL
+        updated.cdnBaseURL = cdnBaseURL
+        updated.codexAPIPath = codexAPIPath
+        updated.aiAPIURL = aiAPIURL
+        updated.desktopAgentBaseURL = desktopAgentBaseURL
+        updated.vpnURLScheme = vpnURLScheme
+        updated.rdpHost = rdpHost
+        updated.vncHost = vncHost
+        updated.rdpUser = rdpUser
+        updated.remoteDesktopProtocol = remoteDesktopProtocol
+        updated.remoteDesktopTunnelCommand = remoteDesktopTunnelCommand
+        updated.serverBaseURL = serverBaseURL
+        updated.serverStartPath = serverStartPath
+        updated.serverStopPath = serverStopPath
+        updated.serverLogsPath = serverLogsPath
+        return updated
+    }
+}
+
 struct SettingsWorkspace: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State var showEndpointSettings = false
     @State var showRemoteSettings = false
     @State var confirmLogout = false
+    @State private var configurationDraft: NativeSettingsConfigurationDraft?
+
+    private var draft: NativeSettingsConfigurationDraft {
+        configurationDraft ?? NativeSettingsConfigurationDraft(settings: model.settings)
+    }
+
+    private var draftSettings: HanasandDesktopSettings {
+        draft.applying(to: model.settings)
+    }
+
+    private var hasConfigurationChanges: Bool {
+        draft != NativeSettingsConfigurationDraft(settings: model.settings)
+    }
 
     var body: some View {
         FeatureWorkspace(title: "Settings", subtitle: "Account, appearance, updater, and advanced connections") {
@@ -50,7 +125,7 @@ struct SettingsWorkspace: View {
                         }
                         .disabled(!model.hasHanasandAuth)
                     }
-                    SettingsValidationPanel(settings: model.settings)
+                    SettingsValidationPanel(settings: draftSettings)
                 }
             }
 
@@ -72,13 +147,13 @@ struct SettingsWorkspace: View {
                 isExpanded: $showEndpointSettings
             ) {
                 VStack(alignment: .leading, spacing: 10) {
-                    SettingsField(label: "Site base URL", text: $model.settings.websiteBaseURL)
-                    SettingsField(label: "API base", text: $model.settings.apiBaseURL)
-                    SettingsField(label: "Internal API", text: $model.settings.internalAPIBaseURL)
-                    SettingsField(label: "CDN base", text: $model.settings.cdnBaseURL)
-                    SettingsField(label: "Codex path", text: $model.settings.codexAPIPath)
-                    SettingsField(label: "AI endpoint", text: $model.settings.aiAPIURL)
-                    SettingsField(label: "Desktop agent", text: $model.settings.desktopAgentBaseURL)
+                    SettingsField(label: "Site base URL", text: draftBinding(\.websiteBaseURL))
+                    SettingsField(label: "API base", text: draftBinding(\.apiBaseURL))
+                    SettingsField(label: "Internal API", text: draftBinding(\.internalAPIBaseURL))
+                    SettingsField(label: "CDN base", text: draftBinding(\.cdnBaseURL))
+                    SettingsField(label: "Codex path", text: draftBinding(\.codexAPIPath))
+                    SettingsField(label: "AI endpoint", text: draftBinding(\.aiAPIURL))
+                    SettingsField(label: "Desktop agent", text: draftBinding(\.desktopAgentBaseURL))
                 }
             }
 
@@ -89,22 +164,40 @@ struct SettingsWorkspace: View {
                 isExpanded: $showRemoteSettings
             ) {
                 VStack(alignment: .leading, spacing: 10) {
-                    SettingsField(label: "VPN URL", text: $model.settings.vpnURLScheme)
-                    Picker("Remote protocol", selection: $model.settings.remoteDesktopProtocol) {
+                    SettingsField(label: "VPN URL", text: draftBinding(\.vpnURLScheme))
+                    Picker("Remote protocol", selection: draftBinding(\.remoteDesktopProtocol)) {
                         ForEach(RemoteDesktopProtocol.allCases) { remoteProtocol in
                             Label(remoteProtocol.label, systemImage: remoteProtocol.icon)
                                 .tag(remoteProtocol.rawValue)
                         }
                     }
                     .pickerStyle(.segmented)
-                    SettingsField(label: "RDP host", text: $model.settings.rdpHost)
-                    SettingsField(label: "VNC host", text: $model.settings.vncHost)
-                    SettingsField(label: "Remote user", text: $model.settings.rdpUser)
-                    SettingsField(label: "Tunnel command", text: $model.settings.remoteDesktopTunnelCommand)
-                    SettingsField(label: "Server base", text: $model.settings.serverBaseURL)
-                    SettingsField(label: "Start path", text: $model.settings.serverStartPath)
-                    SettingsField(label: "Stop path", text: $model.settings.serverStopPath)
-                    SettingsField(label: "Logs path", text: $model.settings.serverLogsPath)
+                    SettingsField(label: "RDP host", text: draftBinding(\.rdpHost))
+                    SettingsField(label: "VNC host", text: draftBinding(\.vncHost))
+                    SettingsField(label: "Remote user", text: draftBinding(\.rdpUser))
+                    SettingsField(label: "Tunnel command", text: draftBinding(\.remoteDesktopTunnelCommand))
+                    SettingsField(label: "Server base", text: draftBinding(\.serverBaseURL))
+                    SettingsField(label: "Start path", text: draftBinding(\.serverStartPath))
+                    SettingsField(label: "Stop path", text: draftBinding(\.serverStopPath))
+                    SettingsField(label: "Logs path", text: draftBinding(\.serverLogsPath))
+                }
+            }
+
+            HStack(spacing: 10) {
+                ActionButton(title: "Discard changes", icon: "arrow.uturn.backward") {
+                    configurationDraft = nil
+                }
+                .disabled(!hasConfigurationChanges)
+                ActionButton(title: "Save changes", icon: "checkmark") {
+                    model.settings = draftSettings
+                    configurationDraft = nil
+                }
+                .disabled(!hasConfigurationChanges || !draftSettings.hasValidEndpoints)
+                if hasConfigurationChanges && !draftSettings.hasValidEndpoints {
+                    Text("Fix endpoint issues before saving.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -121,6 +214,17 @@ struct SettingsWorkspace: View {
     var endpointSummary: String {
         let host = model.settings.apiBaseURL.normalizedBaseURL.host ?? "API"
         return model.settings.hasValidEndpoints ? "\(host) · all URLs valid" : "\(host) · review URL issues"
+    }
+
+    private func draftBinding<Value>(_ keyPath: WritableKeyPath<NativeSettingsConfigurationDraft, Value>) -> Binding<Value> {
+        Binding(
+            get: { draft[keyPath: keyPath] },
+            set: { value in
+                var updated = draft
+                updated[keyPath: keyPath] = value
+                configurationDraft = updated
+            }
+        )
     }
 
     var settingsUpdateIntervalLabel: String {
