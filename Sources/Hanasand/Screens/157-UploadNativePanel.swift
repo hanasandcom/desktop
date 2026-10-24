@@ -10,6 +10,24 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum NativeUploadDescriptionInput {
+    static let maximumLength = 1_024
+
+    static func limited(_ value: String) -> String {
+        guard value.utf16.count > maximumLength else { return value }
+
+        var result = ""
+        var length = 0
+        for character in value {
+            let characterLength = String(character).utf16.count
+            guard length + characterLength <= maximumLength else { break }
+            result.append(character)
+            length += characterLength
+        }
+        return result
+    }
+}
+
 struct UploadNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
@@ -94,6 +112,10 @@ struct UploadNativePanel: View {
                             .padding(8)
                             .background(theme.field)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .onChange(of: model.uploadDescription) { _, value in
+                                let limited = NativeUploadDescriptionInput.limited(value)
+                                if limited != value { model.uploadDescription = limited }
+                            }
                     }
 
                     Text(model.uploadStatus)
