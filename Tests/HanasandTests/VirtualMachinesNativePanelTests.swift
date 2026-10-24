@@ -64,6 +64,53 @@ final class VirtualMachinesNativePanelTests: XCTestCase {
         XCTAssertEqual(segments[1], [NativeVMChartPoint(x: 1, y: 0.5)])
     }
 
+    @MainActor
+    func testUncertainPowerActionRequiresCompleteTargetAndAccessReviewBeforeAcknowledgement() throws {
+        let gate = NativeVMPowerActionGate()
+        let scope = "account-a|personal"
+        let intent = try XCTUnwrap(gate.begin(scope: scope, vmName: "vm-17", action: "restart"))
+
+        XCTAssertNil(gate.begin(scope: scope, vmName: "vm-18", action: "stop"))
+        XCTAssertTrue(gate.finish(scope: scope, token: intent.token, uncertain: true))
+        XCTAssertFalse(gate.canAcknowledge(scope: scope, token: intent.token))
+        XCTAssertFalse(gate.markReviewed(scope: scope, token: intent.token, vmName: "vm-17", currentStatus: "running", inventoryComplete: false, targetFound: true, managementReadSucceeded: true))
+        XCTAssertFalse(gate.markReviewed(scope: scope, token: intent.token, vmName: "vm-18", currentStatus: "running", inventoryComplete: true, targetFound: true, managementReadSucceeded: true))
+        XCTAssertFalse(gate.markReviewed(scope: scope, token: intent.token, vmName: "vm-17", currentStatus: "running", inventoryComplete: true, targetFound: true, managementReadSucceeded: false))
+
+        XCTAssertTrue(gate.markReviewed(scope: scope, token: intent.token, vmName: "VM-17", currentStatus: "running", inventoryComplete: true, targetFound: true, managementReadSucceeded: true))
+        XCTAssertTrue(gate.canAcknowledge(scope: scope, token: intent.token))
+        XCTAssertFalse(gate.acknowledge(scope: scope, token: "another-token"))
+        XCTAssertTrue(gate.acknowledge(scope: scope, token: intent.token))
+        XCTAssertNil(gate.intent(for: scope))
+        XCTAssertNotNil(gate.begin(scope: scope, vmName: "vm-18", action: "stop"))
+    }
+
+    @MainActor
+    func testDefinitePowerRejectionReleasesGateAndUncertainFailuresAreScopedToDispatchedRequests() throws {
+        let gate = NativeVMPowerActionGate()
+        let scope = "account-a|personal"
+        let rejected = try XCTUnwrap(gate.begin(scope: scope, vmName: "vm-17", action: "stop"))
+        XCTAssertTrue(gate.finish(scope: scope, token: rejected.token, uncertain: false))
+        XCTAssertNil(gate.intent(for: scope))
+
+        XCTAssertFalse(nativeVMPowerActionNeedsReviewAfterFailure(DashboardRequestError.httpStatus(403), requestWasDispatched: true))
+        XCTAssertFalse(nativeVMPowerActionNeedsReviewAfterFailure(DashboardRequestError.httpStatus(429), requestWasDispatched: true))
+        XCTAssertTrue(nativeVMPowerActionNeedsReviewAfterFailure(DashboardRequestError.httpStatus(504), requestWasDispatched: true))
+        XCTAssertTrue(nativeVMPowerActionNeedsReviewAfterFailure(DashboardRequestError.httpStatus(500), requestWasDispatched: true))
+        XCTAssertTrue(nativeVMPowerActionNeedsReviewAfterFailure(URLError(.timedOut), requestWasDispatched: true))
+        XCTAssertFalse(nativeVMPowerActionNeedsReviewAfterFailure(URLError(.timedOut), requestWasDispatched: false))
+    }
+
+    @MainActor
+    func testPowerActionGateScopesByServiceAccountOrganizationAndOwnership() {
+        let api = URL(string: "https://api.hanasand.com")!
+        let personal = nativeVMPowerActionScopeKey(apiBaseURL: api, userID: "user-1", organizationID: "personal", isImpersonating: false)
+        XCTAssertEqual(personal, nativeVMPowerActionScopeKey(apiBaseURL: api, userID: "user-1", organizationID: "personal", isImpersonating: false))
+        XCTAssertNotEqual(personal, nativeVMPowerActionScopeKey(apiBaseURL: api, userID: "user-2", organizationID: "personal", isImpersonating: false))
+        XCTAssertNotEqual(personal, nativeVMPowerActionScopeKey(apiBaseURL: api, userID: "user-1", organizationID: "org-1", isImpersonating: false))
+        XCTAssertNotEqual(personal, nativeVMPowerActionScopeKey(apiBaseURL: api, userID: "user-1", organizationID: "personal", isImpersonating: true))
+    }
+
     private static func vm(
         _ name: String,
         status: String? = nil,

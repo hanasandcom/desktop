@@ -18,6 +18,7 @@ func nativeVMDetailSelection(_ routeVMName: String?, from items: [NativeVMInvent
 struct VMsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
+    @ObservedObject private var powerActionGate = NativeVMPowerActionGate.shared
     @State private var inventoryFilter = NativeVMInventoryFilter()
     @State private var inventorySnapshot: NativeVMInventorySnapshot?
     @State private var inventoryError = ""
@@ -43,6 +44,7 @@ struct VMsNativePanel: View {
     @State private var isManagingPublicServices = false
     @State private var pendingPublicServiceCreate = false
     @State private var pendingPublicServiceRemoval: NativeVMPublicService?
+    @State private var powerReviewStatus = ""
 
     init(initialVMID: String? = nil) {
         _selectedVMName = State(initialValue: initialVMID)
@@ -54,16 +56,32 @@ struct VMsNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                SearchFieldRow(placeholder: "Search VM names", text: $inventoryFilter.query)
-                ActionButton(title: "Create VM", icon: "plus.circle") { showProvisioning = true; provisioningResumeName = nil }
-                    .disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
-                ActionButton(title: isRefreshingInventory ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") {
-                    inventoryRefreshToken += 1
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    SearchFieldRow(placeholder: "Search VM names", text: $inventoryFilter.query)
+                        .frame(minWidth: 220)
+                    ActionButton(title: "Create VM", icon: "plus.circle") { showProvisioning = true; provisioningResumeName = nil }
+                        .disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
+                    inventoryRefreshButton
                 }
-                .disabled(isRefreshingInventory || !model.hasHanasandAuth)
+                VStack(alignment: .leading, spacing: 8) {
+                    SearchFieldRow(placeholder: "Search VM names", text: $inventoryFilter.query)
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        ActionButton(title: "Create VM", icon: "plus.circle") { showProvisioning = true; provisioningResumeName = nil }
+                            .disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
+                        inventoryRefreshButton
+                    }
+                }
             }
             VMPlatformAdministrationControls()
+            powerActionReviewPanel
+            if !powerReviewStatus.isEmpty {
+                Text(powerReviewStatus)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 8) {
                 FilterChip(title: "Any power state", active: inventoryFilter.status == "all") { inventoryFilter.status = "all" }
                 FilterChip(title: "Running", active: inventoryFilter.status == "running") { inventoryFilter.status = "running" }
@@ -206,6 +224,56 @@ struct VMsNativePanel: View {
         "\(model.settings.apiBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests.hashValue)|\(model.selectedOrganizationID)"
     }
 
+    private var powerActionScope: String {
+        nativeVMPowerActionScopeKey(
+            apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+            userID: model.userIDForRequests,
+            organizationID: model.selectedOrganizationID,
+            isImpersonating: model.isProfileIdentityImpersonating
+        )
+    }
+
+    @ViewBuilder
+    private var powerActionReviewPanel: some View {
+        if let intent = powerActionGate.intent(for: powerActionScope) {
+            NativeGroupPanel(title: intent.phase == .submitting ? "VM action in progress" : "Review VM action result", subtitle: "A timeout can occur while the VM continues processing.") {
+                Text("\(intent.action.capitalized) request for \(intent.vmName).")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                switch intent.phase {
+                case .submitting:
+                    ProgressView("Waiting for the VM service…")
+                case .needsReview:
+                    Text("Refresh the exact VM and its management access before acknowledging the earlier request. No second power action will be sent until then.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ActionButton(title: isRefreshingInventory ? "Refreshing current state…" : "Refresh and review current state", icon: "arrow.clockwise") {
+                        Task { await reviewUncertainPowerAction(intent) }
+                    }.disabled(isRefreshingInventory)
+                case let .reviewed(currentStatus):
+                    Text("Latest VM status: \(currentStatus). The earlier action remains unconfirmed.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ActionButton(title: "Acknowledge review", icon: "checkmark.circle") {
+                        if powerActionGate.acknowledge(scope: powerActionScope, token: intent.token) {
+                            powerReviewStatus = "Review acknowledged. The earlier power action remains unconfirmed."
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var inventoryRefreshButton: some View {
+        ActionButton(title: isRefreshingInventory ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") {
+            inventoryRefreshToken += 1
+        }
+        .disabled(isRefreshingInventory || !model.hasHanasandAuth)
+    }
+
     func vmCard(_ vm: NativeVMInventoryItem) -> some View {
         NativeGroupPanel(title: vm.name, subtitle: vm.organizationName ?? vm.organizationID ?? "Personal") {
             LazyVGrid(columns: [GridItem(.flexible(minimum: 0), alignment: .leading)], alignment: .leading, spacing: NativeVMCardLayout.metricSpacing) {
@@ -259,10 +327,59 @@ struct VMsNativePanel: View {
     }
 
     private func reviewPowerAction(_ vm: DashboardVM, action: String) {
+        guard powerActionGate.intent(for: powerActionScope) == nil else {
+            powerReviewStatus = "Review and acknowledge the earlier VM action before submitting another power action."
+            return
+        }
         guard nativeVMActionPath(vmName: vm.name, action: action, isImpersonating: model.isProfileIdentityImpersonating) != nil else {
             return
         }
         pendingPowerAction = (vm, action)
+    }
+
+    @MainActor
+    private func reviewUncertainPowerAction(_ intent: NativeVMPowerActionGate.Intent) async {
+        guard intent.phase == .needsReview,
+              powerActionGate.intent(for: powerActionScope)?.token == intent.token else { return }
+        let capturedScope = powerActionScope
+        isRefreshingInventory = true
+        powerReviewStatus = "Refreshing current VM state and management access…"
+        defer { isRefreshingInventory = false }
+
+        do {
+            let client = try NativeVMWorkspaceClient(
+                apiBaseURL: model.settings.apiBaseURL,
+                userID: model.userIDForRequests,
+                token: model.authTokenForRequests,
+                organizationID: model.selectedOrganizationID.isEmpty || model.selectedOrganizationID == "personal" ? nil : model.selectedOrganizationID
+            )
+            let snapshot = try await client.loadInventory()
+            guard capturedScope == powerActionScope else { return }
+            guard snapshot.isComplete else { throw NativeVMWorkspaceClientError.invalidResponse }
+            guard let currentVM = snapshot.items.first(where: { $0.name.caseInsensitiveCompare(intent.vmName) == .orderedSame }) else {
+                throw NativeVMWorkspaceClientError.invalidResponse
+            }
+            let currentManagement = try await client.loadManagement(for: currentVM.name)
+            guard capturedScope == powerActionScope else { return }
+            guard powerActionGate.markReviewed(
+                scope: capturedScope,
+                token: intent.token,
+                vmName: currentVM.name,
+                currentStatus: currentVM.status ?? "Status not reported",
+                inventoryComplete: snapshot.isComplete,
+                targetFound: true,
+                managementReadSucceeded: currentManagement.vmName.caseInsensitiveCompare(intent.vmName) == .orderedSame
+            ) else { throw NativeVMWorkspaceClientError.invalidResponse }
+
+            inventorySnapshot = snapshot
+            selectedVMName = currentVM.name
+            selectedManagement = currentManagement
+            detailReloadToken += 1
+            powerReviewStatus = "Current state loaded for \(currentVM.name). Review its status above before acknowledging."
+        } catch {
+            guard capturedScope == powerActionScope else { return }
+            powerReviewStatus = "Could not verify current VM state: \(error.localizedDescription) Refresh to try again."
+        }
     }
 
     @ViewBuilder
@@ -283,11 +400,11 @@ struct VMsNativePanel: View {
                 if selectedManagement.canManage && !model.isProfileIdentityImpersonating {
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                         ActionButton(title: "Start", icon: "play.circle") { reviewPowerAction(vm.dashboardVM, action: "start") }
-                            .disabled(!model.hasHanasandAuth)
+                            .disabled(!model.hasHanasandAuth || powerActionGate.intent(for: powerActionScope) != nil)
                         ActionButton(title: "Restart", icon: "arrow.clockwise") { reviewPowerAction(vm.dashboardVM, action: "restart") }
-                            .disabled(!model.hasHanasandAuth)
+                            .disabled(!model.hasHanasandAuth || powerActionGate.intent(for: powerActionScope) != nil)
                         ActionButton(title: "Stop", icon: "stop.circle", tone: .danger) { reviewPowerAction(vm.dashboardVM, action: "stop") }
-                            .disabled(!model.hasHanasandAuth)
+                            .disabled(!model.hasHanasandAuth || powerActionGate.intent(for: powerActionScope) != nil)
                     }
                 } else {
                     Text(model.isProfileIdentityImpersonating
