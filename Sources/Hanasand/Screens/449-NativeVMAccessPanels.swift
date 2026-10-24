@@ -307,7 +307,7 @@ struct NativeVMSudoPasswordButton: View {
         .sheet(isPresented: $isPresented, onDismiss: clear) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("VM sudo password").font(.title2.weight(.semibold)).foregroundStyle(theme.text)
-                Text("Verify with your current Hanasand account password. The VM password is shown briefly and is not saved.")
+                Text("Enter your current Hanasand account password. Only the VM owner or an authorized platform administrator can view this password. Each reveal is recorded in the access audit and sends a security email to the VM owner. The password is shown briefly and is not saved.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let revealedPassword {
