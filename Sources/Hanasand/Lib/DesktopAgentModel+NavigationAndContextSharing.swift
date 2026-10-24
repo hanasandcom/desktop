@@ -42,6 +42,7 @@ extension DesktopAgentModel {
 
     @discardableResult
     func openNativeHanasandRoute(_ route: BrowserNativeRoute) -> Bool {
+        let hasNativeDestination = BrowserWorkspaceModel.hasNativeDestination(for: route.path)
         var query = route.query
         if let section = route.section { query["section"] = section }
         nativeCaseHandoffContext = route.path == "/cases" || route.path == "/cases/intelligence" ? route.caseContext : nil
@@ -95,7 +96,10 @@ extension DesktopAgentModel {
                 }
             }
         }
-        return true
+        if !hasNativeDestination {
+            nativeDashboardStatus = NativeRouteFallbackDetails.message(for: route.path)
+        }
+        return hasNativeDestination
     }
 
     private func shortcutDestinationURL(_ rawPath: String) -> URL? {

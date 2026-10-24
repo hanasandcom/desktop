@@ -418,6 +418,12 @@ final class BrowserWorkspaceModel: ObservableObject {
         return BrowserNativeRoute(path: path, label: label, detailID: detailID, caseContext: caseContext, section: section, query: routeQuery)
     }
 
+    static func hasNativeDestination(for path: String) -> Bool {
+        NativeDashboardDetail.hasNativePanel(for: path)
+            || NativeAccountRoutePanel.supports(path: path)
+            || ["/mail", "/browser", "/ai"].contains(path)
+    }
+
     var selectedTab: BrowserTabState? {
         guard let group = selectedGroup else { return nil }
         return group.tabs.first { $0.id == selectedTabID } ?? group.tabs.first

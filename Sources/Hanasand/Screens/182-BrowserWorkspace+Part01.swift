@@ -72,8 +72,7 @@ extension BrowserWorkspace {
 
     func openNativeDashboardRoute(_ route: BrowserNativeRoute) -> Bool {
         guard BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com\(route.path)", configuredWebsiteBaseURL: model.settings.websiteBaseURL) != nil else { return false }
-        model.openNativeHanasandRoute(route)
-        return true
+        return model.openNativeHanasandRoute(route)
     }
 
     var browserWorkspaceRail: some View {

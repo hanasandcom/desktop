@@ -148,6 +148,27 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://example.com/dashboard"))
     }
 
+    func testUnsupportedFirstPartyRoutesStayInAppAndAreNotReportedAsOpened() throws {
+        let route = try XCTUnwrap(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/not-native-yet"))
+        XCTAssertFalse(BrowserWorkspaceModel.hasNativeDestination(for: route.path))
+
+        let workspace = BrowserWorkspaceModel()
+        workspace.configure(settings: HanasandDesktopSettings())
+        let startingTabCount = workspace.groups.flatMap(\.tabs).count
+        workspace.onOpenNativeRoute = { BrowserWorkspaceModel.hasNativeDestination(for: $0.path) }
+
+        workspace.open(label: "Unsupported Hanasand route", url: "https://hanasand.com/not-native-yet")
+
+        XCTAssertEqual(workspace.groups.flatMap(\.tabs).count, startingTabCount)
+        XCTAssertEqual(workspace.selectedTab?.statusText, "This Hanasand page does not have a native Desktop route yet.")
+    }
+
+    func testNativeWorkspacesAndAccountRoutesAreRecognizedAsDestinations() {
+        for path in ["/mail", "/browser", "/ai", "/login", "/signup", "/reset-password"] {
+            XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: path), path)
+        }
+    }
+
     func testCanonicalMobileNavigationPathsResolveToTheirNativeWorkflows() {
         let routes: [(String, String)] = [
             ("https://hanasand.com/findings/actors", "/ti/profiles"),

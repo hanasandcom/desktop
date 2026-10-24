@@ -188,11 +188,8 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
                 XCTFail("Website route did not resolve: \(pattern)")
                 continue
             }
-            let opensNativeWorkspace = ["/mail", "/browser", "/ai"].contains(route.path)
             XCTAssertTrue(
-                NativeDashboardDetail.hasNativePanel(for: route.path)
-                    || NativeAccountRoutePanel.supports(path: route.path)
-                    || opensNativeWorkspace,
+                BrowserWorkspaceModel.hasNativeDestination(for: route.path),
                 "Website route \(pattern) resolves to \(route.path), which has no native screen"
             )
         }
@@ -205,7 +202,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         var receivedRoutes: [BrowserNativeRoute] = []
         workspace.onOpenNativeRoute = { route in
             receivedRoutes.append(route)
-            return true
+            return BrowserWorkspaceModel.hasNativeDestination(for: route.path)
         }
 
         for pattern in websitePagePatterns {
