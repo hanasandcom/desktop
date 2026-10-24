@@ -54,6 +54,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var profiles: ThreatIntelligenceOperationsPage?
+    @State private var selectedProfileID: String?
     @State private var actorDirectory: DwmActorDirectoryPage?
     @State private var sources: ThreatIntelligenceSourcePage?
     @State private var operationalSources: ThreatIntelligenceOperationalSourcePage?
@@ -400,11 +401,30 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                                     .textSelection(.enabled)
                             }
                             Text(
-                                "\(actor.evidenceCount ?? 0) evidence · \(actor.sourceIDs.count) source links · Last seen \(date(actor.lastSeenAt))"
+                                "\(actor.evidenceCount.map { String($0) } ?? "Evidence count not reported") evidence · \(actor.sourceIDs.count) source links · \(actor.confidence.map { String(format: "%.0f%% confidence", $0 * 100) } ?? "confidence not reported") · Last seen \(date(actor.lastSeenAt))"
                             )
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
+                            Button(selectedProfileID == actor.id ? "Close profile" : "View profile") {
+                                selectedProfileID = selectedProfileID == actor.id ? nil : actor.id
+                            }
+                            .buttonStyle(.link)
+                            if selectedProfileID == actor.id {
+                                Text("Aliases: \(actor.aliases.isEmpty ? "None reported" : actor.aliases.joined(separator: ", "))")
+                                    .font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                                Text("First seen: \(date(actor.firstSeenAt)) · Last seen: \(date(actor.lastSeenAt)) · Updated: \(date(actor.updatedAt))")
+                                    .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Profile ID: \(actor.id)").font(.system(size: 10)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+                                Text("Source IDs: \(actor.sourceIDs.isEmpty ? "None reported" : actor.sourceIDs.joined(separator: ", "))")
+                                    .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                                Text("Capture IDs: \(actor.captureIDs.isEmpty ? "None reported" : actor.captureIDs.joined(separator: ", "))")
+                                    .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 10)
@@ -750,6 +770,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         let requestedSettings = model.settings
         if reset {
             page = 1
+            selectedProfileID = nil
             nextCursor = nil
             profiles = nil
             actorDirectory = nil

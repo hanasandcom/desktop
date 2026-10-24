@@ -4,24 +4,28 @@ struct ThreatIntelligenceOperationsPage: Decodable, Equatable {
     struct Profile: Decodable, Equatable, Identifiable {
         let id: String
         let name: String
+        let normalizedName: String
         let actorType: String
         let aliases: [String]
         let confidence: Double?
         let evidenceCount: Int?
         let sourceIDs: [String]
+        let captureIDs: [String]
         let reviewState: String
         let firstSeenAt: String
         let lastSeenAt: String
+        let updatedAt: String
 
         enum CodingKeys: String, CodingKey {
-            case id, canonicalName, actorType, aliases, confidence, evidenceCount, sourceIds
-            case reviewState, firstSeenAt, lastSeenAt
+            case id, canonicalName, normalizedName, actorType, aliases, confidence, evidenceCount, sourceIds, captureIds
+            case reviewState, firstSeenAt, lastSeenAt, updatedAt
         }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             id = try values.decode(String.self, forKey: .id)
             name = try values.decodeIfPresent(String.self, forKey: .canonicalName) ?? "Unknown actor"
+            normalizedName = try values.decodeIfPresent(String.self, forKey: .normalizedName) ?? ""
             actorType = try values.decodeIfPresent(String.self, forKey: .actorType) ?? ""
             aliases = Array((try values.decodeIfPresent([String].self, forKey: .aliases) ?? []).prefix(50))
             let confidence = try values.decodeIfPresent(Double.self, forKey: .confidence)
@@ -29,9 +33,11 @@ struct ThreatIntelligenceOperationsPage: Decodable, Equatable {
             let evidenceCount = try values.decodeIfPresent(Int.self, forKey: .evidenceCount)
             self.evidenceCount = evidenceCount.flatMap { $0 >= 0 ? $0 : nil }
             sourceIDs = Array((try values.decodeIfPresent([String].self, forKey: .sourceIds) ?? []).prefix(100))
+            captureIDs = Array((try values.decodeIfPresent([String].self, forKey: .captureIds) ?? []).prefix(500))
             reviewState = try values.decodeIfPresent(String.self, forKey: .reviewState) ?? ""
             firstSeenAt = try values.decodeIfPresent(String.self, forKey: .firstSeenAt) ?? ""
             lastSeenAt = try values.decodeIfPresent(String.self, forKey: .lastSeenAt) ?? ""
+            updatedAt = try values.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
         }
     }
 

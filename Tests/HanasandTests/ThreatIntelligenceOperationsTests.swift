@@ -10,7 +10,7 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
             captured = request
             return (
                 self.responseData(
-                    #"{"data":[{"id":"actor-1","canonicalName":"Synthetic actor","actorType":"group","aliases":["Alias"],"confidence":0.8,"evidenceCount":4,"sourceIds":["source-1"],"reviewState":"needs_review","firstSeenAt":"2026-10-20T10:00:00Z","lastSeenAt":"2026-10-23T10:00:00Z"}],"pagination":{"page":2,"limit":50,"total":51,"totalPages":2,"nextPage":null}}"#
+                    #"{"data":[{"id":"actor-1","canonicalName":"Synthetic actor","normalizedName":"synthetic actor","actorType":"group","aliases":["Alias"],"confidence":0.8,"evidenceCount":4,"sourceIds":["source-1"],"captureIds":["capture-1"],"reviewState":"needs_review","firstSeenAt":"2026-10-20T10:00:00Z","lastSeenAt":"2026-10-23T10:00:00Z","updatedAt":"2026-10-23T11:00:00Z"}],"pagination":{"page":2,"limit":50,"total":51,"totalPages":2,"nextPage":null}}"#
                 ), self.response(for: request.url!)
             )
         }
@@ -18,7 +18,10 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         let result = try await client.loadProfiles(query: "Synthetic actor", page: 2)
 
         XCTAssertEqual(result.profiles.first?.name, "Synthetic actor")
+        XCTAssertEqual(result.profiles.first?.normalizedName, "synthetic actor")
         XCTAssertEqual(result.profiles.first?.sourceIDs, ["source-1"])
+        XCTAssertEqual(result.profiles.first?.captureIDs, ["capture-1"])
+        XCTAssertEqual(result.profiles.first?.updatedAt, "2026-10-23T11:00:00Z")
         XCTAssertEqual(result.total, 51)
         XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.path, "/api/v1/actors")
         XCTAssertEqual(
@@ -28,6 +31,27 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
                 URLQueryItem(name: "q", value: "Synthetic actor"),
             ])
         assertAuthenticatedRead(captured)
+    }
+
+    func testProfilesSupportEmptyResultsAndSurfacePermissionDenial() async throws {
+        let empty = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            (self.responseData(#"{"data":[],"pagination":{"page":1,"limit":50,"total":0,"nextPage":null}}"#), self.response(for: request.url!))
+        }
+        let result = try await empty.loadProfiles(query: "No matching actor", page: 1)
+        XCTAssertTrue(result.profiles.isEmpty)
+        XCTAssertEqual(result.total, 0)
+        XCTAssertNil(result.nextPage)
+
+        let denied = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil)!
+            return (self.responseData(#"{"error":"forbidden"}"#), response)
+        }
+        do {
+            _ = try await denied.loadProfiles(query: "", page: 1)
+            XCTFail("Expected the server's profile permission denial to be preserved.")
+        } catch {
+            XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .requestFailed(403))
+        }
     }
 
     func testSourcesUseReadOnlyPublicProjectionAndDropUnsafeLocator() async throws {
