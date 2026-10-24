@@ -2,17 +2,32 @@ import Foundation
 
 enum NativeSharePreview {
     static func target(alias: String?, tree: [NativeShareWorkspaceTreeItem], rootContent: String?, activeContent: String?) -> URL? {
-        guard hasHTTPSurface(tree: tree, content: [rootContent, activeContent].compactMap { $0 }.joined(separator: "\n")),
+        let content = activeContent.flatMap { $0.isEmpty ? nil : $0 } ?? rootContent ?? ""
+        guard hasHTTPSurface(tree: tree, content: content),
               let alias, alias.utf8.count <= 240,
-              alias.range(of: #"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"#, options: .regularExpression) != nil,
+              alias.range(of: #"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?)*$"#, options: .regularExpression) != nil,
               let url = URL(string: "https://\(alias).hanasand.com/"),
-              url.scheme == "https", url.host == "\(alias).hanasand.com", url.user == nil, url.password == nil else { return nil }
+              url.scheme == "https", url.host == "\(alias).hanasand.com", url.port == nil,
+              url.user == nil, url.password == nil else { return nil }
         return url
+    }
+
+    static func allowsNavigation(isMainFrame: Bool, hasTargetFrame: Bool, to url: URL?, previewHost: String) -> Bool {
+        guard hasTargetFrame else { return false }
+        guard isMainFrame else { return true }
+        guard let url else { return false }
+        return allowsMainFrameNavigation(to: url, previewHost: previewHost)
     }
 
     static func allowsMainFrameNavigation(to url: URL, previewHost: String) -> Bool {
         url.scheme?.lowercased() == "https" && url.host?.lowercased() == previewHost.lowercased()
             && (url.port == nil || url.port == 443) && url.user == nil && url.password == nil
+    }
+
+    static func allowsResponse(isForMainFrame: Bool, to url: URL?, previewHost: String) -> Bool {
+        guard isForMainFrame else { return true }
+        guard let url else { return false }
+        return allowsMainFrameNavigation(to: url, previewHost: previewHost)
     }
 
     private static func hasHTTPSurface(tree: [NativeShareWorkspaceTreeItem], content: String) -> Bool {

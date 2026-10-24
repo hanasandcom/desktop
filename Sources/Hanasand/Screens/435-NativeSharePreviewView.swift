@@ -68,8 +68,10 @@ struct NativeSharePreviewWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url,
-                  NativeSharePreview.allowsMainFrameNavigation(to: url, previewHost: previewHost) else {
+            let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? false
+            let hasTargetFrame = navigationAction.targetFrame != nil
+            guard NativeSharePreview.allowsNavigation(isMainFrame: isMainFrame, hasTargetFrame: hasTargetFrame,
+                                                       to: navigationAction.request.url, previewHost: previewHost) else {
                 onBlockedNavigation("The preview stays on its own secure Hanasand hostname.")
                 decisionHandler(.cancel)
                 return
@@ -79,8 +81,8 @@ struct NativeSharePreviewWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                      decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-            guard NativeSharePreview.allowsMainFrameNavigation(to: navigationResponse.response.url ?? URL(fileURLWithPath: "/"),
-                                                               previewHost: previewHost) else {
+            guard NativeSharePreview.allowsResponse(isForMainFrame: navigationResponse.isForMainFrame,
+                                                     to: navigationResponse.response.url, previewHost: previewHost) else {
                 onBlockedNavigation("The preview redirected outside its secure Hanasand hostname.")
                 decisionHandler(.cancel)
                 return
