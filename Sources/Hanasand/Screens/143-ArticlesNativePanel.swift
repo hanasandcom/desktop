@@ -73,6 +73,9 @@ struct ArticlesNativePanel: View {
 
     private var editorColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let intent = model.articleMutationSafety.intent {
+                mutationReviewPanel(intent)
+            }
             NativeGroupPanel(title: "Create article", subtitle: "Markdown article through the API") {
                 TextField("article-id.md or heading slug", text: $model.articleDraftID)
                     .textFieldStyle(.plain)
@@ -99,7 +102,7 @@ struct ArticlesNativePanel: View {
                     ActionButton(title: "Create", icon: "plus") {
                         Task { await model.createNativeArticle() }
                     }
-                    .disabled(model.isLoadingNativeDashboard)
+                    .disabled(model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked)
                 }
             }
 
@@ -129,10 +132,84 @@ struct ArticlesNativePanel: View {
                     ActionButton(title: "Save", icon: "checkmark") {
                         Task { await model.updateSelectedArticle() }
                     }
-                    .disabled(model.selectedArticleID.isEmpty || model.isLoadingNativeDashboard)
+                    .disabled(model.selectedArticleID.isEmpty || model.isLoadingNativeDashboard || model.articleMutationSafety.isBlocked)
                 }
             }
         }
+    }
+
+    private func mutationReviewPanel(_ intent: ArticleMutationIntent) -> some View {
+        NativeGroupPanel(title: "Article change needs review", subtitle: "\(intent.action.rawValue.capitalized) · \(intent.articleID)") {
+            Text("The request may have reached the server, but Desktop did not receive a verifiable receipt. The service has no idempotency key or revision check, so repeating a request can conflict, overwrite, or remove newer content. Refresh and review the server state before unlocking article changes.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Text("Submitted \(intent.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                Spacer()
+                ActionButton(title: "Refresh server article", icon: "arrow.clockwise") {
+                    Task { await model.reviewUncertainArticleMutation() }
+                }
+                .disabled(model.isLoadingNativeDashboard)
+            }
+
+            if let review = model.articleMutationSafety.review, review.intentID == intent.id {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(review.serverArticleExists ? "Fresh server version · \(review.serverTitle ?? intent.articleID)" : "Fresh server read · article not found")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(theme.text)
+                    if review.serverArticleExists, let serverContent = review.serverContent {
+                        if intent.content != nil, let matches = review.matches(intent) {
+                            Label(matches ? "Server content matches submitted text" : "Server content differs from submitted text",
+                                  systemImage: matches ? "checkmark.circle" : "exclamationmark.triangle")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(matches ? .green : .orange)
+                        }
+                        Text("Server content")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(theme.textTertiary)
+                        ScrollView {
+                            Text(serverContent)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(theme.text)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 160)
+                        .padding(9)
+                        .background(theme.field)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    if let submitted = intent.content {
+                        DisclosureGroup("Submitted text") {
+                            ScrollView {
+                                Text(submitted)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(theme.text)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 140)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                    }
+                    Text("Reviewed at \(review.fetchedAt.formatted(date: .abbreviated, time: .shortened)). Acknowledging clears the barrier; it does not claim whether the original request committed.")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(theme.textTertiary)
+                    ActionButton(title: "Acknowledge reviewed state and unlock", icon: "checkmark.shield") {
+                        model.acknowledgeReviewedArticleMutation()
+                    }
+                    .disabled(!model.articleMutationSafety.mayAcknowledge)
+                }
+                .padding(10)
+                .background(theme.card)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.orange.opacity(0.45), lineWidth: 1))
     }
 
     private var articleColumn: some View {
@@ -201,6 +278,7 @@ struct ArticlesNativePanel: View {
                                     Button("Delete", role: .destructive) {
                                         deletingArticle = article
                                     }
+                                    .disabled(model.articleMutationSafety.isBlocked)
                                 } label: {
                                     Label("More", systemImage: "ellipsis")
                                 }

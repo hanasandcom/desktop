@@ -13,21 +13,11 @@ import WebKit
 extension DesktopAgentModel {
 
     func deleteSelectedArticle(_ article: DashboardArticle) async {
-        guard hasHanasandAuth else {
-            nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."
-            return
-        }
-
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Deleting article"
         defer { isLoadingNativeDashboard = false }
 
-        do {
-            _ = try await requestPrettyText(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("article/\(article.id)"),
-                method: "DELETE",
-                authenticated: true
-            )
+        if await performArticleMutation(.delete, articleID: article.id) {
             if selectedArticleID == article.id {
                 selectedArticleID = ""
                 articleEditID = ""
@@ -36,9 +26,8 @@ extension DesktopAgentModel {
             nativeDashboardStatus = "Deleted \(article.id)"
             append(meta: "Article deleted", body: article.id, kind: .change)
             await loadNativeDashboardData()
-        } catch {
-            nativeDashboardStatus = error.localizedDescription
-            append(meta: "Article delete failed", body: error.localizedDescription, kind: .error)
+        } else {
+            append(meta: "Article outcome needs review", body: nativeDashboardStatus, kind: .error)
         }
     }
 

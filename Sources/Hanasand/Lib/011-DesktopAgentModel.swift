@@ -121,6 +121,13 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var articleEditContent = ""; @Published var thoughts: [DashboardThought] = []; @Published var thoughtDraftTitle = ""; @Published var selectedThoughtID = ""
     @Published var thoughtMutationSafety = ThoughtMutationSafety()
+    @Published var articleMutationSafety = ArticleMutationSafety() {
+        didSet {
+            if let data = try? JSONEncoder().encode(articleMutationSafety) {
+                UserDefaults.standard.set(data, forKey: Self.articleMutationSafetyKey)
+            }
+        }
+    }
 
     @Published var thoughtEditTitle = ""; @Published var profile: DashboardProfile?; @Published var profileSessions: [DashboardAuthSession] = []; @Published var profileCertificates: [DashboardCertificate] = []; @Published var profileSshKeys: [ProfileSshKey] = []
     @Published var profileSshKeyName = ""; @Published var profileSshPublicKey = ""
@@ -174,6 +181,7 @@ final class DesktopAgentModel: ObservableObject {
     static let customProjectsKey = "hanasand.desktop.customProjects"
     static let backgroundInstalledUpdateVersionKey = "hanasand.desktop.backgroundInstalledUpdateVersion"
     static let deviceIdentifierKey = "hanasand.desktop.deviceIdentifier"
+    static let articleMutationSafetyKey = "hanasand.desktop.articleMutationSafety"
 
     var server: LoopbackAgentServer?
     var codexWorkerProcess: Process?
@@ -207,6 +215,10 @@ final class DesktopAgentModel: ObservableObject {
             // Keep legacy UserDefaults values in memory and retry migration on the next save.
         }
         settings = restoredSettings
+        if let data = UserDefaults.standard.data(forKey: Self.articleMutationSafetyKey),
+           let restoredSafety = try? JSONDecoder().decode(ArticleMutationSafety.self, from: data) {
+            articleMutationSafety = restoredSafety
+        }
         if let apiBaseURL = ProcessInfo.processInfo.environment["HANASAND_DESKTOP_API_BASE_URL"],
            !apiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             settings.apiBaseURL = apiBaseURL
