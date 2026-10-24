@@ -36,6 +36,13 @@ struct VMsNativePanel: View {
     @State private var detailStatus = ""
     @State private var showProvisioning = false
     @State private var provisioningResumeName: String?
+    @State private var publicServiceName = ""
+    @State private var publicServiceType = NativeVMPublicServiceType.minecraftJava
+    @State private var publicServicePort = "25565"
+    @State private var publicServiceStatus = ""
+    @State private var isManagingPublicServices = false
+    @State private var pendingPublicServiceCreate = false
+    @State private var pendingPublicServiceRemoval: NativeVMPublicService?
 
     init(initialVMID: String? = nil) {
         _selectedVMName = State(initialValue: initialVMID)
@@ -147,6 +154,29 @@ struct VMsNativePanel: View {
                 Text("Send one \(pendingPowerAction.action) request for \(pendingPowerAction.vm.name). Refresh afterward to check the host state.")
             }
         }
+        .confirmationDialog("Publish public service?", isPresented: $pendingPublicServiceCreate, titleVisibility: .visible) {
+            Button("Publish service") {
+                guard let vm = nativeVMDetailSelection(selectedVMName, from: inventorySnapshot?.items ?? []) else { return }
+                Task { await createPublicService(for: vm) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Publish \(publicServiceName.isEmpty ? "this service" : publicServiceName) as \(publicServiceType.title) through the shared Hanasand gateway to guest port \(publicServicePort).")
+        }
+        .confirmationDialog("Remove public service?", isPresented: Binding(
+            get: { pendingPublicServiceRemoval != nil },
+            set: { if !$0 { pendingPublicServiceRemoval = nil } }
+        ), titleVisibility: .visible) {
+            if let service = pendingPublicServiceRemoval {
+                Button("Remove \(service.name)", role: .destructive) {
+                    guard let vm = nativeVMDetailSelection(selectedVMName, from: inventorySnapshot?.items ?? []) else { return }
+                    Task { await removePublicService(service, from: vm) }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingPublicServiceRemoval = nil }
+        } message: {
+            Text("This removes the current public route. The service running inside the VM is not changed.")
+        }
         .task(id: "\(inventoryScope):\(inventoryRefreshToken)") {
             await loadWorkspaceInventory()
         }
@@ -154,7 +184,16 @@ struct VMsNativePanel: View {
             await loadSelectedVMDetails()
         }
         .onChange(of: inventoryFilter) { _, _ in inventoryLimit = 30 }
-        .onChange(of: selectedVMName) { _, _ in selectedMetricIndex = nil; metricLimit = 20 }
+        .onChange(of: selectedVMName) { _, _ in
+            selectedMetricIndex = nil
+            metricLimit = 20
+            publicServiceName = ""
+            publicServiceType = .minecraftJava
+            publicServicePort = "25565"
+            publicServiceStatus = ""
+            pendingPublicServiceCreate = false
+            pendingPublicServiceRemoval = nil
+        }
         .onChange(of: model.selectedOrganizationID) { _, _ in
             selectedVMName = nil
             inventorySnapshot = nil
@@ -169,7 +208,7 @@ struct VMsNativePanel: View {
 
     func vmCard(_ vm: NativeVMInventoryItem) -> some View {
         NativeGroupPanel(title: vm.name, subtitle: vm.organizationName ?? vm.organizationID ?? "Personal") {
-            LazyVGrid(columns: NativeVMCardLayout.metricColumns, alignment: .leading, spacing: NativeVMCardLayout.metricSpacing) {
+            LazyVGrid(columns: [GridItem(.flexible(minimum: 0), alignment: .leading)], alignment: .leading, spacing: NativeVMCardLayout.metricSpacing) {
                 FeatureCard(title: "Status", value: vm.status?.capitalized ?? "Unknown", icon: (vm.status ?? "").lowercased() == "running" ? "checkmark.circle" : "circle.dashed")
                 FeatureCard(title: "CPU", value: vm.cpuLimit ?? "Unknown", icon: "cpu")
                 FeatureCard(title: "Memory", value: vm.memoryLimit ?? "Unknown", icon: "memorychip")
@@ -318,20 +357,7 @@ struct VMsNativePanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.textTertiary)
             }
-            Text("Public services")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.textSecondary)
-            if selectedManagement?.services.isEmpty != false {
-                Text("No public services were returned.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.textTertiary)
-            } else {
-                ForEach(selectedManagement?.services ?? []) { service in
-                    detailRow(service.name, value: "\(service.type) · port \(service.port)")
-                    detailRow("Hostname", value: service.hostname)
-                    if let createdAt = service.createdAt { detailRow("Created", value: createdAt) }
-                }
-            }
+            publicServicesSection(for: vm)
           }
           NativeVMAccessPanel(vm: vm, canManage: selectedManagement?.canManage == true) {
               inventoryRefreshToken += 1
@@ -350,6 +376,196 @@ struct VMsNativePanel: View {
             }
         }
         return path
+    }
+
+    @ViewBuilder
+    private func publicServicesSection(for vm: NativeVMInventoryItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Public services")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(theme.textSecondary)
+            Text("Publish a hostname through the shared HTTPS gateway. The guest port stays private; SSH and other plain TCP or UDP services need a different route.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let management = selectedManagement {
+                if management.services.isEmpty {
+                    Text("No public services are configured.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textTertiary)
+                } else {
+                    ForEach(management.services) { service in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(service.hostname ?? "\(service.name) (hostname unavailable)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(serviceTypeLabel(service.type)) · guest port \(service.port)\(service.createdAt.map { " · created \($0)" } ?? "")")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 8) { publicServiceActions(service) }
+                                VStack(alignment: .leading, spacing: 8) { publicServiceActions(service) }
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.card, in: RoundedRectangle(cornerRadius: 9))
+                    }
+                }
+            } else {
+                Text("Public service permission and inventory have not been loaded.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+            }
+
+            if selectedManagement?.canManage == true, !model.isProfileIdentityImpersonating {
+                NativeGroupPanel(title: "Add public service", subtitle: "Create an HTTPS gateway route for this VM") {
+                    publicServiceFields
+                    ActionButton(title: isManagingPublicServices ? "Updating services…" : "Review add service", icon: "plus.circle") {
+                        pendingPublicServiceCreate = true
+                    }
+                    .disabled(isManagingPublicServices || (selectedManagement?.services.count ?? 0) >= 1_000 || !publicServiceInputReady)
+                    if (selectedManagement?.services.count ?? 0) >= 1_000 {
+                        Text("A VM can have up to 1,000 public services.")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+                    }
+                }
+            }
+            if !publicServiceStatus.isEmpty {
+                Text(publicServiceStatus)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(publicServiceStatus.localizedCaseInsensitiveContains("uncertain") || publicServiceStatus.localizedCaseInsensitiveContains("failed") ? theme.danger : theme.textSecondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var publicServiceFields: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .leading)], alignment: .leading, spacing: 10) {
+            TextField("Service name", text: $publicServiceName, prompt: Text("survival"))
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: publicServiceName) { _, value in normalizePublicServiceName(value) }
+            Picker("Service type", selection: $publicServiceType) {
+                ForEach(NativeVMPublicServiceType.allCases) { type in
+                    Text(type.title).tag(type)
+                }
+            }
+            .pickerStyle(.menu)
+            .onChange(of: publicServiceType) { _, type in publicServicePort = type.defaultPort }
+            TextField("Guest port", text: $publicServicePort, prompt: Text("25565"))
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: publicServicePort) { _, value in
+                    let normalized = String(value.filter(\.isNumber).prefix(5))
+                    if normalized != value { publicServicePort = normalized }
+                }
+        }
+    }
+
+    private func normalizePublicServiceName(_ value: String) {
+        let normalized = String(value.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }.prefix(40))
+        if normalized != value { publicServiceName = normalized }
+    }
+
+    @ViewBuilder
+    private func publicServiceActions(_ service: NativeVMPublicService) -> some View {
+        if let hostname = service.hostname {
+            ActionButton(title: "Copy \(hostname):443", icon: "doc.on.doc") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("\(hostname):443", forType: .string)
+                publicServiceStatus = "Copied \(hostname):443."
+            }
+        }
+        if selectedManagement?.canManage == true, !model.isProfileIdentityImpersonating {
+            ActionButton(title: "Remove \(service.name)", icon: "trash", tone: .danger) {
+                pendingPublicServiceRemoval = service
+            }
+            .disabled(isManagingPublicServices)
+        }
+    }
+
+    private var publicServiceInputReady: Bool {
+        let name = publicServiceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.range(of: #"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"#, options: .regularExpression) != nil,
+              !name.hasPrefix("port-"),
+              let port = Int(publicServicePort), (1...65_535).contains(port) else { return false }
+        return true
+    }
+
+    private func serviceTypeLabel(_ type: String) -> String {
+        switch type {
+        case "http": "Website · HTTPS"
+        case "tls": "TLS over TCP"
+        case "minecraft-java": "Minecraft Java"
+        default: type
+        }
+    }
+
+    @MainActor
+    private func createPublicService(for vm: NativeVMInventoryItem) async {
+        pendingPublicServiceCreate = false
+        guard publicServiceInputReady, !isManagingPublicServices else { return }
+        await updatePublicService(for: vm) { client, authorization in
+            _ = try await client.createPublicService(for: vm.name, authorization: authorization,
+                                                     name: publicServiceName, type: publicServiceType.rawValue,
+                                                     port: Int(publicServicePort) ?? 0)
+            publicServiceName = ""
+            return "Public service added. Refresh the route before relying on it."
+        }
+    }
+
+    @MainActor
+    private func removePublicService(_ service: NativeVMPublicService, from vm: NativeVMInventoryItem) async {
+        pendingPublicServiceRemoval = nil
+        guard !isManagingPublicServices else { return }
+        await updatePublicService(for: vm) { client, authorization in
+            try await client.removePublicService(for: vm.name, authorization: authorization, serviceID: service.id)
+            return "Public service \(service.name) removed. The application inside the VM was not changed."
+        }
+    }
+
+    @MainActor
+    private func updatePublicService(
+        for vm: NativeVMInventoryItem,
+        operation: (NativeVMWorkspaceClient, NativeVMManagementAccess) async throws -> String
+    ) async {
+        let capturedScope = inventoryScope
+        isManagingPublicServices = true
+        defer { isManagingPublicServices = false }
+        do {
+            let client = try makeWorkspaceClient()
+            let fresh = try await client.loadManagement(for: vm.name)
+            guard capturedScope == inventoryScope, selectedVMName == vm.name,
+                  !model.isProfileIdentityImpersonating else {
+                selectedManagement = nil
+                publicServiceStatus = "Account, organization, or selected VM changed. Refresh before trying again."
+                return
+            }
+            guard fresh.canManage else { throw NativeVMWorkspaceClientError.permissionDenied }
+            let result = try await operation(client, fresh)
+            guard capturedScope == inventoryScope, selectedVMName == vm.name else {
+                selectedManagement = nil
+                publicServiceStatus = "The service change may have been accepted. Refresh the current VM before continuing."
+                return
+            }
+            selectedManagement = try await client.loadManagement(for: vm.name)
+            publicServiceStatus = result
+        } catch {
+            publicServiceStatus = error.localizedDescription
+            if error as? NativeVMWorkspaceClientError == .uncertainOutcome { detailReloadToken += 1 }
+        }
+    }
+
+    private func makeWorkspaceClient() throws -> NativeVMWorkspaceClient {
+        try NativeVMWorkspaceClient(
+            apiBaseURL: model.settings.apiBaseURL,
+            userID: model.userIDForRequests,
+            token: model.authTokenForRequests,
+            organizationID: model.selectedOrganizationID.isEmpty || model.selectedOrganizationID == "personal" ? nil : model.selectedOrganizationID
+        )
     }
 
     private func detailRow(_ title: String, value: String) -> some View {

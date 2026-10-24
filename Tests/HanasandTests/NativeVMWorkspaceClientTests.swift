@@ -66,6 +66,179 @@ final class NativeVMWorkspaceClientTests: XCTestCase {
         XCTAssertEqual(access.services.first?.createdAt, "2026-10-24T10:00:00Z")
     }
 
+    func testManagementReadAcceptsUnavailableHostname() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            send: { request in
+                let data = Data(#"{"canManage":false,"services":[{"id":"route-1","name":"reserved","type":"http","port":8080,"hostname":null,"createdAt":"2026-10-24T10:00:00Z"}]}"#.utf8)
+                return (data, try Self.response(for: request, status: 200))
+            }
+        )
+
+        let access = try await client.loadManagement(for: "vm-17")
+        XCTAssertFalse(access.canManage)
+        XCTAssertEqual(access.vmName, "vm-17")
+        XCTAssertNil(access.services.first?.hostname)
+    }
+
+    func testCreatePublicServiceUsesCurrentAuthorizationAndValidatesReceipt() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            organizationID: "org-2",
+            now: { now },
+            send: { request in
+                XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "user-1")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-value")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "x-organization-id"), "org-2")
+                switch (request.httpMethod, request.url?.path) {
+                case ("GET", "/api/vm/vm-17/public-services"):
+                    return (Data(#"{"canManage":true,"services":[]}"#.utf8), try Self.response(for: request, status: 200))
+                case ("POST", "/api/vm/vm-17/public-services"):
+                    let payload = try XCTUnwrap(request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+                    XCTAssertEqual(payload["name"] as? String, "survival")
+                    XCTAssertEqual(payload["type"] as? String, "minecraft-java")
+                    XCTAssertEqual(payload["port"] as? Int, 25565)
+                    return (Data(#"{"id":"route-2","name":"survival","type":"minecraft-java","port":25565,"hostname":"survival.hanasand.com","createdAt":"2026-10-24T10:00:00Z"}"#.utf8), try Self.response(for: request, status: 201))
+                default:
+                    XCTFail("Unexpected VM public service request: \(String(describing: request.url))")
+                    return (Data(), try Self.response(for: request, status: 500))
+                }
+            }
+        )
+
+        let authorization = try await client.loadManagement(for: "vm-17")
+        let created = try await client.createPublicService(for: "vm-17", authorization: authorization,
+                                                           name: " Survival ", type: "minecraft-java", port: 25565)
+        XCTAssertEqual(created.id, "route-2")
+        XCTAssertEqual(created.hostname, "survival.hanasand.com")
+    }
+
+    func testCreatePublicServiceRejectsBadInputBeforeSendingMutation() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api",
+            userID: "user-1",
+            token: "token-value",
+            send: { request in
+                XCTAssertEqual(request.httpMethod, "GET")
+                return (Data(#"{"canManage":true,"services":[]}"#.utf8), try Self.response(for: request, status: 200))
+            }
+        )
+        let authorization = try await client.loadManagement(for: "vm-17")
+
+        for (name, type, port) in [("-bad", "http", 80), ("port-8080", "http", 8080), ("valid", "udp", 53), ("valid", "http", 65_536)] {
+            do {
+                _ = try await client.createPublicService(for: "vm-17", authorization: authorization, name: name, type: type, port: port)
+                XCTFail("Invalid public service input must be rejected.")
+            } catch let error as NativeVMWorkspaceClientError {
+                XCTAssertEqual(error, .invalidServiceInput)
+            }
+        }
+    }
+
+    func testPublicServiceMutationRejectsStaleOrUnmanagedSnapshot() async throws {
+        let sampledAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let readClient = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api", userID: "user-1", token: "token-value",
+            now: { sampledAt },
+            send: { request in
+                (Data(#"{"canManage":true,"services":[]}"#.utf8), try Self.response(for: request, status: 200))
+            }
+        )
+        let authorization = try await readClient.loadManagement(for: "vm-17")
+        let staleClient = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api", userID: "user-1", token: "token-value",
+            now: { sampledAt.addingTimeInterval(31) },
+            send: { request in
+                XCTFail("A stale authorization snapshot must not send a mutation.")
+                return (Data(), try Self.response(for: request, status: 500))
+            }
+        )
+        do {
+            _ = try await staleClient.createPublicService(for: "vm-17", authorization: authorization, name: "site", type: "http", port: 80)
+            XCTFail("A stale authorization snapshot must be rejected.")
+        } catch let error as NativeVMWorkspaceClientError {
+            XCTAssertEqual(error, .staleManagementSnapshot)
+        }
+
+        let unmanaged = NativeVMManagementAccess(scope: authorization.scope, vmName: "vm-17", capturedAt: sampledAt,
+                                                 canManage: false, services: [])
+        do {
+            _ = try await readClient.createPublicService(for: "vm-17", authorization: unmanaged, name: "site", type: "http", port: 80)
+            XCTFail("An unmanaged snapshot must be rejected.")
+        } catch let error as NativeVMWorkspaceClientError {
+            XCTAssertEqual(error, .permissionDenied)
+        }
+    }
+
+    func testRemovePublicServiceRequiresIDInCurrentSnapshotAndValidatesReceipt() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api", userID: "user-1", token: "token-value",
+            send: { request in
+                switch (request.httpMethod, request.url?.path) {
+                case ("GET", "/api/vm/vm-17/public-services"):
+                    return (Data(#"{"canManage":true,"services":[{"id":"route-1","name":"site","type":"http","port":80,"hostname":"site.hanasand.com"}]}"#.utf8), try Self.response(for: request, status: 200))
+                case ("DELETE", "/api/vm/vm-17/public-services/route-1"):
+                    return (Data(#"{"ok":true}"#.utf8), try Self.response(for: request, status: 200))
+                default:
+                    XCTFail("Unexpected VM public service request: \(String(describing: request.url))")
+                    return (Data(), try Self.response(for: request, status: 500))
+                }
+            }
+        )
+        let authorization = try await client.loadManagement(for: "vm-17")
+        do {
+            try await client.removePublicService(for: "vm-17", authorization: authorization, serviceID: "route-2")
+            XCTFail("An ID absent from the current service snapshot must not be deleted.")
+        } catch let error as NativeVMWorkspaceClientError {
+            XCTAssertEqual(error, .staleManagementSnapshot)
+        }
+        try await client.removePublicService(for: "vm-17", authorization: authorization, serviceID: "route-1")
+    }
+
+    func testPublicServiceMutationNetworkFailureIsUncertain() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api", userID: "user-1", token: "token-value",
+            send: { request in
+                if request.httpMethod == "GET" {
+                    return (Data(#"{"canManage":true,"services":[]}"#.utf8), try Self.response(for: request, status: 200))
+                }
+                throw URLError(.timedOut)
+            }
+        )
+        let authorization = try await client.loadManagement(for: "vm-17")
+        do {
+            _ = try await client.createPublicService(for: "vm-17", authorization: authorization, name: "site", type: "http", port: 80)
+            XCTFail("A lost mutation response must require a refresh before retrying.")
+        } catch let error as NativeVMWorkspaceClientError {
+            XCTAssertEqual(error, .uncertainOutcome)
+        }
+    }
+
+    func testPublicServiceRedirectResponseRequiresRefreshBeforeRetry() async throws {
+        let client = try NativeVMWorkspaceClient(
+            apiBaseURL: "https://api.example.test/api", userID: "user-1", token: "token-value",
+            send: { request in
+                if request.httpMethod == "GET" {
+                    return (Data(#"{"canManage":true,"services":[]}"#.utf8), try Self.response(for: request, status: 200))
+                }
+                return (Data(#"{"ok":true}"#.utf8), try Self.response(for: request, status: 302))
+            }
+        )
+        let authorization = try await client.loadManagement(for: "vm-17")
+
+        do {
+            _ = try await client.createPublicService(for: "vm-17", authorization: authorization, name: "site", type: "http", port: 80)
+            XCTFail("A redirect after a service mutation must be treated as an uncertain outcome.")
+        } catch let error as NativeVMWorkspaceClientError {
+            XCTAssertEqual(error, .uncertainOutcome)
+        }
+    }
+
     func testInventoryMergesOwnedAndAccessibleRowsAndCarriesWorkspaceHeader() async throws {
         let client = try NativeVMWorkspaceClient(
             apiBaseURL: "https://api.example.test/api",

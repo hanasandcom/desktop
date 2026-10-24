@@ -164,11 +164,36 @@ struct NativeVMPublicService: Equatable, Identifiable {
     let name: String
     let type: String
     let port: Int
-    let hostname: String
+    let hostname: String?
     let createdAt: String?
 }
 
+enum NativeVMPublicServiceType: String, CaseIterable, Identifiable {
+    case http
+    case tls
+    case minecraftJava = "minecraft-java"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .http: "Website (HTTP)"
+        case .tls: "TLS over TCP"
+        case .minecraftJava: "Minecraft Java"
+        }
+    }
+    var defaultPort: String {
+        switch self {
+        case .http: "80"
+        case .tls: "443"
+        case .minecraftJava: "25565"
+        }
+    }
+}
+
 struct NativeVMManagementAccess: Equatable {
+    let scope: String
+    let vmName: String
+    let capturedAt: Date
     let canManage: Bool
     let services: [NativeVMPublicService]
 }
@@ -179,6 +204,9 @@ enum NativeVMWorkspaceClientError: LocalizedError, Equatable {
     case invalidResponse
     case responseTooLarge
     case permissionDenied
+    case staleManagementSnapshot
+    case invalidServiceInput
+    case uncertainOutcome
     case httpStatus(Int)
 
     var errorDescription: String {
@@ -188,6 +216,9 @@ enum NativeVMWorkspaceClientError: LocalizedError, Equatable {
         case .invalidResponse: "The VM service returned an invalid response."
         case .responseTooLarge: "The VM response is larger than expected."
         case .permissionDenied: "Current permission to manage this VM could not be verified."
+        case .staleManagementSnapshot: "Refresh this VM's public services before changing them."
+        case .invalidServiceInput: "Enter a valid public service name, type, and guest port."
+        case .uncertainOutcome: "The service change may have been accepted. Refresh public services before trying again."
         case let .httpStatus(status): "The VM service returned HTTP \(status)."
         }
     }

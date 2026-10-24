@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 private final class NativeVMRedirectBlocker: NSObject, URLSessionTaskDelegate {
     func urlSession(
@@ -14,6 +15,8 @@ private final class NativeVMRedirectBlocker: NSObject, URLSessionTaskDelegate {
 
 struct NativeVMWorkspaceClient {
     typealias Sender = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+    static let managementMaximumAge: TimeInterval = 30
+    static let maximumResponseBytes = 4 * 1024 * 1024
 
     private static let redirectBlocker = NativeVMRedirectBlocker()
     private static let session: URLSession = {
@@ -29,13 +32,16 @@ struct NativeVMWorkspaceClient {
     private let userID: String
     private let token: String
     private let organizationID: String?
+    private let scope: String
     private let send: Sender
+    private let now: () -> Date
 
     init(
         apiBaseURL: String,
         userID: String,
         token: String,
         organizationID: String? = nil,
+        now: @escaping () -> Date = Date.init,
         send: @escaping Sender = { request in try await Self.session.data(for: request) }
     ) throws {
         guard var components = URLComponents(string: apiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -52,6 +58,9 @@ struct NativeVMWorkspaceClient {
         self.userID = userID
         self.token = token
         self.organizationID = organizationID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokenDigest = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        self.scope = [baseURL.absoluteString, userID, tokenDigest, self.organizationID ?? "personal"].joined(separator: "|")
+        self.now = now
         self.send = send
     }
 
@@ -189,25 +198,49 @@ struct NativeVMWorkspaceClient {
               let rows = object["services"] as? [[String: Any]], rows.count <= 1_000 else {
             throw NativeVMWorkspaceClientError.invalidResponse
         }
-        let services = try rows.map { row -> NativeVMPublicService in
-            guard let id = row["id"] as? String, !id.isEmpty, id.count <= 200,
-                  let serviceName = row["name"] as? String, !serviceName.isEmpty, serviceName.count <= 100,
-                  let type = row["type"] as? String, ["http", "tls", "minecraft-java"].contains(type),
-                  let portValue = row["port"] as? NSNumber, String(cString: portValue.objCType) != "c",
-                  portValue.intValue > 0, portValue.intValue <= 65_535,
-                  let hostname = row["hostname"] as? String, hostname.count <= 253 else {
-                throw NativeVMWorkspaceClientError.invalidResponse
-            }
-            return NativeVMPublicService(
-                id: id,
-                name: serviceName,
-                type: type,
-                port: portValue.intValue,
-                hostname: hostname,
-                createdAt: row["createdAt"] as? String
-            )
+        return NativeVMManagementAccess(scope: scope, vmName: name, capturedAt: now(), canManage: canManage,
+                                        services: try rows.map(parsePublicService))
+    }
+
+    func createPublicService(
+        for rawName: String,
+        authorization: NativeVMManagementAccess,
+        name rawServiceName: String,
+        type: String,
+        port: Int
+    ) async throws -> NativeVMPublicService {
+        let vmName = try validatedName(rawName)
+        try authorizeManagement(authorization, vmName: vmName)
+        let serviceName = rawServiceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard serviceName.range(of: #"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"#, options: .regularExpression) != nil,
+              !serviceName.hasPrefix("port-"), ["http", "tls", "minecraft-java"].contains(type), (1...65_535).contains(port) else {
+            throw NativeVMWorkspaceClientError.invalidServiceInput
         }
-        return NativeVMManagementAccess(canManage: canManage, services: services)
+        let body = try JSONSerialization.data(withJSONObject: ["name": serviceName, "type": type, "port": port])
+        let (value, status) = try await request("vm/\(Self.pathSegment(vmName))/public-services", method: "POST", body: body, mutation: true)
+        guard status == 201, let object = value as? [String: Any] else { throw NativeVMWorkspaceClientError.uncertainOutcome }
+        do { return try parsePublicService(object) }
+        catch { throw NativeVMWorkspaceClientError.uncertainOutcome }
+    }
+
+    func removePublicService(
+        for rawName: String,
+        authorization: NativeVMManagementAccess,
+        serviceID rawServiceID: String
+    ) async throws {
+        let vmName = try validatedName(rawName)
+        try authorizeManagement(authorization, vmName: vmName)
+        let serviceID = try validatedIdentifier(rawServiceID)
+        guard authorization.services.contains(where: { $0.id == serviceID }) else {
+            throw NativeVMWorkspaceClientError.staleManagementSnapshot
+        }
+        let (value, status) = try await request(
+            "vm/\(Self.pathSegment(vmName))/public-services/\(Self.pathSegment(serviceID))",
+            method: "DELETE", mutation: true
+        )
+        guard status == 200, let object = value as? [String: Any], object["ok"] as? Bool == true else {
+            throw NativeVMWorkspaceClientError.uncertainOutcome
+        }
     }
 
     private func parseInventoryItem(_ object: [String: Any]) throws -> NativeVMInventoryItem {
@@ -329,7 +362,43 @@ struct NativeVMWorkspaceClient {
         return rawValue
     }
 
+    private func authorizeManagement(_ authorization: NativeVMManagementAccess, vmName: String) throws {
+        let age = now().timeIntervalSince(authorization.capturedAt)
+        guard authorization.scope == scope,
+              authorization.vmName.caseInsensitiveCompare(vmName) == .orderedSame,
+              age >= -5, age <= Self.managementMaximumAge else {
+            throw NativeVMWorkspaceClientError.staleManagementSnapshot
+        }
+        guard authorization.canManage else { throw NativeVMWorkspaceClientError.permissionDenied }
+    }
+
+    private func parsePublicService(_ row: [String: Any]) throws -> NativeVMPublicService {
+        guard let id = row["id"] as? String, !id.isEmpty, id.count <= 200,
+              let serviceName = row["name"] as? String,
+              serviceName.range(of: #"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$"#, options: .regularExpression) != nil,
+              let type = row["type"] as? String, ["http", "tls", "minecraft-java"].contains(type),
+              let portValue = row["port"] as? NSNumber, String(cString: portValue.objCType) != "c",
+              portValue.intValue > 0, portValue.intValue <= 65_535 else {
+            throw NativeVMWorkspaceClientError.invalidResponse
+        }
+        let hostname: String?
+        if let rawHostname = row["hostname"], !(rawHostname is NSNull) {
+            guard let parsedHostname = rawHostname as? String, parsedHostname.count <= 253 else {
+                throw NativeVMWorkspaceClientError.invalidResponse
+            }
+            hostname = parsedHostname
+        } else {
+            hostname = nil
+        }
+        return NativeVMPublicService(id: id, name: serviceName, type: type, port: portValue.intValue,
+                                     hostname: hostname, createdAt: row["createdAt"] as? String)
+    }
+
     private func get(_ path: String) async throws -> Any {
+        try await request(path, method: "GET").value
+    }
+
+    private func request(_ path: String, method: String, body: Data? = nil, mutation: Bool = false) async throws -> (value: Any, status: Int) {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         let basePath = components?.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ?? ""
         let expectedPath = "/" + [basePath, path].filter({ !$0.isEmpty }).joined(separator: "/")
@@ -340,29 +409,48 @@ struct NativeVMWorkspaceClient {
               url.path == expectedPath else {
             throw NativeVMWorkspaceClientError.invalidEndpoint
         }
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-        request.httpMethod = "GET"
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: mutation ? 30 : 15)
+        request.httpMethod = method
+        request.httpBody = body
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if !userID.isEmpty { request.setValue(userID, forHTTPHeaderField: "id") }
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let organizationID, !organizationID.isEmpty {
             request.setValue(organizationID, forHTTPHeaderField: "x-organization-id")
         }
 
-        let (data, response) = try await send(request)
-        guard data.count <= 4 * 1024 * 1024,
+        let (data, response): (Data, URLResponse)
+        do { (data, response) = try await send(request) }
+        catch {
+            if mutation { throw NativeVMWorkspaceClientError.uncertainOutcome }
+            throw error
+        }
+        guard data.count <= Self.maximumResponseBytes,
               let http = response as? HTTPURLResponse,
               response.url?.scheme?.lowercased() == baseURL.scheme?.lowercased(),
               response.url?.host?.lowercased() == baseURL.host?.lowercased(),
-              response.url?.path == url.path else {
-            if data.count > 4 * 1024 * 1024 { throw NativeVMWorkspaceClientError.responseTooLarge }
+              response.url?.port == url.port,
+              response.url?.path == url.path,
+              response.url?.query == url.query else {
+            if mutation { throw NativeVMWorkspaceClientError.uncertainOutcome }
+            if data.count > Self.maximumResponseBytes { throw NativeVMWorkspaceClientError.responseTooLarge }
             throw NativeVMWorkspaceClientError.invalidResponse
         }
-        guard (200..<300).contains(http.statusCode) else { throw NativeVMWorkspaceClientError.httpStatus(http.statusCode) }
-        do { return try JSONSerialization.jsonObject(with: data) }
-        catch { throw NativeVMWorkspaceClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            if mutation && (http.statusCode >= 500 || (300..<400).contains(http.statusCode)) {
+                throw NativeVMWorkspaceClientError.uncertainOutcome
+            }
+            throw NativeVMWorkspaceClientError.httpStatus(http.statusCode)
+        }
+        do { return (try JSONSerialization.jsonObject(with: data), http.statusCode) }
+        catch { throw mutation ? NativeVMWorkspaceClientError.uncertainOutcome : NativeVMWorkspaceClientError.invalidResponse }
+    }
+
+    private static func pathSegment(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")) ?? ""
     }
 
     private func firstObject(_ value: Any) -> [String: Any]? {
