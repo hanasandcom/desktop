@@ -63,7 +63,35 @@ final class IntegrationClientTests: XCTestCase {
         let payload = try XCTUnwrap(try XCTUnwrap(captured?.httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
         XCTAssertEqual(payload["orgId"], "owner")
         XCTAssertEqual(payload["name"], "Alerts")
+        XCTAssertEqual(payload["status"], "active")
         XCTAssertThrowsError(try IntegrationClient.validate(IntegrationDraft(id: nil, name: "bad", kind: .discord, endpointURL: "https://evil.example/api/webhooks/1/x")))
+    }
+
+    func testEditingPausedDestinationOmitsStatusAndRequiresPausedReceipt() async throws {
+        let pausedListing = listing.replacingOccurrences(of: #""status":"active""#, with: #""status":"paused""#)
+        var captured: URLRequest?
+        let client = try IntegrationClient(apiBaseURL: base, userID: "owner", token: "token") { request in
+            captured = request
+            if request.httpMethod == "GET" { return self.response(pausedListing, request: request) }
+            return self.response(#"{"destination":{"id":"dest_1","orgId":"owner","name":"Ops","kind":"webhook","status":"paused"}}"#, request: request)
+        }
+        let page = try JSONDecoder().decode(IntegrationPage.self, from: Data(pausedListing.utf8))
+        try await client.save(page: page, draft: IntegrationDraft(id: "dest_1", name: "Ops", kind: .webhook, endpointURL: "https://hooks.example/new"))
+
+        XCTAssertEqual(captured?.httpMethod, "PUT")
+        let payload = try XCTUnwrap(try XCTUnwrap(captured?.httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
+        XCTAssertEqual(payload["orgId"], "owner")
+        XCTAssertEqual(payload["endpointUrl"], "https://hooks.example/new")
+        XCTAssertNil(payload["status"])
+
+        let activatedReceipt = try IntegrationClient(apiBaseURL: base, userID: "owner", token: "token") { request in
+            if request.httpMethod == "GET" { return self.response(pausedListing, request: request) }
+            return self.response(#"{"destination":{"id":"dest_1","orgId":"owner","name":"Ops","kind":"webhook","status":"active"}}"#, request: request)
+        }
+        do {
+            try await activatedReceipt.save(page: page, draft: IntegrationDraft(id: "dest_1", name: "Ops", kind: .webhook, endpointURL: "https://hooks.example/new"))
+            XCTFail("A paused edit must not be confirmed as active")
+        } catch IntegrationClientError.uncertainResult {}
     }
 
     func testArchiveRequiresProofAndConfirmsArchivedResult() async throws {

@@ -83,18 +83,19 @@ struct IntegrationClient {
     func save(page: IntegrationPage, draft: IntegrationDraft) async throws {
         try authorize(page: page, id: draft.id, action: .edit)
         try Self.validate(draft)
-        let payload: [String: Any] = ["orgId": organizationID, "name": draft.name.trimmingCharacters(in: .whitespacesAndNewlines), "kind": draft.kind.rawValue,
-                                      "endpointUrl": draft.endpointURL.trimmingCharacters(in: .whitespacesAndNewlines), "status": "active"]
-        var data = try JSONSerialization.data(withJSONObject: payload)
-        if draft.id != nil && draft.endpointURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            data = try JSONSerialization.data(withJSONObject: ["orgId": organizationID, "name": draft.name.trimmingCharacters(in: .whitespacesAndNewlines), "kind": draft.kind.rawValue])
-        }
+        let endpointURL = draft.endpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        var payload: [String: Any] = ["orgId": organizationID, "name": draft.name.trimmingCharacters(in: .whitespacesAndNewlines), "kind": draft.kind.rawValue]
+        if !endpointURL.isEmpty { payload["endpointUrl"] = endpointURL }
+        if draft.id == nil { payload["status"] = "active" }
+        let expectedStatus = draft.id.flatMap { id in page.destinations.first(where: { $0.id == id })?.status } ?? "active"
+        let data = try JSONSerialization.data(withJSONObject: payload)
         let path = "dwm/webhook-destinations" + (draft.id.map { "/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0)" } ?? "")
         let (responseData, response) = try await request(path: path, method: draft.id == nil ? "POST" : "PUT", body: data)
         let http = try checked(response)
         guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode, data: responseData, writing: true) }
         guard let destination = try? JSONDecoder().decode(DestinationEnvelope.self, from: responseData).destination,
-              destination.orgId == organizationID, destination.id == draft.id ?? destination.id else { throw IntegrationClientError.uncertainResult }
+              destination.orgId == organizationID, destination.id == draft.id ?? destination.id,
+              destination.status == expectedStatus else { throw IntegrationClientError.uncertainResult }
     }
 
     func archive(page: IntegrationPage, destination: IntegrationDestination) async throws {
