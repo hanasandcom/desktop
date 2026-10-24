@@ -117,21 +117,42 @@ struct NativePublicInfoPanel: View {
     }
 
     private var homeSearch: some View {
-        HStack(spacing: 8) {
-            TextField("Search a company, vendor, or domain", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { submitSearch() }
-            ActionButton(title: "Search", icon: "magnifyingglass") { submitSearch() }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                searchField
+                searchButton
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                searchField
+                searchButton
+            }
         }
+    }
+
+    private var searchField: some View {
+        TextField("Search a company, vendor, or domain", text: $search)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 240, maxWidth: .infinity)
+            .onSubmit { submitSearch() }
+    }
+
+    private var searchButton: some View {
+        ActionButton(title: "Search", icon: "magnifyingglass") { submitSearch() }
     }
 
     private var faqControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Search questions", text: $search).textFieldStyle(.roundedBorder)
-            Picker("Category", selection: $selectedFAQCategory) {
-                ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+            ViewThatFits(in: .horizontal) {
+                Picker("Category", selection: $selectedFAQCategory) {
+                    ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Category", selection: $selectedFAQCategory) {
+                    ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.segmented)
         }
     }
 

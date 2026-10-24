@@ -32,10 +32,15 @@ struct DashboardOverviewNativePanel: View {
                 FeatureCard(title: "Generated", value: status?.generatedLabel ?? "Unknown", icon: "clock")
             }
 
-            HStack(spacing: 10) {
-                SearchFieldRow(placeholder: "Search services or checks", text: $searchText)
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") {
-                    Task { await model.loadNativeDashboardData() }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    SearchFieldRow(placeholder: "Search services or checks", text: $searchText)
+                        .frame(minWidth: 240, maxWidth: .infinity)
+                    refreshButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    SearchFieldRow(placeholder: "Search services or checks", text: $searchText)
+                    refreshButton
                 }
             }
 
@@ -69,6 +74,12 @@ struct DashboardOverviewNativePanel: View {
 
     var status: DashboardServiceStatus? {
         model.serviceStatus
+    }
+
+    private var refreshButton: some View {
+        ActionButton(title: "Refresh", icon: "arrow.clockwise") {
+            Task { await model.loadNativeDashboardData() }
+        }
     }
 
     var statuses: [String] {
@@ -121,7 +132,8 @@ struct DashboardOverviewNativePanel: View {
                                 Text(check.checkLabel)
                                     .font(.system(size: 12, weight: .black))
                                     .foregroundStyle(theme.text)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Text(check.statusLabel.uppercased())
                                     .font(.system(size: 10, weight: .black))
                                     .foregroundStyle(statusColor(check.statusLabel))
@@ -129,7 +141,7 @@ struct DashboardOverviewNativePanel: View {
                             Text([check.latencyLabel, check.uptimeLabel, check.checkedLabel].joined(separator: " · "))
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(theme.textTertiary)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                             if let message = check.message, !message.isEmpty {
                                 Text(message)
                                     .font(.system(size: 11, weight: .semibold))

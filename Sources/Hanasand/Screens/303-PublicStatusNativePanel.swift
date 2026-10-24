@@ -23,23 +23,17 @@ struct PublicStatusNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Picker("Status view", selection: $section) {
-                    ForEach(PublicStatusSection.allCases) { item in
-                        Text(item.rawValue).tag(item)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    sectionPicker
+                    Spacer(minLength: 8)
+                    refreshButton
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
-
-                Spacer()
-                Button {
-                    Task { await model.refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionPicker
+                    refreshButton
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.bordered)
-                .disabled(model.isLoading)
             }
 
             if model.isLoading && model.payload == nil {
@@ -75,6 +69,26 @@ struct PublicStatusNativePanel: View {
         }
     }
 
+    private var sectionPicker: some View {
+        Picker("Status view", selection: $section) {
+            ForEach(PublicStatusSection.allCases) { item in
+                Text(item.rawValue).tag(item)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await model.refresh() }
+        } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.bordered)
+        .disabled(model.isLoading)
+    }
+
     private static func section(for value: String?, incidentID: String?) -> PublicStatusSection {
         if incidentID?.isEmpty == false || value?.lowercased() == "incidents" { return .incidents }
         if value?.lowercased() == "history" || value?.lowercased() == "daily-history" { return .history }
@@ -90,7 +104,7 @@ struct PublicStatusNativePanel: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(statusLabel(payload.overall))
                         .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(theme.text)
+                        .foregroundStyle(theme.text)
                     Text(payload.monitoring == "unavailable" ? "Showing the last received results" : "Public monitoring feed")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
