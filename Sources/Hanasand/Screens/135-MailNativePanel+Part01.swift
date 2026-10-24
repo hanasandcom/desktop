@@ -13,7 +13,20 @@ import WebKit
 enum MailNativePanelLayout {
     static let stackedBreakpoint: CGFloat = 560
     static let originalColumnsBreakpoint: CGFloat = 660
+    static let expandedColumnsBreakpoint: CGFloat = 1120
     static let horizontalChromeWidth: CGFloat = 34
+
+    enum Mode: Equatable { case stacked, compact, expanded }
+
+    static func mode(contentWidth: CGFloat) -> Mode {
+        if contentWidth >= expandedColumnsBreakpoint { return .expanded }
+        if contentWidth >= stackedBreakpoint { return .compact }
+        return .stacked
+    }
+
+    static func compactSidebarWidth(contentWidth: CGFloat) -> CGFloat {
+        min(238, max(170, contentWidth * 0.24))
+    }
 
     static func compactPaneWidths(contentWidth: CGFloat) -> (mailboxes: CGFloat, messages: CGFloat, reader: CGFloat) {
         let paneWidth = max(0, contentWidth - horizontalChromeWidth)
@@ -36,7 +49,7 @@ extension MailNativePanel {
             if let overview {
                 GeometryReader { geometry in
                     Group {
-                        if geometry.size.width >= MailNativePanelLayout.originalColumnsBreakpoint {
+                        if MailNativePanelLayout.mode(contentWidth: geometry.size.width) == .expanded {
                             HStack(alignment: .top, spacing: 0) {
                                 mailboxSidebar(overview)
                                     .frame(minWidth: 160, idealWidth: 200, maxWidth: 238)
@@ -55,25 +68,23 @@ extension MailNativePanel {
                                 messageReader(overview)
                                     .frame(minWidth: 240, maxWidth: .infinity)
                             }
-                        } else if geometry.size.width >= MailNativePanelLayout.stackedBreakpoint {
-                            let widths = MailNativePanelLayout.compactPaneWidths(contentWidth: geometry.size.width)
+                        } else if MailNativePanelLayout.mode(contentWidth: geometry.size.width) == .compact {
+                            let sidebarWidth = MailNativePanelLayout.compactSidebarWidth(contentWidth: geometry.size.width)
                             HStack(alignment: .top, spacing: 8) {
                                 mailboxSidebar(overview)
-                                    .frame(width: widths.mailboxes, alignment: .topLeading)
+                                    .frame(width: sidebarWidth, alignment: .topLeading)
 
                                 Divider()
                                     .overlay(theme.divider)
                                     .frame(width: 1)
 
-                                threadedMessageList(overview)
-                                    .frame(width: widths.messages, alignment: .topLeading)
-
-                                Divider()
-                                    .overlay(theme.divider)
-                                    .frame(width: 1)
-
-                                messageReader(overview)
-                                    .frame(width: widths.reader, alignment: .topLeading)
+                                VStack(alignment: .leading, spacing: 12) {
+                                    threadedMessageList(overview)
+                                        .frame(minHeight: 470, maxHeight: 600, alignment: .topLeading)
+                                    messageReader(overview)
+                                        .frame(minHeight: 360, alignment: .topLeading)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
                             }
                         } else {
                             VStack(alignment: .leading, spacing: 12) {
@@ -122,6 +133,9 @@ extension MailNativePanel {
             if model.mailOverview == nil {
                 await model.loadMailOverview()
             }
+        }
+        .task(id: "\(overview?.mailboxUser ?? "")|\(selectedMessage?.id ?? "")") {
+            await loadSelectedMessageReputation()
         }
         .task(id: "\(searchText)|\(model.selectedMailboxID)") {
             let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)

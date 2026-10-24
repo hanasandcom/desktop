@@ -10,7 +10,153 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct MailResourceReputation: Decodable, Equatable {
+    let provider: String
+    let status: String
+    let flagged: Int?
+    let total: Int?
+    let checkedAt: String?
+    let reportUrl: String?
+
+    var isKnownClear: Bool { provider == "virustotal" && status == "known" && flagged == 0 }
+}
+
+struct MailRemoteResourceReputation: Decodable, Equatable {
+    let id: String
+    let url: String
+    let reputation: MailResourceReputation
+}
+
+struct MailAttachmentReputation: Decodable, Equatable {
+    let blobId: String
+    let name: String
+    let size: Int
+    let reputation: MailResourceReputation
+}
+
+struct MailMessageReputationEnvelope: Decodable, Equatable {
+    let messageId: String
+    let remoteUrls: [MailRemoteResourceReputation]
+    let attachments: [MailAttachmentReputation]
+}
+
+enum MailMessageSafetyError: Error {
+    case invalidRequest
+    case mismatchedMessage
+}
+
+enum MailMessageSafety {
+    static func makeRequestURL(baseURL: URL, mailboxUser: String, messageID: String) throws -> URL {
+        let user = mailboxUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !user.isEmpty, user.count <= 256, !message.isEmpty, message.count <= 512,
+              let encodedMessage = message.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")) else {
+            throw MailMessageSafetyError.invalidRequest
+        }
+        let route = baseURL.normalizedBaseURL.appendingAPIPath("mail/message")
+        guard var components = URLComponents(url: route, resolvingAgainstBaseURL: false) else {
+            throw MailMessageSafetyError.invalidRequest
+        }
+        components.percentEncodedPath += "/\(encodedMessage)/reputation"
+        components.queryItems = [URLQueryItem(name: "mailboxUser", value: user)]
+        guard let url = components.url, url.usesSecureHanasandTransport else {
+            throw MailMessageSafetyError.invalidRequest
+        }
+        return url
+    }
+
+    static func validated(_ value: MailMessageReputationEnvelope, expectedMessageID: String,
+                          html: String, attachmentIDs: Set<String>) throws -> MailMessageReputationEnvelope {
+        guard value.messageId == expectedMessageID else { throw MailMessageSafetyError.mismatchedMessage }
+        let messageImages = Set(remoteImageURLs(in: html))
+        var seenURLs: Set<String> = []
+        let remoteURLs = value.remoteUrls.filter { item in
+            guard messageImages.contains(item.url), seenURLs.insert(item.url).inserted,
+                  let canonical = canonicalRemoteURL(item.url), canonical == item.url,
+                  sha256(canonical) == item.id, item.reputation.provider == "virustotal" else { return false }
+            return true
+        }
+        var seenAttachments: Set<String> = []
+        let attachments = value.attachments.filter { item in
+            attachmentIDs.contains(item.blobId) && seenAttachments.insert(item.blobId).inserted
+                && item.reputation.provider == "virustotal"
+        }
+        return MailMessageReputationEnvelope(messageId: value.messageId, remoteUrls: remoteURLs, attachments: attachments)
+    }
+
+    static func remoteImageURLs(in html: String) -> [String] {
+        guard let imageTagRegex = try? NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: [.caseInsensitive]),
+              let sourceRegex = try? NSRegularExpression(pattern: #"\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#, options: [.caseInsensitive]) else { return [] }
+        let source = html as NSString
+        let matches = imageTagRegex.matches(in: html, range: NSRange(location: 0, length: source.length))
+        var result: [String] = []
+        var seen: Set<String> = []
+        for match in matches {
+            let tag = source.substring(with: match.range)
+            let tagValue = tag as NSString
+            guard let sourceMatch = sourceRegex.firstMatch(in: tag, range: NSRange(location: 0, length: tagValue.length)) else { continue }
+            let raw = (1...3).compactMap { index -> String? in
+                let range = sourceMatch.range(at: index)
+                return range.location == NSNotFound ? nil : tagValue.substring(with: range)
+            }.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard let canonical = canonicalRemoteURL(raw), seen.insert(canonical).inserted else { continue }
+            result.append(canonical)
+            if result.count == 50 { break }
+        }
+        return result
+    }
+
+    static func canonicalRemoteURL(_ value: String) -> String? {
+        guard var components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host, !host.isEmpty, components.user == nil, components.password == nil else { return nil }
+        components.scheme = scheme
+        components.host = host.lowercased()
+        components.fragment = nil
+        return components.url?.absoluteString
+    }
+
+    static func contentSecurityPolicy(approvedRemoteURLs: [String]) -> String {
+        let remoteSources = approvedRemoteURLs.compactMap { value -> String? in
+            guard canonicalRemoteURL(value) == value,
+                  let url = URL(string: value), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = url.host, url.user == nil, url.password == nil,
+                  let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return nil }
+            let port = url.port.map { ":\($0)" } ?? ""
+            return "\(scheme)://\(host)\(port)\(path.isEmpty ? "/" : path)"
+        }
+        let imageSources = ( ["data:", "blob:"] + remoteSources).joined(separator: " ")
+        return "default-src 'none'; img-src \(imageSources); style-src 'unsafe-inline'; font-src data:; frame-src 'none'; media-src 'none'; object-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+
+    static func frameHTML(_ html: String, approvedRemoteURLs: [String]) -> String {
+        let policy = contentSecurityPolicy(approvedRemoteURLs: approvedRemoteURLs)
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(policy)\">"
+        guard let regex = try? NSRegularExpression(pattern: #"<head\b[^>]*>"#, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+              let range = Range(match.range, in: html) else { return meta + html }
+        var framed = html
+        framed.insert(contentsOf: meta, at: range.upperBound)
+        return framed
+    }
+
+    static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 extension DesktopAgentModel {
+
+    func loadMailMessageReputation(messageID: String, mailboxUser: String, html: String,
+                                   attachmentIDs: Set<String>) async throws -> MailMessageReputationEnvelope {
+        let url = try MailMessageSafety.makeRequestURL(baseURL: settings.apiBaseURL, mailboxUser: mailboxUser, messageID: messageID)
+        let response: MailMessageReputationEnvelope = try await requestJSON(url, authenticated: true)
+        return try MailMessageSafety.validated(response, expectedMessageID: messageID, html: html, attachmentIDs: attachmentIDs)
+    }
 
     func refreshLocalStatus() async {
         currentTaskState = "Checking this Mac"

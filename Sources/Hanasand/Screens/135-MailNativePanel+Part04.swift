@@ -12,6 +12,38 @@ import WebKit
 
 extension MailNativePanel {
 
+    func loadSelectedMessageReputation() async {
+        guard let message = selectedMessage, let overview, let mailboxUser = overview.mailboxUser,
+              message.hasHTMLBody || !(message.attachments ?? []).isEmpty else {
+            messageReputation = nil
+            messageReputationError = ""
+            messageReputationPending = false
+            approvedRemoteImageMessageID = nil
+            return
+        }
+        let messageID = message.id
+        messageReputation = nil
+        messageReputationError = ""
+        messageReputationPending = true
+        approvedRemoteImageMessageID = nil
+        do {
+            let response = try await model.loadMailMessageReputation(
+                messageID: messageID,
+                mailboxUser: mailboxUser,
+                html: message.htmlBody ?? "",
+                attachmentIDs: Set((message.attachments ?? []).map(\.blobId))
+            )
+            guard !Task.isCancelled, selectedMessage?.id == messageID,
+                  overview.mailboxUser == mailboxUser else { return }
+            messageReputation = response
+            messageReputationPending = false
+        } catch {
+            guard !Task.isCancelled, selectedMessage?.id == messageID else { return }
+            messageReputationError = "Safety status unavailable. External images and attachments remain blocked."
+            messageReputationPending = false
+        }
+    }
+
     func messageReader(_ overview: MailOverviewEnvelope) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             if let message = selectedMessage {
@@ -70,8 +102,48 @@ extension MailNativePanel {
                     .textSelection(.enabled)
 
                     if message.hasHTMLBody {
-                        MailHTMLBodyView(
+                        let remoteURLs = MailMessageSafety.remoteImageURLs(in: message.htmlBody ?? "")
+                        let safeRemoteURLs = (messageReputation?.remoteUrls ?? [])
+                            .filter { $0.reputation.isKnownClear }
+                            .map(\.url)
+                        if !remoteURLs.isEmpty {
+                            HStack(spacing: 9) {
+                                Image(systemName: messageReputationPending ? "hourglass" : "hand.raised.fill")
+                                    .foregroundStyle(theme.accent)
+                                if messageReputationPending {
+                                    Text("Checking remote image safety…")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(theme.textSecondary)
+                                } else if !messageReputationError.isEmpty {
+                                    Text(messageReputationError)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(theme.textSecondary)
+                                } else {
+                                    Text(approvedRemoteImageMessageID == message.id
+                                         ? "Safe remote images are loaded."
+                                         : "Remote images are blocked by default. \(safeRemoteURLs.count) safe image\(safeRemoteURLs.count == 1 ? "" : "s") available.")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(theme.textSecondary)
+                                    if !safeRemoteURLs.isEmpty {
+                                        ActionButton(title: approvedRemoteImageMessageID == message.id ? "Hide remote images" : "Load safe remote images",
+                                                     icon: approvedRemoteImageMessageID == message.id ? "eye.slash" : "eye") {
+                                            approvedRemoteImageMessageID = approvedRemoteImageMessageID == message.id ? nil : message.id
+                                        }
+                                    }
+                                    if approvedRemoteImageMessageID != message.id && !safeRemoteURLs.isEmpty {
+                                        Text("Loading makes requests to external image hosts and may reveal your IP address.")
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundStyle(theme.textTertiary)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(10)
+                            .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        MailSafeHTMLBodyView(
                             html: message.renderedHTML(mailboxUser: overview.mailboxUser, apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL),
+                            approvedRemoteURLs: approvedRemoteImageMessageID == message.id ? safeRemoteURLs : [],
                             configuredWebsiteBaseURL: model.settings.websiteBaseURL,
                             onOpenURL: { model.openURL($0, label: "Mail link") }
                         )
@@ -112,29 +184,124 @@ extension MailNativePanel {
                 .textCase(.uppercase)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 8)], spacing: 8) {
                 ForEach(attachments) { attachment in
-                    Button {
-                        Task { await model.downloadMailAttachment(attachment, from: message) }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "paperclip")
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(attachment.name)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .lineLimit(1)
-                                Text("\(attachment.type ?? "file") · \(formatBytes(attachment.size ?? 0))")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(theme.textTertiary)
+                    let reputation = messageReputation?.attachments.first { $0.blobId == attachment.blobId }?.reputation
+                    let safeToOpen = reputation?.isKnownClear == true && !messageReputationPending
+                    VStack(alignment: .leading, spacing: 5) {
+                        Button {
+                            Task { await model.downloadMailAttachment(attachment, from: message) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "paperclip")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(attachment.name)
+                                        .font(.system(size: 12, weight: .bold))
+                                        .lineLimit(1)
+                                    Text("\(attachment.type ?? "file") · \(formatBytes(attachment.size ?? 0))")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
+                                Spacer()
                             }
-                            Spacer()
+                            .foregroundStyle(theme.text)
+                            .padding(10)
+                            .background(theme.cardRaised)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .foregroundStyle(theme.text)
-                        .padding(10)
-                        .background(theme.cardRaised)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .buttonStyle(.plain)
+                        .disabled(!safeToOpen)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(messageReputationPending ? "Checking VirusTotal…" : attachmentSafetyLabel(reputation))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(reputation?.status == "known" && (reputation?.flagged ?? 0) > 0 ? theme.danger : theme.textTertiary)
+                            if safeToOpen, let report = reputation?.reportUrl,
+                               let url = URL(string: report), url.scheme == "https", url.host == "www.virustotal.com",
+                               url.user == nil, url.password == nil {
+                                Button("VirusTotal report") { model.openURL(url.absoluteString, label: "Mail attachment report") }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(theme.accent)
+                            }
+                        }
+                        .padding(.horizontal, 4)
                     }
-                    .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    func attachmentSafetyLabel(_ reputation: MailResourceReputation?) -> String {
+        guard let reputation else { return "VirusTotal status unavailable; download blocked." }
+        if reputation.status == "known", let flagged = reputation.flagged, flagged > 0 {
+            return "Download blocked: \(flagged) of \(reputation.total.map { String($0) } ?? "?") scanners flagged this file."
+        }
+        if reputation.isKnownClear {
+            return "VirusTotal: 0 / \(reputation.total.map { String($0) } ?? "?") scanners flagged."
+        }
+        if reputation.status == "unknown" { return "No VirusTotal report; download blocked." }
+        return "VirusTotal status unavailable; download blocked."
+    }
+}
+
+struct MailSafeHTMLBodyView: NSViewRepresentable {
+    let html: String
+    let approvedRemoteURLs: [String]
+    let configuredWebsiteBaseURL: String
+    let onOpenURL: (String) -> Void
+
+    private var securedHTML: String {
+        MailMessageSafety.frameHTML(html, approvedRemoteURLs: approvedRemoteURLs)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(configuredWebsiteBaseURL: configuredWebsiteBaseURL, onOpenURL: onOpenURL)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = context.coordinator
+        context.coordinator.load(securedHTML, in: view)
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.configuredWebsiteBaseURL = configuredWebsiteBaseURL
+        context.coordinator.onOpenURL = onOpenURL
+        context.coordinator.load(securedHTML, in: view)
+    }
+
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
+        private var loadedHTML: String?
+        var configuredWebsiteBaseURL: String
+        var onOpenURL: (String) -> Void
+
+        init(configuredWebsiteBaseURL: String, onOpenURL: @escaping (String) -> Void) {
+            self.configuredWebsiteBaseURL = configuredWebsiteBaseURL
+            self.onOpenURL = onOpenURL
+        }
+
+        func load(_ html: String, in webView: WKWebView) {
+            guard loadedHTML != html else { return }
+            loadedHTML = html
+            webView.loadHTMLString(html, baseURL: nil)
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.cancel)
+                return
+            }
+            if BrowserWorkspaceModel.isHanasandOwnedURL(url.absoluteString, configuredWebsiteBaseURL: configuredWebsiteBaseURL) {
+                onOpenURL(url.absoluteString)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
         }
     }
 }

@@ -16,4 +16,8 @@ struct MailNativePanel: View {
     @Environment(\.desktopTheme) var theme
 
     @State var searchText = ""; @State var showAccountSetup = false; @State var now = Date(); @State var quickFilter = MailQuickFilter.all; @FocusState var searchFocused: Bool
+    @State var messageReputation: MailMessageReputationEnvelope?
+    @State var messageReputationError = ""
+    @State var messageReputationPending = false
+    @State var approvedRemoteImageMessageID: String?
 }
