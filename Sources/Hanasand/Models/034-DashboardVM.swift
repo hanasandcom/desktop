@@ -70,3 +70,12 @@ struct DashboardVM: Decodable, Identifiable {
         case lastChecked = "last_checked"
     }
 }
+
+func nativeVMActionPath(vmName: String, action: String, isImpersonating: Bool) -> String? {
+    guard !isImpersonating,
+          ["start", "stop", "restart"].contains(action),
+          vmName.count <= 100,
+          vmName.range(of: #"^[A-Za-z0-9][A-Za-z0-9_.-]*$"#, options: .regularExpression) != nil,
+          vmName != ".", vmName != ".." else { return nil }
+    return "vm/\(vmName)/\(action)"
+}

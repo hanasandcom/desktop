@@ -4,7 +4,6 @@ struct HostConsoleView: View {
     @Environment(\.desktopTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session: HostConsoleSession
-    @State private var command = ""
 
     private let title: String
 
@@ -30,34 +29,20 @@ struct HostConsoleView: View {
                 }
             }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    Text(session.output.isEmpty ? "Waiting for host console…" : session.output)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundStyle(theme.text)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .id("host-console-end")
-                }
-                .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-                .onChange(of: session.output) { _, _ in proxy.scrollTo("host-console-end", anchor: .bottom) }
-            }
+            NativeVMTerminalView(rows: session.terminal.historyRows, isConnected: session.isConnected, generation: session.generation,
+                cursorRow: session.terminal.cursorHistoryRow, cursorColumn: session.terminal.cursorColumnPosition,
+                cursorVisible: session.terminal.cursorVisible, cursorBlink: session.terminal.cursorBlink,
+                cursorStyle: session.terminal.cursorStyle, applicationCursorKeys: session.terminal.applicationCursorKeys,
+                bracketedPaste: session.terminal.bracketedPaste, mouseTracking: session.terminal.mouseTracking,
+                mouseTrackingMode: session.terminal.mouseTrackingMode, mouseEncoding: session.terminal.mouseEncoding,
+                alternateScreen: session.terminal.isAlternateScreen,
+                columns: session.terminal.columns, screenRows: session.terminal.rows,
+                onInput: session.sendInput,
+                onResize: session.resize)
             .frame(minHeight: 300)
 
-            ViewThatFits(in: .horizontal) {
-                commandInputRow
-                VStack(alignment: .leading, spacing: 8) {
-                    commandField
-                    HStack(spacing: 8) {
-                        Button("Send") { sendCommand() }
-                            .disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button("Ctrl-C") { session.sendControlC() }
-                            .disabled(!session.isConnected)
-                    }
-                }
-            }
+            Button("Ctrl-C", systemImage: "stop.fill") { session.sendControlC() }
+                .disabled(!session.isConnected)
             Text("Connected to the server through Hanasand. Your commands run on \(title).")
                 .font(.system(size: 11))
                 .foregroundStyle(theme.textSecondary)
@@ -67,13 +52,6 @@ struct HostConsoleView: View {
         .background(theme.background)
         .onAppear { session.connect() }
         .onDisappear { session.disconnect() }
-    }
-
-    private func sendCommand() {
-        let value = command
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        session.sendLine(value)
-        command = ""
     }
 
     private var headerTitle: some View {
@@ -101,21 +79,4 @@ struct HostConsoleView: View {
         }
     }
 
-    private var commandField: some View {
-        TextField("Enter a command", text: $command)
-            .textFieldStyle(.roundedBorder)
-            .font(.system(size: 13, design: .monospaced))
-            .frame(minWidth: 0)
-            .onSubmit { sendCommand() }
-    }
-
-    private var commandInputRow: some View {
-        HStack(spacing: 10) {
-            commandField
-            Button("Send") { sendCommand() }
-                .disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("Ctrl-C") { session.sendControlC() }
-                .disabled(!session.isConnected)
-        }
-    }
 }

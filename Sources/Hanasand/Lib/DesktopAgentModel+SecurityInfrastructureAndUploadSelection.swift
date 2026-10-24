@@ -169,6 +169,15 @@ extension DesktopAgentModel {
     }
 
     func runVirtualMachineAction(_ vm: DashboardVM, action: String) async {
+        guard let actionPath = nativeVMActionPath(
+            vmName: vm.name,
+            action: action,
+            isImpersonating: isProfileIdentityImpersonating
+        ) else {
+            nativeDashboardStatus = "Use your own account and choose a supported VM power action."
+            append(meta: "VM action blocked", body: nativeDashboardStatus, kind: .error)
+            return
+        }
         guard hasHanasandAuth else {
             nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."
             append(meta: "VM action failed", body: nativeDashboardStatus, kind: .error)
@@ -180,8 +189,18 @@ extension DesktopAgentModel {
         defer { isLoadingNativeDashboard = false }
 
         do {
+            let accessClient = try NativeVMWorkspaceClient(
+                apiBaseURL: settings.apiBaseURL,
+                userID: userIDForRequests,
+                token: authTokenForRequests,
+                organizationID: selectedOrganizationID.isEmpty ? nil : selectedOrganizationID
+            )
+            let currentAccess = try await accessClient.loadManagement(for: vm.name)
+            guard currentAccess.canManage, !isProfileIdentityImpersonating else {
+                throw NativeVMWorkspaceClientError.permissionDenied
+            }
             let text = try await requestPrettyText(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("vm/\(vm.name)/\(action)"),
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath(actionPath),
                 method: "POST",
                 authenticated: true
             )

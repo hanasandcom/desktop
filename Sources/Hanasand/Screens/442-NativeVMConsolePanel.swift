@@ -4,7 +4,6 @@ struct NativeVMConsolePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @StateObject private var session: NativeVMConsoleSession
-    @State private var command = ""
     @State private var reviewConsole = false
     private let vmName: String
 
@@ -16,7 +15,8 @@ struct NativeVMConsolePanel: View {
             userID: userID,
             token: token,
             isImpersonating: isImpersonating,
-            provisioningFlow: provisioningFlow
+            provisioningFlow: provisioningFlow,
+            organizationID: ""
         ))
     }
 
@@ -29,38 +29,25 @@ struct NativeVMConsolePanel: View {
                     ActionButton(title: session.isConnected ? "Connected" : session.isPreparing ? "Preparing…" : "Reconnect", icon: session.isConnected ? "checkmark.circle" : "terminal") { reviewConsole = true }.disabled(session.isConnected || session.isPreparing)
                     ActionButton(title: "Back to VMs", icon: "chevron.left") { model.openNativeDashboard(path: "/vms", label: "VMs") }
                 }
-                ScrollViewReader { proxy in
-                    ScrollView([.horizontal, .vertical]) {
-                        Text(session.output.isEmpty ? "Waiting for VM console output…" : session.output)
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            .foregroundStyle(theme.text)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, minHeight: 280, alignment: .topLeading)
-                            .id("vm-console-end")
-                            .padding(12)
-                    }
-                    .background(Color.black.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
-                    .background(GeometryReader { geometry in
-                        Color.clear
-                            .onChange(of: geometry.size, initial: true) { _, size in
-                                guard session.isConnected else { return }
-                                session.resize(columns: Int(size.width / 7), rows: Int(size.height / 15))
-                            }
-                            .onChange(of: session.isConnected) { _, connected in
-                                if connected {
-                                    session.resize(columns: Int(geometry.size.width / 7), rows: Int(geometry.size.height / 15))
-                                }
-                            }
-                    })
-                    .onChange(of: session.output) { _, _ in proxy.scrollTo("vm-console-end", anchor: .bottom) }
+                NativeVMTerminalView(rows: session.terminal.historyRows, isConnected: session.isConnected, generation: session.generation,
+                    cursorRow: session.terminal.cursorHistoryRow, cursorColumn: session.terminal.cursorColumnPosition,
+                    cursorVisible: session.terminal.cursorVisible, cursorBlink: session.terminal.cursorBlink,
+                    cursorStyle: session.terminal.cursorStyle, applicationCursorKeys: session.terminal.applicationCursorKeys,
+                    bracketedPaste: session.terminal.bracketedPaste, mouseTracking: session.terminal.mouseTracking,
+                    mouseTrackingMode: session.terminal.mouseTrackingMode, mouseEncoding: session.terminal.mouseEncoding,
+                    alternateScreen: session.terminal.isAlternateScreen,
+                    columns: session.terminal.columns, screenRows: session.terminal.rows,
+                    onInput: session.sendInput,
+                    onResize: session.resize)
+                    .frame(minHeight: 280)
+                if !session.isConnected {
+                    Text("The terminal accepts keyboard input after connection. ANSI color, cursor movement, erase, and alternate-screen controls are supported; advanced terminal modes may differ from a full xterm.")
+                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                 }
                 HStack(spacing: 8) {
-                    TextField("Enter a command", text: $command)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
-                        .onSubmit(sendCommand)
-                    ActionButton(title: "Send", icon: "arrow.up") { sendCommand() }.disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     ActionButton(title: "Ctrl-C", icon: "stop.fill") { session.sendControlC() }.disabled(!session.isConnected)
+                    Text("Click terminal to type · Paste button for clipboard")
+                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                 }
             }
         }
@@ -71,7 +58,8 @@ struct NativeVMConsolePanel: View {
                 userID: model.userIDForRequests,
                 token: model.authTokenForRequests,
                 isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty,
-                provisioningFlow: model.selectedNativeDashboardQuery["provisioning"] == "1"
+                provisioningFlow: model.selectedNativeDashboardQuery["provisioning"] == "1",
+                organizationID: model.selectedOrganizationID
             )
             reviewConsole = true
         }
@@ -89,7 +77,7 @@ struct NativeVMConsolePanel: View {
     }
 
     private var credentialScope: String {
-        "\(model.settings.apiBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.selectedNativeDashboardQuery["provisioning"] ?? "")"
+        "\(model.settings.apiBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)|\(model.selectedOrganizationID)|\(model.selectedNativeDashboardQuery["provisioning"] ?? "")"
     }
 
     private func startSession(reviewed: Bool) {
@@ -97,10 +85,4 @@ struct NativeVMConsolePanel: View {
         session.connect(reviewed: reviewed)
     }
 
-    private func sendCommand() {
-        let value = command
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        session.sendLine(value)
-        command = ""
-    }
 }
