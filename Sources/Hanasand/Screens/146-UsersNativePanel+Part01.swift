@@ -10,28 +10,49 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum UsersNativePanelPresentation {
+    static func organizationSummary(_ organizations: [DashboardUserOrganization]) -> String {
+        guard !organizations.isEmpty else { return "No organization memberships" }
+        let details = organizations.map { organization in
+            organization.status.isEmpty ? organization.name : "\(organization.name) · \(organization.status)"
+        }
+        return "\(organizations.count) \(organizations.count == 1 ? "organization" : "organizations") · "
+            + details.joined(separator: ", ")
+    }
+}
+
 extension UsersNativePanel {
 
     var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 250), spacing: 12, alignment: .top)]
+        [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)]
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                Label("\(model.users.count) users", systemImage: "person.2")
-                Label("\(model.users.filter { $0.active != false }.count) active", systemImage: "checkmark.circle")
-                Label("\(model.users.filter { $0.active == false }.count) inactive", systemImage: "person.crop.circle.badge.xmark")
-                Label("\(model.users.filter(\.isReservedPlaceholder).count) reserved", systemImage: "person.crop.circle.badge.questionmark")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    Label("\(model.users.count) users", systemImage: "person.2")
+                    Label("\(model.users.filter { $0.active != false }.count) active", systemImage: "checkmark.circle")
+                    Label("\(model.users.filter { $0.active == false }.count) inactive", systemImage: "person.crop.circle.badge.xmark")
+                    Label("\(model.users.filter(\.isReservedPlaceholder).count) reserved", systemImage: "person.crop.circle.badge.questionmark")
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), alignment: .leading)], alignment: .leading, spacing: 8) {
+                    Label("\(model.users.count) users", systemImage: "person.2")
+                    Label("\(model.users.filter { $0.active != false }.count) active", systemImage: "checkmark.circle")
+                    Label("\(model.users.filter { $0.active == false }.count) inactive", systemImage: "person.crop.circle.badge.xmark")
+                    Label("\(model.users.filter(\.isReservedPlaceholder).count) reserved", systemImage: "person.crop.circle.badge.questionmark")
+                }
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(theme.textSecondary)
-            HStack(spacing: 10) {
-                SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
-                if model.users.contains(where: \.isReservedPlaceholder) {
-                    Toggle("Reserved", isOn: $showReserved)
-                        .toggleStyle(.button)
-                        .help(showReserved ? "Hide reserved placeholder accounts" : "Show reserved placeholder accounts")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
+                    reservedUsersToggle
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
+                    reservedUsersToggle
                 }
             }
 
@@ -52,60 +73,57 @@ extension UsersNativePanel {
                                     Text(user.displayName)
                                         .font(.system(size: 14, weight: .black))
                                         .foregroundStyle(theme.text)
-                                        .lineLimit(1)
-                                    Text(user.id)
+                                        .lineLimit(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text("@\(user.displayUsername) · \(user.id)")
                                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                         .foregroundStyle(theme.textTertiary)
-                                        .lineLimit(1)
+                                        .lineLimit(2)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(user.active == false ? "Inactive" : "Active")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(user.active == false ? theme.danger : theme.green)
+                                    .fixedSize()
                             }
-                            HStack(spacing: 6) {
-                                Text(user.roleLabel)
-                                Text("·")
-                                Text("Priority \(user.highestRolePriority.map(String.init) ?? "unknown")")
-                            }
+                            Text("\(user.roleLabel) · Priority \(user.highestRolePriority.map(String.init) ?? "unknown")")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(theme.textSecondary)
-                            HStack {
-                                Button("Open profile") {
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            userDirectoryMetadata(user)
+                            Menu {
+                                Button("Open profile", systemImage: "person.crop.circle") {
                                     model.openUserProfile(user)
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.accent)
-                                Button("Roles") {
+                                Button("Roles", systemImage: "person.badge.key") {
                                     model.selectDashboardUser(user)
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.textSecondary)
                                 if user.id != model.userIDForRequests {
-                                    Button("Impersonate") {
+                                    Button("Impersonate", systemImage: "person.crop.circle.badge.arrowtrianglehead.counterclockwise") {
                                         impersonationReason = ""
                                         impersonationReasonError = ""
                                         pendingImpersonationUser = user
                                     }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(theme.accent)
                                 }
-                                Button(user.active == false ? "Activate" : "Deactivate") {
+                                Divider()
+                                Button(user.active == false ? "Activate" : "Deactivate",
+                                       systemImage: user.active == false ? "checkmark.circle" : "person.crop.circle.badge.xmark") {
                                     pendingStatusUser = user
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(user.active == false ? theme.green : theme.danger)
-                                Button("Schedule deletion") {
+                                Button("Schedule deletion", systemImage: "trash", role: .destructive) {
                                     pendingDeleteUser = user
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.danger)
-                                Spacer()
-                                Text(user.active == false ? "Inactive" : "Active")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(user.active == false ? theme.danger : theme.green)
+                            } label: {
+                                Label("User actions", systemImage: "ellipsis.circle")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
+                            .menuStyle(.borderlessButton)
+                            .help("Open profile, manage roles, or review account actions")
                         }
                         .padding(13)
                         .background(theme.card)
@@ -168,6 +186,49 @@ extension UsersNativePanel {
             impersonationReasonError = ""
         }) { user in
             impersonationPrompt(user)
+        }
+    }
+
+    func userDirectoryMetadata(_ user: DashboardUser) -> some View {
+        let created = "Created \(formatDateText(user.createdAt, fallback: "Not recorded"))"
+        let lastLogin = "Last login \(formatDateText(user.lastLoginAt, fallback: "Not recorded"))"
+        return VStack(alignment: .leading, spacing: 5) {
+            Text(user.email?.isEmpty == false ? user.email! : "Email not available")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(UsersNativePanelPresentation.organizationSummary(user.organizations))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(2)
+                .help(UsersNativePanelPresentation.organizationSummary(user.organizations))
+                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    Label(created, systemImage: "calendar")
+                    Label(lastLogin, systemImage: "clock")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(created, systemImage: "calendar")
+                    Label(lastLogin, systemImage: "clock")
+                }
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(theme.textTertiary)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var reservedUsersToggle: some View {
+        if model.users.contains(where: \.isReservedPlaceholder) {
+            Toggle("Reserved", isOn: $showReserved)
+                .toggleStyle(.button)
+                .help(showReserved ? "Hide reserved placeholder accounts" : "Show reserved placeholder accounts")
         }
     }
 
