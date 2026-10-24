@@ -246,6 +246,42 @@ struct ThreatIntelligenceCapturePage: Decodable, Equatable {
 
 struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
     struct Item: Decodable, Equatable, Identifiable {
+        struct ReportReference: Decodable, Equatable {
+            let role: String
+            let timestamp: String
+            let evidencePath: String
+            let referenceURL: URL?
+            let referenceTitle: String
+            let recordedBy: String
+            let recordedAt: String
+
+            enum CodingKeys: String, CodingKey { case role, timestamp, evidencePath, referenceUrl, referenceTitle, recordedBy, recordedAt }
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                role = try values.decodeIfPresent(String.self, forKey: .role) ?? ""
+                timestamp = try values.decodeIfPresent(String.self, forKey: .timestamp) ?? ""
+                evidencePath = try values.decodeIfPresent(String.self, forKey: .evidencePath) ?? ""
+                referenceTitle = try values.decodeIfPresent(String.self, forKey: .referenceTitle) ?? ""
+                recordedBy = try values.decodeIfPresent(String.self, forKey: .recordedBy) ?? ""
+                recordedAt = try values.decodeIfPresent(String.self, forKey: .recordedAt) ?? ""
+                let rawURL = try values.decodeIfPresent(String.self, forKey: .referenceUrl)
+                if let rawURL, let parsed = URL(string: rawURL),
+                    ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""),
+                    parsed.host != nil, parsed.user == nil, parsed.password == nil
+                {
+                    referenceURL = parsed
+                } else {
+                    referenceURL = nil
+                }
+            }
+
+            func matches(_ evidence: ThreatIntelligenceFirstReportEvidence) -> Bool {
+                role == evidence.role && evidencePath == evidence.evidencePath
+                    && referenceURL?.normalizedPublicReference == evidence.normalizedReferenceURL
+                    && ISO8601DateFormatter().date(from: timestamp) == ISO8601DateFormatter().date(from: evidence.timestamp)
+            }
+        }
+
         let id: String
         let actorName: String
         let sourceName: String
@@ -257,6 +293,7 @@ struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
         let stages: [String: String]
         let missingStages: [String]
         let sources: [SourceReference]
+        let reportReferences: [ReportReference]
         let anomalies: [String]
 
         struct SourceReference: Decodable, Equatable, Identifiable {
@@ -281,7 +318,7 @@ struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
 
         enum CodingKeys: String, CodingKey {
             case id, actorName, sourceName, sourceFamily, title, summary, status, updatedAt
-            case stages, missingStages, sources, timestampAnomalies
+            case stages, missingStages, sources, reportReferences, timestampAnomalies
         }
 
         init(from decoder: Decoder) throws {
@@ -297,6 +334,7 @@ struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
             stages = try values.decodeIfPresent([String: String].self, forKey: .stages) ?? [:]
             missingStages = Array((try values.decodeIfPresent([String].self, forKey: .missingStages) ?? []).prefix(30))
             sources = Array((try values.decodeIfPresent([SourceReference].self, forKey: .sources) ?? []).prefix(20))
+            reportReferences = Array((try values.decodeIfPresent([ReportReference].self, forKey: .reportReferences) ?? []).prefix(50))
             anomalies = Array((try values.decodeIfPresent([String].self, forKey: .timestampAnomalies) ?? []).prefix(50))
         }
     }
@@ -395,6 +433,101 @@ struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
     let metrics: Metrics
     let quality: Quality
     let page: Page
+}
+
+enum ThreatIntelligenceTimelinessScope: Equatable {
+    case global
+    case tenant(String)
+
+    var tenantID: String? {
+        guard case let .tenant(value) = self else { return nil }
+        return value
+    }
+
+    var isValid: Bool {
+        guard let tenantID else { return true }
+        return tenantID.range(of: "^[A-Za-z0-9_.:-]{1,200}$", options: .regularExpression) != nil
+    }
+}
+
+struct ThreatIntelligenceFirstReportEvidence: Equatable {
+    let recordID: String
+    let role: String
+    let timestamp: String
+    let referenceURL: String
+    let evidencePath: String
+    let referenceTitle: String
+
+    var normalizedReferenceURL: String? {
+        guard let url = URL(string: referenceURL.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return url.normalizedPublicReference
+    }
+
+    var validationError: String? {
+        guard recordID.range(of: "^[A-Za-z0-9_.:-]{1,200}$", options: .regularExpression) != nil else {
+            return "Select a retained record."
+        }
+        guard ["actor", "victim", "publisher"].contains(role) else {
+            return "Choose the reporting party."
+        }
+        let timestamp = timestamp.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard timestamp.range(of: #"(?:Z|[+-]\d{2}:\d{2})$"#, options: [.regularExpression, .caseInsensitive]) != nil,
+            ISO8601DateFormatter().date(from: timestamp) != nil
+        else { return "Enter the published timestamp with its timezone." }
+        guard evidencePath.range(of: #"^[A-Za-z0-9_.$:\[\]-]{3,200}$"#, options: .regularExpression) != nil else {
+            return "Enter the source-field path, such as article.time[datetime]."
+        }
+        guard let url = URL(string: referenceURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+            ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
+            url.user == nil, url.password == nil, url.absoluteString.count <= 2_048,
+            !url.searchParametersContainSensitiveKey,
+            !url.host!.lowercased().hasSuffix(".local"),
+            !url.host!.lowercased().hasSuffix(".internal"),
+            !url.host!.lowercased().hasSuffix(".onion"),
+            !url.host!.lowercased().hasSuffix(".i2p"),
+            !Self.isPrivateOrReservedHost(url.host!.lowercased())
+        else { return "Enter a public HTTP or HTTPS reference URL." }
+        guard referenceTitle.count <= 240 else { return "Keep the reference title to 240 characters or fewer." }
+        return nil
+    }
+
+    private static func isPrivateOrReservedHost(_ host: String) -> Bool {
+        if ["localhost", "::1"].contains(host) || host.contains(":") { return true }
+        let pieces = host.split(separator: ".")
+        guard pieces.count == 4, pieces.allSatisfy({ UInt8($0) != nil }) else { return false }
+        let octets = pieces.compactMap { UInt8($0) }
+        guard octets.count == 4 else { return true }
+        let first = octets[0], second = octets[1]
+        return first == 0 || first == 10 || first == 127 || first >= 224
+            || (first == 169 && second == 254)
+            || (first == 172 && (16...31).contains(second))
+            || (first == 192 && second == 168)
+    }
+}
+
+struct ThreatIntelligenceFirstReportEvidenceReceipt: Decodable, Equatable {
+    let created: Bool
+    let reference: ThreatIntelligenceTimelinessSnapshot.Item.ReportReference
+    let item: ThreatIntelligenceTimelinessSnapshot.Item
+}
+
+private extension URL {
+    var normalizedPublicReference: String? {
+        guard var components = URLComponents(url: self, resolvingAgainstBaseURL: false),
+            ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+            components.host != nil, components.user == nil, components.password == nil
+        else { return nil }
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+        if components.path.isEmpty { components.path = "/" }
+        return components.string
+    }
+
+    var searchParametersContainSensitiveKey: Bool {
+        URLComponents(url: self, resolvingAgainstBaseURL: false)?.queryItems?.contains { item in
+            ["token", "secret", "password", "authorization", "cookie", "api_key", "apikey", "signature"].contains { item.name.localizedCaseInsensitiveContains($0) }
+        } == true
+    }
 }
 
 private struct DynamicCodingKey: CodingKey {

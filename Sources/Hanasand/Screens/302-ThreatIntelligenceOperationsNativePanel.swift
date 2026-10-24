@@ -65,6 +65,15 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @State private var query = ""
     @State private var submittedQuery = ""
     @State private var statusFilter = ""
+    @State private var timelinessTenantScope = false
+    @State private var evidenceFormRecordID: String?
+    @State private var evidenceRole = "publisher"
+    @State private var evidenceTimestamp = ISO8601DateFormatter().string(from: Date())
+    @State private var evidenceReferenceURL = ""
+    @State private var evidencePath = "article.time[datetime]"
+    @State private var evidenceTitle = ""
+    @State private var loadedTimelinessSettings: HanasandDesktopSettings?
+    @State private var loadedTimelinessScope: ThreatIntelligenceTimelinessScope?
     @State private var page = 1
     @State private var focusedSourceID: String?
     @State private var nextCursor: String?
@@ -157,7 +166,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 : sourceView == .catalogue
                     ? "Read-only public source catalogue · sensitive locators remain redacted"
                     : sourceView == .runs ? "Read-only global collection run history" : "Read-only bounded capture history · capture bodies are never requested"
-        case .timeliness: "Global analyst queue · read-only · latest 50 records"
+        case .timeliness: timelinessTenantScope ? "Organization analyst queue · first-report evidence can be recorded" : "Global analyst queue · first-report evidence can be recorded"
         }
     }
 
@@ -176,6 +185,19 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         )
         .frame(minWidth: 0, maxWidth: .infinity)
         if section == .timeliness {
+            Picker("Scope", selection: $timelinessTenantScope) {
+                Text("Global").tag(false)
+                Text("Active organization").tag(true)
+            }
+            .pickerStyle(.menu)
+            .disabled(model.selectedOrganizationID.isEmpty)
+            .onChange(of: timelinessTenantScope) { _, _ in Task { await load(reset: true) } }
+            if timelinessTenantScope {
+                Text(model.selectedOrganizationID.isEmpty ? "Select an organization in the app to use tenant scope." : "Organization: \(model.selectedOrganizationID)")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Picker("Queue", selection: $statusFilter) {
                 Text("All records").tag("")
                 Text("Needs first report").tag("unresolved_reference")
@@ -559,7 +581,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
 
     private var timelinessContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "Queue summary", subtitle: "Generated \(date(timeliness?.generatedAt ?? ""))") {
+            NativeGroupPanel(title: "Queue summary", subtitle: "\(timelinessTenantScope ? "Organization" : "Global") scope · generated \(date(timeliness?.generatedAt ?? ""))") {
                 let summary = timeliness?.summary.counts ?? [:]
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)], alignment: .leading, spacing: 8) {
                     metric("Records", summary["recordCount"])
@@ -570,7 +592,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                     metric("Complete", summary["completeCount"])
                 }
             }
-            NativeGroupPanel(title: "Timeliness records", subtitle: "\(timeliness?.page.total ?? 0) matching · global scope") {
+            NativeGroupPanel(title: "Timeliness records", subtitle: "\(timeliness?.page.total ?? 0) matching · \(timelinessTenantScope ? "organization" : "global") scope") {
                 if let timeliness, !timeliness.items.isEmpty {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(timeliness.items) { item in
@@ -635,6 +657,53 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
+                                ForEach(Array(item.reportReferences.enumerated()), id: \.offset) { _, reference in
+                                    Text("First-report evidence · \(reference.role) · \(date(reference.timestamp)) · \(reference.referenceTitle.isEmpty ? reference.evidencePath : reference.referenceTitle)")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if let url = reference.referenceURL {
+                                        Button(url.absoluteString) { model.openURL(url.absoluteString, label: "First-report evidence") }
+                                            .font(.system(size: 10, weight: .medium))
+                                            .buttonStyle(.link)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                                if item.missingStages.contains("first_report") {
+                                    ActionButton(title: evidenceFormRecordID == item.id ? "Close evidence form" : "Add public first-report evidence", icon: "plus.circle") {
+                                        evidenceFormRecordID = evidenceFormRecordID == item.id ? nil : item.id
+                                        evidenceTimestamp = ISO8601DateFormatter().string(from: Date())
+                                        evidenceReferenceURL = ""
+                                        evidenceTitle = ""
+                                    }
+                                    .disabled(isMutating || (timelinessTenantScope && model.selectedOrganizationID.isEmpty))
+                                    if evidenceFormRecordID == item.id {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Picker("Reporting party", selection: $evidenceRole) {
+                                                Text("Actor").tag("actor")
+                                                Text("Victim").tag("victim")
+                                                Text("Publisher").tag("publisher")
+                                            }.pickerStyle(.menu)
+                                            TextField("Published timestamp with timezone", text: $evidenceTimestamp)
+                                            TextField("Public reference URL", text: $evidenceReferenceURL)
+                                            TextField("Evidence path", text: $evidencePath)
+                                            TextField("Reference title (optional)", text: $evidenceTitle)
+                                            ActionButton(title: isMutating ? "Saving…" : "Record first-report evidence", icon: "checkmark") {
+                                                Task { await recordFirstReportEvidence(item) }
+                                            }
+                                            .disabled(isMutating || evidenceDraft(for: item).validationError != nil || !canMutateTimeliness)
+                                            if let validation = evidenceDraft(for: item).validationError {
+                                                Text(validation)
+                                                    .font(.system(size: 10, weight: .medium))
+                                                    .foregroundStyle(theme.textTertiary)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textFieldStyle(.roundedBorder)
+                                    }
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 10)
@@ -651,7 +720,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 } else {
                     NativeEmptyState(
                         title: "No matching records",
-                        message: "No retained global timeliness records matched the selected queue and search.")
+                        message: "No retained \(timelinessTenantScope ? "organization" : "global") timeliness records matched the selected queue and search.")
                 }
                 if let quality = timeliness?.quality {
                     Divider()
@@ -745,11 +814,27 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         loadedSourceSettings != nil && model.settings == loadedSourceSettings
     }
 
+    private var activeTimelinessScope: ThreatIntelligenceTimelinessScope {
+        timelinessTenantScope ? .tenant(model.selectedOrganizationID) : .global
+    }
+
+    private var canMutateTimeliness: Bool {
+        loadedTimelinessSettings == model.settings && loadedTimelinessScope == activeTimelinessScope
+            && activeTimelinessScope.isValid && (!timelinessTenantScope || !model.selectedOrganizationID.isEmpty)
+    }
+
+    private func evidenceDraft(for item: ThreatIntelligenceTimelinessSnapshot.Item) -> ThreatIntelligenceFirstReportEvidence {
+        ThreatIntelligenceFirstReportEvidence(
+            recordID: item.id, role: evidenceRole, timestamp: evidenceTimestamp,
+            referenceURL: evidenceReferenceURL, evidencePath: evidencePath, referenceTitle: evidenceTitle)
+    }
+
     private var scopeKey: String {
         [
             model.settings.websiteBaseURL, model.settings.userID, model.settings.impersonatingUserID,
             model.settings.impersonationToken.isEmpty ? "own-account" : "impersonating", sectionKey,
-            initialOrganizationID ?? "no-organization-filter",
+            initialOrganizationID ?? "no-organization-filter", model.selectedOrganizationID,
+            timelinessTenantScope ? "tenant" : "global",
         ].joined(separator: "|")
     }
 
@@ -834,12 +919,15 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 }
             case .timeliness:
                 let client = try ThreatIntelligenceOperationsClient(settings: requestedSettings)
+                let scope = activeTimelinessScope
                 let snapshot = try await client.loadTimeliness(
-                    status: statusFilter, query: submittedQuery, cursor: reset ? nil : nextCursor)
+                    scope: scope, status: statusFilter, query: submittedQuery, cursor: reset ? nil : nextCursor)
                 guard stillCurrent(current, settings: requestedSettings) else { return }
                 timeliness = snapshot
-                nextCursor = nil
-                message = "Loaded \(snapshot.items.count) global timeliness records. This view is read-only."
+                nextCursor = snapshot.page.nextCursor
+                loadedTimelinessSettings = requestedSettings
+                loadedTimelinessScope = scope
+                message = "Loaded \(snapshot.items.count) \(scope.tenantID == nil ? "global" : "organization") timeliness records."
             }
         } catch {
             guard stillCurrent(current, settings: requestedSettings) else { return }
@@ -849,6 +937,56 @@ struct ThreatIntelligenceOperationsNativePanel: View {
 
     private func stillCurrent(_ current: UUID, settings: HanasandDesktopSettings) -> Bool {
         !Task.isCancelled && requestID == current && model.settings == settings
+    }
+
+    private func recordFirstReportEvidence(_ item: ThreatIntelligenceTimelinessSnapshot.Item) async {
+        let scope = activeTimelinessScope
+        let evidence = evidenceDraft(for: item)
+        guard canMutateTimeliness, timeliness?.items.contains(where: { $0.id == item.id }) == true,
+            item.missingStages.contains("first_report"), evidence.validationError == nil
+        else {
+            message = "The account, organization, or loaded record changed. Refresh Delivery Health before recording evidence."
+            return
+        }
+        isMutating = true
+        defer { isMutating = false }
+        do {
+            let client = try ThreatIntelligenceOperationsClient(settings: model.settings)
+            _ = try await client.recordFirstReportEvidence(scope: scope, evidence: evidence)
+            guard model.settings == loadedTimelinessSettings, activeTimelinessScope == scope else {
+                message = "The account or organization changed while saving. Refresh Delivery Health to verify the evidence."
+                return
+            }
+            evidenceFormRecordID = nil
+            message = "First-report evidence was confirmed. Refreshing this scope."
+            await load(reset: true)
+        } catch ThreatIntelligenceOperationsError.mutationOutcomeUnknown {
+            guard model.settings == loadedTimelinessSettings, activeTimelinessScope == scope else {
+                message = "The save outcome is uncertain and the account or organization changed. Reopen the same scope and check the record before retrying."
+                return
+            }
+            do {
+                let client = try ThreatIntelligenceOperationsClient(settings: model.settings)
+                let fresh = try await client.loadTimeliness(scope: scope, query: item.id)
+                guard model.settings == loadedTimelinessSettings, activeTimelinessScope == scope else {
+                    message = "The save outcome is uncertain and the account or organization changed. Refresh before retrying."
+                    return
+                }
+                timeliness = fresh
+                nextCursor = fresh.page.nextCursor
+                let matched = fresh.items.first(where: { $0.id == item.id })?.reportReferences.contains(where: { $0.matches(evidence) }) == true
+                if matched {
+                    evidenceFormRecordID = nil
+                    message = "First-report evidence was found in a fresh snapshot."
+                } else {
+                    message = "The save outcome is still unconfirmed. Check the fresh record before retrying; the form is preserved."
+                }
+            } catch {
+                message = "The save outcome is still unconfirmed and the fresh snapshot failed. Check this record before retrying."
+            }
+        } catch {
+            message = "Could not record first-report evidence: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+        }
     }
 
     private func updateSourceStatus(_ source: ThreatIntelligenceOperationalSourcePage.Source, status: String) async {

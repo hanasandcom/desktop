@@ -208,19 +208,39 @@ struct ThreatIntelligenceOperationsClient {
         return envelope
     }
 
-    func loadTimeliness(status: String = "", query: String = "", cursor: String? = nil) async throws -> ThreatIntelligenceTimelinessSnapshot
-    {
+    func loadTimeliness(
+        scope: ThreatIntelligenceTimelinessScope = .global,
+        status: String = "",
+        query: String = "",
+        cursor: String? = nil
+    ) async throws -> ThreatIntelligenceTimelinessSnapshot {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard clean.count <= 200, status.count <= 40, (cursor?.count ?? 0) <= 200 else {
+        let allowedStatuses = ["", "unresolved_reference", "anomaly", "awaiting_alert", "awaiting_delivery", "complete", "excluded"]
+        guard scope.isValid, clean.count <= 200, allowedStatuses.contains(status), (cursor?.count ?? 0) <= 200 else {
             throw ThreatIntelligenceOperationsError.invalidRequest
         }
-        var components = try components(path: "api/ti/timeliness")
-        var items = [URLQueryItem(name: "scope", value: "global"), URLQueryItem(name: "limit", value: "50")]
+        var components = try timelinessComponents(scope: scope)
+        var items = components.queryItems ?? []
+        items.append(URLQueryItem(name: "limit", value: "50"))
         if !status.isEmpty { items.append(URLQueryItem(name: "status", value: status)) }
         if !clean.isEmpty { items.append(URLQueryItem(name: "q", value: clean)) }
         if let cursor, !cursor.isEmpty { items.append(URLQueryItem(name: "cursor", value: cursor)) }
         components.queryItems = items
-        let snapshot: ThreatIntelligenceTimelinessSnapshot = try await get(components)
+        let url = try timelinessURL(components)
+        let request = makeTimelinessRequest(url: url, method: "GET")
+        let (data, response) = try await send(request)
+        guard let response = response as? HTTPURLResponse, response.url == url else {
+            throw ThreatIntelligenceOperationsError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            throw ThreatIntelligenceOperationsError.requestFailed(response.statusCode)
+        }
+        guard data.count <= 2_000_000,
+            response.expectedContentLength <= 0 || response.expectedContentLength <= 2_000_000
+        else { throw ThreatIntelligenceOperationsError.responseTooLarge }
+        let snapshot: ThreatIntelligenceTimelinessSnapshot
+        do { snapshot = try JSONDecoder().decode(ThreatIntelligenceTimelinessSnapshot.self, from: data) }
+        catch { throw ThreatIntelligenceOperationsError.invalidResponse }
         guard snapshot.items.count <= 50, snapshot.page.total >= snapshot.items.count,
             Set(snapshot.items.map(\.id)).count == snapshot.items.count,
             snapshot.items.allSatisfy({ !$0.id.isEmpty }),
@@ -229,6 +249,95 @@ struct ThreatIntelligenceOperationsClient {
             throw ThreatIntelligenceOperationsError.invalidResponse
         }
         return snapshot
+    }
+
+    func recordFirstReportEvidence(
+        scope: ThreatIntelligenceTimelinessScope,
+        evidence: ThreatIntelligenceFirstReportEvidence
+    ) async throws -> ThreatIntelligenceFirstReportEvidenceReceipt {
+        guard scope.isValid, evidence.validationError == nil,
+            let timestamp = ISO8601DateFormatter().date(from: evidence.timestamp.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { throw ThreatIntelligenceOperationsError.invalidRequest }
+
+        var components = try timelinessComponents(scope: scope)
+        let url = try timelinessURL(components)
+        let normalizedTimestamp = ISO8601DateFormatter().string(from: timestamp)
+        guard let normalizedURL = evidence.normalizedReferenceURL else {
+            throw ThreatIntelligenceOperationsError.invalidRequest
+        }
+        var body: [String: String] = [
+            "recordId": evidence.recordID,
+            "role": evidence.role,
+            "timestamp": normalizedTimestamp,
+            "referenceUrl": normalizedURL,
+            "evidencePath": evidence.evidencePath.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        let title = evidence.referenceTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { body["referenceTitle"] = title }
+        var request = makeTimelinessRequest(url: url, method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        do { request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) }
+        catch { throw ThreatIntelligenceOperationsError.invalidRequest }
+
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await send(request) }
+        catch { throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown }
+        guard let response = response as? HTTPURLResponse, response.url == url else {
+            throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            if (400..<500).contains(response.statusCode) {
+                throw ThreatIntelligenceOperationsError.requestFailed(response.statusCode)
+            }
+            throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown
+        }
+        guard data.count <= 250_000,
+            response.expectedContentLength <= 0 || response.expectedContentLength <= 250_000
+        else { throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown }
+        let receipt: ThreatIntelligenceFirstReportEvidenceReceipt
+        do { receipt = try JSONDecoder().decode(ThreatIntelligenceFirstReportEvidenceReceipt.self, from: data) }
+        catch { throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown }
+        guard receipt.item.id == evidence.recordID,
+            receipt.reference.matches(evidence),
+            receipt.item.reportReferences.contains(where: { $0.matches(evidence) })
+        else { throw ThreatIntelligenceOperationsError.mutationOutcomeUnknown }
+        components.queryItems = nil
+        return receipt
+    }
+
+    private func timelinessComponents(scope: ThreatIntelligenceTimelinessScope) throws -> URLComponents {
+        guard var components = URLComponents(string: settings.websiteBaseURL),
+            components.scheme?.lowercased() == "https", components.host != nil,
+            components.user == nil, components.password == nil,
+            components.query == nil, components.fragment == nil,
+            scope.isValid
+        else { throw ThreatIntelligenceOperationsError.invalidBaseURL }
+        components.percentEncodedPath = "/api/ti/timeliness"
+        var queryItems = [URLQueryItem(name: "scope", value: scope.tenantID == nil ? "global" : "tenant")]
+        if let tenantID = scope.tenantID { queryItems.append(URLQueryItem(name: "tenantId", value: tenantID)) }
+        components.queryItems = queryItems
+        return components
+    }
+
+    private func timelinessURL(_ components: URLComponents) throws -> URL {
+        guard let url = components.url, url.scheme?.lowercased() == "https", url.host != nil,
+            url.user == nil, url.password == nil
+        else { throw ThreatIntelligenceOperationsError.invalidBaseURL }
+        return url
+    }
+
+    private func makeTimelinessRequest(url: URL, method: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = method == "POST" ? 30 : 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(settings.authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(settings.userID, forHTTPHeaderField: "id")
+        return request
     }
 
     private func get<T: Decodable>(_ components: URLComponents, rowsKey: String? = nil) async throws -> T {
@@ -377,7 +486,7 @@ enum ThreatIntelligenceOperationsError: LocalizedError, Equatable {
         case .invalidRequest: "The requested intelligence page or filter is invalid."
         case .invalidResponse: "The intelligence response is invalid. Refresh to try again."
         case .responseTooLarge: "The intelligence response exceeded its size limit. Narrow the search and retry."
-        case .mutationOutcomeUnknown: "The server did not confirm the change. Refresh source and run history before trying again."
+        case .mutationOutcomeUnknown: "The server did not confirm the evidence. Refresh Delivery Health and check the record before trying again."
         case .requestFailed(401): "Your session could not be verified. Sign in again."
         case .requestFailed(403): "Your account cannot access this intelligence view."
         case .requestFailed: "The intelligence request failed. Refresh to try again."

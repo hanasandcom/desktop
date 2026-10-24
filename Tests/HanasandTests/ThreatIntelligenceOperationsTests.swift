@@ -33,6 +33,81 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         assertAuthenticatedRead(captured)
     }
 
+    func testTimelinessTenantScopeUsesWebsiteProxyAndActiveTenantQuery() async throws {
+        var captured: URLRequest?
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"generatedAt":"2026-10-23T10:00:00Z","summary":{},"items":[],"metrics":{},"quality":{},"page":{"total":0,"nextCursor":null}}"#), self.response(for: request.url!))
+        }
+
+        _ = try await client.loadTimeliness(scope: .tenant("org-1"), status: "unresolved_reference", query: "actor", cursor: "next-1")
+
+        XCTAssertEqual(captured?.url?.host, "hanasand.com")
+        XCTAssertEqual(captured?.url?.path, "/api/ti/timeliness")
+        XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems, [
+            URLQueryItem(name: "scope", value: "tenant"), URLQueryItem(name: "tenantId", value: "org-1"),
+            URLQueryItem(name: "limit", value: "50"), URLQueryItem(name: "status", value: "unresolved_reference"),
+            URLQueryItem(name: "q", value: "actor"), URLQueryItem(name: "cursor", value: "next-1"),
+        ])
+        assertAuthenticatedRead(captured, expectedHost: "hanasand.com")
+    }
+
+    func testFirstReportEvidencePostsWebsiteContractAndRequiresMatchingReceipt() async throws {
+        var captured: URLRequest?
+        let evidence = ThreatIntelligenceFirstReportEvidence(
+            recordID: "record-1", role: "publisher", timestamp: "2026-10-23T09:10:00Z",
+            referenceURL: "https://example.test", evidencePath: "article.time[datetime]", referenceTitle: "Published report")
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"created":true,"reference":{"role":"publisher","timestamp":"2026-10-23T09:10:00Z","evidencePath":"article.time[datetime]","referenceUrl":"https://example.test/","referenceTitle":"Published report","recordedBy":"user-1","recordedAt":"2026-10-23T09:11:00Z"},"item":{"id":"record-1","actorName":"Synthetic actor","sourceName":"Synthetic source","sourceFamily":"advisory","title":"Report","summary":"","status":"unresolved_reference","updatedAt":"2026-10-23T09:11:00Z","stages":{},"missingStages":[],"sources":[],"reportReferences":[{"role":"publisher","timestamp":"2026-10-23T09:10:00Z","evidencePath":"article.time[datetime]","referenceUrl":"https://example.test/","referenceTitle":"Published report","recordedBy":"user-1","recordedAt":"2026-10-23T09:11:00Z"}],"timestampAnomalies":[]}}"#), self.response(for: request.url!))
+        }
+
+        let receipt = try await client.recordFirstReportEvidence(scope: .tenant("org-1"), evidence: evidence)
+
+        XCTAssertTrue(receipt.created)
+        XCTAssertEqual(receipt.item.id, "record-1")
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.url?.host, "hanasand.com")
+        XCTAssertEqual(captured?.url?.path, "/api/ti/timeliness")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        assertAuthenticatedHeaders(captured)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: captured!.httpBody!) as? [String: String])
+        XCTAssertEqual(body, [
+            "recordId": "record-1", "role": "publisher", "timestamp": "2026-10-23T09:10:00Z",
+            "referenceUrl": "https://example.test/", "evidencePath": "article.time[datetime]", "referenceTitle": "Published report",
+        ])
+        XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems, [
+            URLQueryItem(name: "scope", value: "tenant"), URLQueryItem(name: "tenantId", value: "org-1"),
+        ])
+    }
+
+    func testFirstReportEvidenceRejectsInvalidInputBeforeSendingAndReconcilesAmbiguousReceipt() async throws {
+        var sendCount = 0
+        let invalidClient = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            sendCount += 1
+            return (self.responseData("{}"), self.response(for: request.url!))
+        }
+        let invalid = ThreatIntelligenceFirstReportEvidence(
+            recordID: "record-1", role: "publisher", timestamp: "2026-10-23T09:10:00", referenceURL: "http://192.168.1.1/report",
+            evidencePath: "article.time[datetime]", referenceTitle: "")
+        do {
+            _ = try await invalidClient.recordFirstReportEvidence(scope: .tenant("org-1"), evidence: invalid)
+            XCTFail("Expected private URL and missing timezone to be rejected.")
+        } catch { XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .invalidRequest) }
+        XCTAssertEqual(sendCount, 0)
+
+        let evidence = ThreatIntelligenceFirstReportEvidence(
+            recordID: "record-1", role: "publisher", timestamp: "2026-10-23T09:10:00Z", referenceURL: "https://example.test/report",
+            evidencePath: "article.time[datetime]", referenceTitle: "")
+        let uncertainClient = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            (self.responseData("{}"), HTTPURLResponse(url: request.url!, statusCode: 502, httpVersion: "HTTP/1.1", headerFields: nil)!)
+        }
+        do {
+            _ = try await uncertainClient.recordFirstReportEvidence(scope: .global, evidence: evidence)
+            XCTFail("Expected an ambiguous server outcome to require reconciliation.")
+        } catch { XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .mutationOutcomeUnknown) }
+    }
+
     func testProfilesSupportEmptyResultsAndSurfacePermissionDenial() async throws {
         let empty = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
             (self.responseData(#"{"data":[],"pagination":{"page":1,"limit":50,"total":0,"nextPage":null}}"#), self.response(for: request.url!))
@@ -214,7 +289,7 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "scope" })?.value, "global")
         XCTAssertNil(query.first(where: { $0.name == "tenantId" }))
         XCTAssertEqual(captured?.httpMethod, "GET")
-        assertAuthenticatedRead(captured)
+        assertAuthenticatedRead(captured, expectedHost: "hanasand.com")
     }
 
     func testRejectsImpersonationInsecureConfigurationAndRedirectedResponses() async throws {
@@ -283,12 +358,16 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
     }
 
-    private func assertAuthenticatedRead(_ request: URLRequest?, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertAuthenticatedRead(_ request: URLRequest?, expectedHost: String = "ti.hanasand.com", file: StaticString = #filePath, line: UInt = #line) {
+        assertAuthenticatedHeaders(request, file: file, line: line)
         XCTAssertEqual(request?.httpMethod, "GET", file: file, line: line)
+        XCTAssertEqual(request?.url?.host, expectedHost, file: file, line: line)
+    }
+
+    private func assertAuthenticatedHeaders(_ request: URLRequest?, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token", file: file, line: line)
         XCTAssertEqual(request?.value(forHTTPHeaderField: "id"), "user-1", file: file, line: line)
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Cache-Control"), "no-store", file: file, line: line)
         XCTAssertEqual(request?.httpShouldHandleCookies, false, file: file, line: line)
-        XCTAssertEqual(request?.url?.host, "ti.hanasand.com", file: file, line: line)
     }
 }
