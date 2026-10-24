@@ -254,8 +254,8 @@ private struct NativeVMHostOptionsPanel: View {
             }
             let checkout = try await makeAccessClient().loadFailoverCheckoutURL(for: vm.name)
             guard scope == scopeKey else { status = "Account or organization changed. Refresh before opening checkout."; return }
-            let didOpen = model.openStripeExternally(url: checkout.absoluteString, title: "checkout", source: "VM failover")
-            status = didOpen ? "Secure Stripe checkout opened in your default browser." : "Could not open secure Stripe checkout in your default browser."
+            let didOpen = model.openStripeInAppBrowser(url: checkout.absoluteString, title: "checkout", source: "VM failover")
+            status = didOpen ? "Secure Stripe checkout opened in the built-in browser." : "Could not open secure Stripe checkout in the built-in browser."
         } catch {
             status = error.localizedDescription
         }

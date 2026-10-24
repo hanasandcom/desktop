@@ -208,38 +208,31 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testStripeDestinationOpensExternallyWithoutLoggingSessionURL() {
+    func testStripeDestinationOpensInBuiltInBrowserWithoutLoggingSessionURL() {
         let model = DesktopAgentModel()
         let sessionURL = "https://checkout.stripe.com/c/pay/cs_test_sensitive"
         model.events = []
-        var openedURL: URL?
 
-        let didOpen = model.openStripeExternally(url: sessionURL, title: "checkout", source: "VM failover") {
-            openedURL = $0
-            return true
-        }
+        let didOpen = model.openStripeInAppBrowser(url: sessionURL, title: "checkout", source: "VM failover")
 
         XCTAssertTrue(didOpen)
-        XCTAssertEqual(openedURL?.absoluteString, sessionURL)
-        XCTAssertFalse(model.events.contains { $0.body.contains("cs_test_sensitive") })
+        XCTAssertEqual(model.selectedSection, .browser)
+        XCTAssertEqual(model.browserOpenRequest?.url, sessionURL)
+        XCTAssertFalse(model.events.contains { $0.body.contains(sessionURL) })
     }
 
     @MainActor
-    func testStripeExternalOpeningRejectsNonStripeHosts() {
+    func testStripeInAppBrowserRejectsNonStripeHosts() {
         let model = DesktopAgentModel()
-        var handlerCalled = false
 
-        let didOpen = model.openStripeExternally(
+        let didOpen = model.openStripeInAppBrowser(
             url: "https://checkout.stripe.com.attacker.test/session",
             title: "checkout",
             source: "VM failover"
-        ) { _ in
-            handlerCalled = true
-            return true
-        }
+        )
 
         XCTAssertFalse(didOpen)
-        XCTAssertFalse(handlerCalled)
+        XCTAssertNil(model.browserOpenRequest)
         XCTAssertEqual(model.events.last?.kind, .error)
     }
 

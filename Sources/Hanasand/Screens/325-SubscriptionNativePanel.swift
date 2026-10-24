@@ -85,7 +85,7 @@ struct SubscriptionNativePanel: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
             }
-            Text("Subscription management opens Stripe's secure billing portal in your default browser.")
+            Text("Subscription management opens Stripe's secure billing portal in the built-in browser.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.textTertiary)
         }
@@ -215,8 +215,8 @@ struct SubscriptionNativePanel: View {
             let client = try AccountSubscriptionClient(baseURL: baseURL, userID: model.userIDForRequests, token: model.authTokenForRequests)
             let url = try await client.createBillingPortalURL()
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
-            if !model.openStripeExternally(url: url.absoluteString, title: "billing portal", source: "Billing") {
-                error = "Could not open the secure Stripe page in your default browser."
+            if !model.openStripeInAppBrowser(url: url.absoluteString, title: "billing portal", source: "Billing") {
+                error = "Could not open the secure Stripe page in the built-in browser."
             }
         } catch {
             if !Task.isCancelled, requestID == currentRequestID, scope == requestedScope {

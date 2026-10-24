@@ -155,11 +155,10 @@ extension DesktopAgentModel {
     }
 
     @discardableResult
-    func openStripeExternally(
+    func openStripeInAppBrowser(
         url rawValue: String,
         title: String,
-        source: String,
-        open: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        source: String
     ) -> Bool {
         guard let url = URL(string: rawValue),
               url.scheme?.lowercased() == "https",
@@ -170,11 +169,7 @@ extension DesktopAgentModel {
             append(meta: "Stripe", body: "Could not open the secure Stripe page.", kind: .error)
             return false
         }
-        guard open(url) else {
-            append(meta: "Stripe", body: "Could not open the secure Stripe page in your default browser.", kind: .error)
-            return false
-        }
-        append(meta: "Stripe", body: "\(source) opened \(title) in your default browser.", kind: .command)
+        openInlineBrowser(url: url.absoluteString, title: "Stripe \(title)", source: source, includeURLInActivityLog: false)
         return true
     }
 
