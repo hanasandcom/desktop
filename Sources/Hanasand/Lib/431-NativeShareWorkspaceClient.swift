@@ -60,11 +60,19 @@ struct NativeShareWorkspaceClient {
         return NativeShareWorkspace(root: root, tree: tree, selectedFile: selected)
     }
 
-    func saveFile(id: String, name: String, path: String, content: String) async throws -> NativeShareWorkspaceFile {
+    func saveFile(id: String, name: String, path: String, content: String,
+                  baselineContent: String) async throws -> NativeShareWorkspaceFile {
         guard !userID.isEmpty else { throw NativeShareWorkspaceError.signInRequired }
         guard Self.validIdentifier(id), name.utf8.count <= NativeShareWorkspaceLimits.fieldBytes,
               path.utf8.count <= NativeShareWorkspaceLimits.fieldBytes,
-              content.utf8.count <= NativeShareWorkspaceLimits.contentBytes else { throw NativeShareWorkspaceError.invalidRoute }
+              content.utf8.count <= NativeShareWorkspaceLimits.contentBytes,
+              baselineContent.utf8.count <= NativeShareWorkspaceLimits.contentBytes else { throw NativeShareWorkspaceError.invalidRoute }
+        // The CDN API has no version/compare-and-swap field, so this check narrows
+        // the race window but cannot make the subsequent PUT atomic.
+        let remote = try await loadFile(id: id)
+        guard (remote.content ?? "") == baselineContent else {
+            throw NativeShareWorkspaceError.saveConflict(remote)
+        }
         let saved: NativeShareWorkspaceFile = try await mutationRequest("save", "share/\(segment(id))", method: "PUT", body: [
             "name": name, "path": path, "content": content,
         ])

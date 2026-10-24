@@ -65,6 +65,23 @@ struct NativeShareWorkspaceContext: Equatable {
     let createIfMissing: Bool
 }
 
+struct NativeShareWorkspaceSaveConflict: Equatable {
+    let id: String
+    let originalBaselineContent: String
+    let localName: String
+    let localPath: String
+    let localContent: String
+    let remoteFile: NativeShareWorkspaceFile
+}
+
+struct NativeShareWorkspaceInteractionPolicy: Equatable {
+    let allowsNavigationAndTreeMutations: Bool
+
+    static func make(hasUnresolvedSaveConflict: Bool) -> NativeShareWorkspaceInteractionPolicy {
+        NativeShareWorkspaceInteractionPolicy(allowsNavigationAndTreeMutations: !hasUnresolvedSaveConflict)
+    }
+}
+
 struct NativeShareWorkspaceDuplicateEntry: Equatable, Identifiable {
     let sourceID: String
     let id: String
@@ -143,7 +160,7 @@ struct NativeShareWorkspaceDuplicatePlan: Equatable {
 enum NativeShareWorkspacePendingMutation: Equatable {
     case delete(id: String, name: String)
     case metadata(id: String, name: String?, path: String?)
-    case save(id: String, name: String, path: String, content: String)
+    case save(id: String, name: String, path: String, content: String, baselineContent: String)
     case duplicate(NativeShareWorkspaceDuplicatePlan)
 }
 
@@ -163,6 +180,7 @@ enum NativeShareWorkspaceError: LocalizedError, Equatable {
     case invalidRoute
     case invalidCredentials
     case invalidResponse
+    case saveConflict(NativeShareWorkspaceFile)
     case mutationUncertain(String)
     case requestFailed(Int)
 
@@ -174,6 +192,7 @@ enum NativeShareWorkspaceError: LocalizedError, Equatable {
         case .invalidRoute: "This workspace link is missing a valid project or file identifier."
         case .invalidCredentials: "The current account credentials are invalid. Sign in again."
         case .invalidResponse: "The workspace service returned an invalid response."
+        case .saveConflict: "This file changed on the server since you opened it. Review the latest version before saving."
         case .mutationUncertain(let action): "The \(action) result could not be confirmed. Refresh the workspace before retrying."
         case .requestFailed(401): "Sign in again to open or edit this workspace."
         case .requestFailed(403): "The current account cannot edit this workspace."

@@ -4,6 +4,11 @@ import XCTest
 @testable import Hanasand
 
 final class NativeShareWorkspaceClientTests: XCTestCase {
+    func testUnresolvedSaveConflictBlocksWorkspaceNavigationAndTreeMutations() {
+        XCTAssertFalse(NativeShareWorkspaceInteractionPolicy.make(hasUnresolvedSaveConflict: true).allowsNavigationAndTreeMutations)
+        XCTAssertTrue(NativeShareWorkspaceInteractionPolicy.make(hasUnresolvedSaveConflict: false).allowsNavigationAndTreeMutations)
+    }
+
     func testProjectAliasLoadsTreeAndSelectedFileWithoutLosingRouteContext() async throws {
         var requests: [URLRequest] = []
         let client = try makeClient { request in
@@ -34,7 +39,9 @@ final class NativeShareWorkspaceClientTests: XCTestCase {
         let client = try makeClient(userID: "user-7", token: "session-token") { request in
             requests.append(request)
             let body: String
-            if request.url?.path == "/api/share/root-1" {
+            if request.httpMethod == "GET" && request.url?.path == "/api/share/file-1" {
+                body = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"Original","type":"file","parent":"root-1"}"#
+            } else if request.url?.path == "/api/share/root-1" {
                 body = #"{"id":"root-1","name":"Root","path":"Root","alias":"root-1","content":"","type":"folder"}"#
             } else if request.url?.path == "/api/share/tree/root-1" {
                 body = #"[{"id":"file-1","name":"README.md","path":"Root/README.md","type":"file","parent":"root-1"}]"#
@@ -47,7 +54,8 @@ final class NativeShareWorkspaceClientTests: XCTestCase {
         let workspace = try await client.load(context: NativeShareWorkspaceContext(
             alias: "root-1", fileID: nil, isProject: false, initialChatOpen: false, createIfMissing: false
         ))
-        let saved = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md", content: "# Updated")
+        let saved = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                              content: "# Updated", baselineContent: "Original")
 
         XCTAssertEqual(requests.prefix(2).map { $0.url?.path }, ["/api/share/root-1", "/api/share/tree/root-1"])
         XCTAssertEqual(workspace.tree.first?.id, "file-1")
@@ -57,6 +65,7 @@ final class NativeShareWorkspaceClientTests: XCTestCase {
         XCTAssertEqual(saveRequest.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
         XCTAssertEqual(saveRequest.value(forHTTPHeaderField: "id"), "user-7")
         XCTAssertFalse(saveRequest.httpShouldHandleCookies)
+        XCTAssertEqual(requests.suffix(2).map { $0.httpMethod }, ["GET", "PUT"])
         let body = try XCTUnwrap(saveRequest.httpBody).withUnsafeBytes { Data($0) }
         let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
         XCTAssertEqual(fields["content"], "# Updated")
@@ -89,7 +98,7 @@ final class NativeShareWorkspaceClientTests: XCTestCase {
             (Data(#"{"id":"file-1","content":"text"}"#.utf8), self.response(for: request.url!))
         }
         do {
-            _ = try await client.saveFile(id: "file-1", name: "a", path: "a", content: "b")
+            _ = try await client.saveFile(id: "file-1", name: "a", path: "a", content: "b", baselineContent: "a")
             XCTFail("Anonymous sessions must not mutate shares.")
         } catch { XCTAssertEqual(error as? NativeShareWorkspaceError, .signInRequired) }
 
@@ -99,6 +108,104 @@ final class NativeShareWorkspaceClientTests: XCTestCase {
             ))
             XCTFail("Invalid route aliases must be rejected before a request.")
         } catch { XCTAssertEqual(error as? NativeShareWorkspaceError, .invalidRoute) }
+    }
+
+    func testSaveConflictDoesNotSendPUTWhenFreshContentDiffersFromBaseline() async throws {
+        var methods: [String] = []
+        let remote = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"remote edit","type":"file"}"#
+        let client = try makeClient(userID: "user-7", token: "session-token") { request in
+            methods.append(request.httpMethod ?? "")
+            return (Data(remote.utf8), self.response(for: request.url!))
+        }
+
+        do {
+            _ = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                          content: "local edit", baselineContent: "original")
+            XCTFail("A changed remote baseline must stop the save before PUT.")
+        } catch let NativeShareWorkspaceError.saveConflict(file) {
+            XCTAssertEqual(file.content, "remote edit")
+        }
+        XCTAssertEqual(methods, ["GET"])
+    }
+
+    func testExplicitKeepMineBaselineIsRecheckedBeforePUT() async throws {
+        var remoteContent = "reviewed server version"
+        var putCount = 0
+        let client = try makeClient(userID: "user-7", token: "session-token") { request in
+            if request.httpMethod == "GET" {
+                let body = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"\#(remoteContent)","type":"file"}"#
+                return (Data(body.utf8), self.response(for: request.url!))
+            }
+            putCount += 1
+            remoteContent = "local draft"
+            let body = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"local draft","type":"file"}"#
+            return (Data(body.utf8), self.response(for: request.url!))
+        }
+
+        let saved = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                              content: "local draft", baselineContent: "reviewed server version")
+        XCTAssertEqual(saved.content, "local draft")
+        XCTAssertEqual(putCount, 1)
+    }
+
+    func testKeepMineFreshCheckCatchesChangeAfterConflictWasDisplayed() async throws {
+        var remoteContent = "first remote edit"
+        var putCount = 0
+        let client = try makeClient(userID: "user-7", token: "session-token") { request in
+            if request.httpMethod == "GET" {
+                let body = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"\#(remoteContent)","type":"file"}"#
+                return (Data(body.utf8), self.response(for: request.url!))
+            }
+            putCount += 1
+            return (Data(#"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"local draft","type":"file"}"#.utf8), self.response(for: request.url!))
+        }
+
+        do {
+            _ = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                          content: "local draft", baselineContent: "original")
+            XCTFail("The first fresh check should surface a conflict.")
+        } catch let NativeShareWorkspaceError.saveConflict(file) {
+            XCTAssertEqual(file.content, "first remote edit")
+        }
+
+        remoteContent = "newer remote edit"
+        do {
+            _ = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                          content: "local draft", baselineContent: "first remote edit")
+            XCTFail("Keep mine must recheck the reviewed snapshot before writing.")
+        } catch let NativeShareWorkspaceError.saveConflict(file) {
+            XCTAssertEqual(file.content, "newer remote edit")
+        }
+        XCTAssertEqual(putCount, 0)
+    }
+
+    func testAmbiguousSaveRecoveryRechecksFreshContentAndStopsOnNewConflict() async throws {
+        var remoteContent = "original"
+        var putCount = 0
+        let client = try makeClient(userID: "user-7", token: "session-token") { request in
+            if request.httpMethod == "GET" {
+                let body = #"{"id":"file-1","name":"README.md","path":"Root/README.md","content":"\#(remoteContent)","type":"file"}"#
+                return (Data(body.utf8), self.response(for: request.url!))
+            }
+            putCount += 1
+            remoteContent = "other editor's version"
+            throw URLError(.timedOut)
+        }
+
+        do {
+            _ = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                          content: "my version", baselineContent: "original")
+            XCTFail("The simulated lost response should leave the save unresolved.")
+        } catch { XCTAssertEqual(error as? NativeShareWorkspaceError, .mutationUncertain("save")) }
+
+        do {
+            _ = try await client.saveFile(id: "file-1", name: "README.md", path: "Root/README.md",
+                                          content: "my version", baselineContent: "original")
+            XCTFail("Recovery must stop if remote content changed after the ambiguous write.")
+        } catch let NativeShareWorkspaceError.saveConflict(file) {
+            XCTAssertEqual(file.content, "other editor's version")
+        }
+        XCTAssertEqual(putCount, 1, "Recovery must retain the draft for explicit conflict review instead of issuing a second PUT.")
     }
 
     func testRejectsInsecureBaseAndImpersonation() {

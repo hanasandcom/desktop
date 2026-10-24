@@ -20,6 +20,8 @@ struct NativeShareWorkspacePanel: View {
     @State private var isRenamingName = false
     @State private var pendingDeleteItem: NativeShareWorkspaceTreeItem?
     @State private var pendingMutation: NativeShareWorkspacePendingMutation?
+    @State private var baselineContent = ""
+    @State private var saveConflict: NativeShareWorkspaceSaveConflict?
 
     init(alias: String, fileID: String? = nil, isProject: Bool = false,
          initialChatOpen: Bool = false, createIfMissing: Bool = false,
@@ -31,6 +33,9 @@ struct NativeShareWorkspacePanel: View {
     }
 
     private var selectedFile: NativeShareWorkspaceFile? { workspace?.selectedFile }
+    private var interactionPolicy: NativeShareWorkspaceInteractionPolicy {
+        .make(hasUnresolvedSaveConflict: saveConflict != nil)
+    }
     private var canEdit: Bool {
         model.hasHanasandAuth && selectedFile?.locked != true
             && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
@@ -47,9 +52,10 @@ struct NativeShareWorkspacePanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                     if let onOpenChat {
                         ActionButton(title: "Open chat", icon: "bubble.left.and.bubble.right") { onOpenChat() }
+                            .disabled(!interactionPolicy.allowsNavigationAndTreeMutations)
                     }
                     ActionButton(title: isLoading ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load() } }
-                        .disabled(isLoading)
+                        .disabled(isLoading || !interactionPolicy.allowsNavigationAndTreeMutations)
                 }
                 if !error.isEmpty { NativeNotice(message: error) }
                 if let pendingMutation {
@@ -79,7 +85,8 @@ struct NativeShareWorkspacePanel: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                guard let item = pendingDeleteItem else { return }
+                guard interactionPolicy.allowsNavigationAndTreeMutations,
+                      let item = pendingDeleteItem else { return }
                 pendingDeleteItem = nil
                 Task { await delete(item) }
             }
@@ -110,17 +117,18 @@ struct NativeShareWorkspacePanel: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isSaving || !interactionPolicy.allowsNavigationAndTreeMutations)
             .contextMenu {
                 Button("Select to rename", systemImage: "pencil") {
                     Task { await select(item); isRenamingName = true }
                 }
-                .disabled(!canEdit || pendingMutation != nil || isSaving)
+                .disabled(!canEdit || pendingMutation != nil || isSaving || !interactionPolicy.allowsNavigationAndTreeMutations)
                 Button("Duplicate", systemImage: "plus.square.on.square") {
                     Task { await duplicate(item) }
                 }
-                .disabled(!canEdit || pendingMutation != nil || isSaving)
+                .disabled(!canEdit || pendingMutation != nil || isSaving || !interactionPolicy.allowsNavigationAndTreeMutations)
                 Button("Delete", systemImage: "trash", role: .destructive) { pendingDeleteItem = item }
-                    .disabled(!canEdit || pendingMutation != nil || isSaving)
+                    .disabled(!canEdit || pendingMutation != nil || isSaving || !interactionPolicy.allowsNavigationAndTreeMutations)
             }
             ForEach(item.children ?? []) { child in treeRow(child, depth: depth + 1) }
         })
@@ -130,9 +138,9 @@ struct NativeShareWorkspacePanel: View {
         NativeGroupPanel(title: "Workspace tree", subtitle: "Select a file to view or edit") {
             HStack(spacing: 8) {
                 ActionButton(title: "New file", icon: "doc.badge.plus") { Task { await createItem(type: "file") } }
-                    .disabled(isSaving || pendingMutation != nil || !canEdit)
+                    .disabled(isSaving || pendingMutation != nil || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations)
                 ActionButton(title: "New folder", icon: "folder.badge.plus") { Task { await createItem(type: "folder") } }
-                    .disabled(isSaving || pendingMutation != nil || !canEdit)
+                    .disabled(isSaving || pendingMutation != nil || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations)
             }
             if let workspace, workspace.tree.isEmpty {
                 NativeEmptyState(title: "No files yet", message: "Create a file or folder to add it to this workspace.")
@@ -155,28 +163,43 @@ struct NativeShareWorkspacePanel: View {
     private var editorPanel: some View {
         NativeGroupPanel(title: selectedFile?.displayName ?? "File editor", subtitle: selectedFile?.path ?? "Select a file from the tree") {
             if let selectedFile {
+                if let saveConflict, saveConflict.id == selectedFile.id {
+                    NativeNotice(
+                        message: "The server copy differs from the version you opened. Keep mine will overwrite the displayed server copy after one more fresh check. The API has no atomic version check, so another edit could still race that write.",
+                        title: "Review concurrent edit",
+                        tone: .info
+                    )
+                    HStack(spacing: 8) {
+                        ActionButton(title: "Use theirs", icon: "arrow.uturn.backward") {
+                            useRemoteConflictVersion(saveConflict)
+                        }.disabled(isSaving)
+                        ActionButton(title: isSaving ? "Checking…" : "Keep mine", icon: "arrow.uturn.forward") {
+                            Task { await keepLocalConflictVersion(saveConflict) }
+                        }.disabled(isSaving || pendingMutation != nil)
+                    }
+                }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || pendingMutation != nil)
-                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || pendingMutation != nil)
+                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
+                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
                     }
                     VStack(spacing: 8) {
-                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || pendingMutation != nil)
-                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || pendingMutation != nil)
+                        TextField("File name", text: $draftName).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
+                        TextField("Path", text: $draftPath).textFieldStyle(.roundedBorder).disabled(!canEdit || isSaving || pendingMutation != nil || saveConflict != nil)
                     }
                 }
                 HStack(spacing: 8) {
                     if isRenamingName {
                         ActionButton(title: isSaving ? "Renaming…" : "Rename", icon: "pencil") { Task { await renameSelected() } }
-                            .disabled(isSaving || pendingMutation != nil || draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(isSaving || pendingMutation != nil || saveConflict != nil || draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         ActionButton(title: "Cancel rename", icon: "xmark") {
                             draftName = selectedFile.name ?? selectedFile.displayName
                             isRenamingName = false
-                        }.disabled(isSaving)
+                        }.disabled(isSaving || saveConflict != nil)
                     }
                     if draftPath != (selectedFile.path ?? "") {
                         ActionButton(title: isSaving ? "Saving path…" : "Save path", icon: "folder") { Task { await updatePath() } }
-                            .disabled(isSaving || pendingMutation != nil || draftPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(isSaving || pendingMutation != nil || saveConflict != nil || draftPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
                 TextEditor(text: $draftContent)
@@ -184,7 +207,7 @@ struct NativeShareWorkspacePanel: View {
                     .frame(minHeight: 350)
                     .padding(7)
                     .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .disabled(!canEdit)
+                    .disabled(!canEdit || isSaving || saveConflict != nil || pendingMutation != nil)
                 HStack {
                     if selectedFile.locked == true {
                         Label("Locked", systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(theme.danger)
@@ -193,7 +216,7 @@ struct NativeShareWorkspacePanel: View {
                     }
                     Spacer()
                     ActionButton(title: isSaving ? "Saving…" : "Save file", icon: "checkmark") { Task { await saveFile() } }
-                        .disabled(isSaving || isLoading || !canEdit || pendingMutation != nil)
+                        .disabled(isSaving || isLoading || !canEdit || pendingMutation != nil || saveConflict != nil)
                 }
             } else {
                 NativeEmptyState(title: "Select a file", message: "Choose a file from the workspace tree to view its contents.")
@@ -202,7 +225,7 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func load() async {
-        guard !isLoading else { return }
+        guard !isLoading, interactionPolicy.allowsNavigationAndTreeMutations else { return }
         isLoading = true
         error = ""
         status = "Loading workspace…"
@@ -234,9 +257,12 @@ struct NativeShareWorkspacePanel: View {
         draftName = selected?.name ?? selected?.displayName ?? ""
         draftPath = selected?.path ?? ""
         draftContent = selected?.content ?? ""
+        baselineContent = selected?.content ?? ""
+        saveConflict = nil
     }
 
     @MainActor private func select(_ item: NativeShareWorkspaceTreeItem) async {
+        guard interactionPolicy.allowsNavigationAndTreeMutations, !isSaving else { return }
         selectedFileID = item.id
         guard item.type != "folder" else {
             selectedParentFolderID = item.id
@@ -255,6 +281,8 @@ struct NativeShareWorkspacePanel: View {
             draftName = file.name ?? file.displayName
             draftPath = file.path ?? ""
             draftContent = file.content ?? ""
+            baselineContent = file.content ?? ""
+            saveConflict = nil
             error = ""
             status = "Loaded \(file.displayName)."
         } catch {
@@ -267,17 +295,23 @@ struct NativeShareWorkspacePanel: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            let saved = try await makeClient().saveFile(id: selectedFile.id, name: draftName, path: draftPath, content: draftContent)
+            let saved = try await makeClient().saveFile(id: selectedFile.id, name: draftName, path: draftPath,
+                                                        content: draftContent, baselineContent: baselineContent)
             workspace = NativeShareWorkspace(root: workspace?.root ?? saved, tree: workspace?.tree ?? [], selectedFile: saved)
             draftName = saved.name ?? draftName
             draftPath = saved.path ?? draftPath
             draftContent = saved.content ?? draftContent
+            baselineContent = saved.content ?? draftContent
+            saveConflict = nil
             status = "Saved \(saved.displayName)."
             error = ""
             isRenamingName = false
         } catch {
-            if error as? NativeShareWorkspaceError == .mutationUncertain("save") {
-                pendingMutation = .save(id: selectedFile.id, name: draftName, path: draftPath, content: draftContent)
+            if let shareError = error as? NativeShareWorkspaceError, case let .saveConflict(remote) = shareError {
+                recordSaveConflict(id: selectedFile.id, remote: remote)
+            } else if error as? NativeShareWorkspaceError == .mutationUncertain("save") {
+                pendingMutation = .save(id: selectedFile.id, name: draftName, path: draftPath,
+                                        content: draftContent, baselineContent: baselineContent)
             }
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -311,7 +345,7 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func delete(_ item: NativeShareWorkspaceTreeItem) async {
-        guard pendingMutation == nil else { return }
+        guard interactionPolicy.allowsNavigationAndTreeMutations, pendingMutation == nil else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -331,7 +365,8 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func duplicate(_ item: NativeShareWorkspaceTreeItem) async {
-        guard let workspace, pendingMutation == nil else { return }
+        guard interactionPolicy.allowsNavigationAndTreeMutations,
+              let workspace, pendingMutation == nil else { return }
         do {
             let plan = try NativeShareWorkspaceDuplicatePlan.make(sourceID: item.id, rootID: workspace.root.id, tree: workspace.tree)
             pendingMutation = .duplicate(plan)
@@ -375,17 +410,31 @@ struct NativeShareWorkspacePanel: View {
                 pendingMutation = nil
                 error = ""
                 apply(try await client.load(context: refreshContext))
-            case let .save(id, name, path, content):
+            case let .save(id, name, path, content, baselineContent):
                 let current = try await client.loadFile(id: id)
                 if current.name == name && current.path == path && current.content == content {
                     status = "Save confirmed after refresh."
+                    pendingMutation = nil
+                    apply(try await client.load(context: refreshContext))
                 } else {
-                    _ = try await client.saveFile(id: id, name: name, path: path, content: content)
+                    guard (current.content ?? "") == baselineContent else {
+                        pendingMutation = nil
+                        saveConflict = NativeShareWorkspaceSaveConflict(
+                            id: id, originalBaselineContent: baselineContent,
+                            localName: name, localPath: path, localContent: content,
+                            remoteFile: current
+                        )
+                        status = "The server copy changed while this save was unresolved. Choose Use theirs or Keep mine."
+                        error = ""
+                        return
+                    }
+                    _ = try await client.saveFile(id: id, name: name, path: path,
+                                                  content: content, baselineContent: baselineContent)
                     status = "Saved \(name)."
+                    pendingMutation = nil
+                    apply(try await client.load(context: refreshContext))
                 }
-                pendingMutation = nil
                 error = ""
-                apply(try await client.load(context: refreshContext))
             case let .duplicate(plan):
                 let loaded = try await client.resumeDuplicate(plan, context: refreshContext)
                 pendingMutation = nil
@@ -394,6 +443,83 @@ struct NativeShareWorkspacePanel: View {
                 error = ""
             }
         } catch {
+            if let shareError = error as? NativeShareWorkspaceError, case let .saveConflict(remote) = shareError,
+               case let .save(id, name, path, content, baseline)? = pendingMutation {
+                pendingMutation = nil
+                saveConflict = NativeShareWorkspaceSaveConflict(
+                    id: id, originalBaselineContent: baseline,
+                    localName: name, localPath: path, localContent: content,
+                    remoteFile: remote
+                )
+                status = "The server copy changed while this save was unresolved. Choose Use theirs or Keep mine."
+                self.error = ""
+            } else {
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
+    @MainActor private func recordSaveConflict(id: String, remote: NativeShareWorkspaceFile) {
+        saveConflict = NativeShareWorkspaceSaveConflict(
+            id: id,
+            originalBaselineContent: baselineContent,
+            localName: draftName,
+            localPath: draftPath,
+            localContent: draftContent,
+            remoteFile: remote
+        )
+        status = "The server copy changed. Your draft is still here; choose Use theirs or Keep mine."
+    }
+
+    @MainActor private func useRemoteConflictVersion(_ conflict: NativeShareWorkspaceSaveConflict) {
+        guard let current = workspace else { return }
+        let remote = conflict.remoteFile
+        workspace = NativeShareWorkspace(root: current.root, tree: current.tree, selectedFile: remote)
+        selectedFileID = remote.id
+        selectedParentFolderID = remote.parent ?? current.root.id
+        draftName = remote.name ?? remote.displayName
+        draftPath = remote.path ?? ""
+        draftContent = remote.content ?? ""
+        baselineContent = remote.content ?? ""
+        saveConflict = nil
+        pendingMutation = nil
+        status = "Loaded the latest server version."
+        error = ""
+    }
+
+    @MainActor private func keepLocalConflictVersion(_ conflict: NativeShareWorkspaceSaveConflict) async {
+        guard saveConflict == conflict, pendingMutation == nil else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            // Treat the explicitly reviewed remote snapshot as the new baseline.
+            // saveFile fetches it again before PUT; if it changed again, no PUT is sent.
+            let remoteBaseline = conflict.remoteFile.content ?? ""
+            let saved = try await makeClient().saveFile(
+                id: conflict.id, name: conflict.localName, path: conflict.localPath,
+                content: conflict.localContent, baselineContent: remoteBaseline
+            )
+            workspace = NativeShareWorkspace(root: workspace?.root ?? saved, tree: workspace?.tree ?? [], selectedFile: saved)
+            draftName = saved.name ?? conflict.localName
+            draftPath = saved.path ?? conflict.localPath
+            draftContent = saved.content ?? conflict.localContent
+            baselineContent = saved.content ?? conflict.localContent
+            saveConflict = nil
+            status = "Saved your reviewed version. The CDN has no atomic compare-and-swap protection."
+            error = ""
+        } catch {
+            if let shareError = error as? NativeShareWorkspaceError, case let .saveConflict(remote) = shareError {
+                saveConflict = NativeShareWorkspaceSaveConflict(
+                    id: conflict.id, originalBaselineContent: conflict.originalBaselineContent,
+                    localName: conflict.localName, localPath: conflict.localPath,
+                    localContent: conflict.localContent, remoteFile: remote
+                )
+                status = "The server copy changed again. Your draft remains available; review the newest version."
+            } else if error as? NativeShareWorkspaceError == .mutationUncertain("save") {
+                pendingMutation = .save(id: conflict.id, name: conflict.localName, path: conflict.localPath,
+                                        content: conflict.localContent, baselineContent: conflict.remoteFile.content ?? "")
+                saveConflict = nil
+            }
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -408,7 +534,8 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func createItem(type: String) async {
-        guard let root = workspace?.root else { return }
+        guard interactionPolicy.allowsNavigationAndTreeMutations,
+              let root = workspace?.root else { return }
         isSaving = true
         defer { isSaving = false }
         do {
