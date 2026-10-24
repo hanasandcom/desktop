@@ -9,6 +9,32 @@ struct LogsSearchFilters: Equatable {
   var advanced = false
   var hql = "ProcessLogs | where Severity in (\"high\", \"critical\") | order by TimeGenerated desc | take 100"
   var dashboardStats = false
+
+  static func fromRouteQuery(_ query: [String: String]) -> Self {
+    var filters = Self()
+    if let hours = query["hours"].flatMap(Int.init), [1, 24, 168, 720, 2_160].contains(hours) {
+      filters.hours = hours
+    }
+    if let service = boundedLogsRouteValue(query["service"], maximum: 300) { filters.service = service }
+    if let search = boundedLogsRouteValue(query["search"], maximum: 120) { filters.search = search }
+    if let severity = query["severity"], ["all", "low", "medium", "high", "critical"].contains(severity.lowercased()) {
+      filters.severity = severity.lowercased()
+    }
+    if let table = query["table"], LogsSearchClient.tables.contains(table) { filters.table = table }
+    if let hql = boundedLogsRouteValue(query["hql"] ?? query["kql"], maximum: 4_000, allowsNewlines: true), !hql.isEmpty {
+      filters.hql = hql
+      filters.advanced = true
+    }
+    return filters
+  }
+}
+
+func boundedLogsRouteValue(_ value: String?, maximum: Int, allowsNewlines: Bool = false) -> String? {
+  guard let value, value.utf8.count <= maximum,
+        !value.unicodeScalars.contains(where: {
+          CharacterSet.controlCharacters.contains($0) && !(allowsNewlines && ($0 == "\n" || $0 == "\t"))
+        }) else { return nil }
+  return value
 }
 
 struct LogsSearchEvent: Decodable, Identifiable, Equatable {

@@ -18,6 +18,7 @@ struct LogsRealtimeNativePanel: View {
   @State private var isRefreshing = false
   @State private var requestID = UUID()
   @State private var copiedEventID = ""
+  @State private var pollGeneration = 0
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -130,6 +131,8 @@ struct LogsRealtimeNativePanel: View {
       browsingOlder = false
       lastUpdated = nil
       errorMessage = ""
+      filters = LogsRealtimeFilters.fromRouteQuery(model.selectedNativeDashboardQuery)
+      appliedFilters = filters
       await poll()
     }
   }
@@ -184,6 +187,7 @@ struct LogsRealtimeNativePanel: View {
     browsingOlder = false
     errorMessage = ""
     appliedFilters = filters
+    pollGeneration += 1
   }
 
   private var statusText: String {
@@ -361,6 +365,11 @@ struct LogsRealtimeNativePanel: View {
   }
 
   private var taskScope: String {
-    "\(sessionScope)|\(appliedFilters.hours)|\(appliedFilters.service)|\(appliedFilters.search)|\(appliedFilters.table)|\(appliedFilters.advanced)|\(appliedFilters.hql)"
+    "\(sessionScope)|\(routeFilterScope)|\(pollGeneration)"
+  }
+
+  private var routeFilterScope: String {
+    let keys = ["hours", "service", "search", "table", "hql", "kql"]
+    return keys.map { "\($0)=\(model.selectedNativeDashboardQuery[$0] ?? "")" }.joined(separator: "&")
   }
 }

@@ -6,6 +6,16 @@ struct LogErrorsFilters: Equatable {
     var errorCode = ""
     var query = ""
     var includeExpected = false
+
+    static func fromRouteQuery(_ query: [String: String]) -> Self {
+        var filters = Self()
+        if let surface = boundedLogsRouteValue(query["surface"], maximum: 120) { filters.surface = surface }
+        if let code = boundedLogsRouteValue(query["code"], maximum: 120) { filters.errorCode = code }
+        if let search = boundedLogsRouteValue(query["q"], maximum: 120) { filters.query = search }
+        if let status = query["status"].flatMap(Int.init), (400...599).contains(status) { filters.statusCode = status }
+        filters.includeExpected = ["1", "true"].contains(query["includeExpected"]?.lowercased() ?? "")
+        return filters
+    }
 }
 
 struct LogErrorEvent: Decodable, Identifiable, Equatable {

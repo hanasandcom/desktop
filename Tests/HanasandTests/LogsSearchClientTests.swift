@@ -5,6 +5,26 @@ import XCTest
 final class LogsSearchClientTests: XCTestCase {
   private let apiBase = URL(string: "https://api.example.test/api")!
 
+  func testRouteQueryRestoresWebsiteSearchFiltersAndRejectsInvalidValues() {
+    let filters = LogsSearchFilters.fromRouteQuery([
+      "hours": "168", "service": "gateway", "severity": "HIGH", "search": "timeout",
+      "table": "SystemLogs", "hql": "SystemLogs | take 25",
+    ])
+    XCTAssertEqual(filters.hours, 168)
+    XCTAssertEqual(filters.service, "gateway")
+    XCTAssertEqual(filters.severity, "high")
+    XCTAssertEqual(filters.search, "timeout")
+    XCTAssertEqual(filters.table, "SystemLogs")
+    XCTAssertTrue(filters.advanced)
+    XCTAssertEqual(filters.hql, "SystemLogs | take 25")
+
+    let invalid = LogsSearchFilters.fromRouteQuery([
+      "hours": "99999", "service": "bad\nservice", "severity": "urgent", "table": "Users",
+      "hql": String(repeating: "x", count: 4_001),
+    ])
+    XCTAssertEqual(invalid, LogsSearchFilters())
+  }
+
   func testRequestURLIncludesWebsiteTableQueryAndBasicFilters() throws {
     let filters = LogsSearchFilters(
       hours: 168, service: "gateway", severity: "high", search: "timeout")

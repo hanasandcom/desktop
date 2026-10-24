@@ -83,6 +83,21 @@ struct LogsRealtimeFilters: Equatable {
   var table = "Logs"
   var advanced = false
   var hql = "ProcessLogs | where Severity in (\"high\", \"critical\") | order by TimeGenerated desc | take 100"
+
+  static func fromRouteQuery(_ query: [String: String]) -> Self {
+    var filters = Self()
+    if let hours = query["hours"].flatMap(Int.init), [1, 24, 168, 720, 2_160].contains(hours) {
+      filters.hours = hours
+    }
+    if let service = boundedLogsRouteValue(query["service"], maximum: 300) { filters.service = service }
+    if let search = boundedLogsRouteValue(query["search"], maximum: 120) { filters.search = search }
+    if let table = query["table"], LogsSearchClient.tables.contains(table) { filters.table = table }
+    if let hql = boundedLogsRouteValue(query["hql"] ?? query["kql"], maximum: 4_000, allowsNewlines: true), !hql.isEmpty {
+      filters.hql = hql
+      filters.advanced = true
+    }
+    return filters
+  }
 }
 
 struct LogsRealtimeEnvelope: Decodable {

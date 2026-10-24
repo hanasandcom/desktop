@@ -49,12 +49,13 @@ struct LogErrorsNativePanel: View {
                 NativeEmptyState(title: "Review application errors", message: "Refresh to load recent errors from API, authentication, and website activity.")
             }
         }
-        .task(id: sessionScope) {
+        .task(id: "\(sessionScope)|\(routeFilterScope)") {
             envelope = nil
             loadedFilters = nil
             expandedIDs = []
             errorMessage = ""
             statusMessage = ""
+            filters = LogErrorsFilters.fromRouteQuery(model.selectedNativeDashboardQuery)
             await refresh()
         }
     }
@@ -288,6 +289,11 @@ struct LogErrorsNativePanel: View {
 
     private var sessionScope: String {
         "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
+    }
+
+    private var routeFilterScope: String {
+        let keys = ["surface", "status", "code", "q", "includeExpected"]
+        return keys.map { "\($0)=\(model.selectedNativeDashboardQuery[$0] ?? "")" }.joined(separator: "&")
     }
 
     @MainActor

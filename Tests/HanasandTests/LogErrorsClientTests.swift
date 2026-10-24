@@ -5,6 +5,24 @@ import XCTest
 final class LogErrorsClientTests: XCTestCase {
     private let apiBase = URL(string: "https://api.example.test/api")!
 
+    func testRouteQueryRestoresWebsiteErrorFiltersAndRejectsInvalidValues() {
+        let filters = LogErrorsFilters.fromRouteQuery([
+            "surface": "website", "status": "503", "code": "http_503", "q": "gateway timeout",
+            "includeExpected": "true",
+        ])
+        XCTAssertEqual(filters.surface, "website")
+        XCTAssertEqual(filters.statusCode, 503)
+        XCTAssertEqual(filters.errorCode, "http_503")
+        XCTAssertEqual(filters.query, "gateway timeout")
+        XCTAssertTrue(filters.includeExpected)
+
+        let invalid = LogErrorsFilters.fromRouteQuery([
+            "surface": String(repeating: "x", count: 121), "status": "200", "code": "bad\ncode", "q": "\u{0001}",
+            "includeExpected": "yes",
+        ])
+        XCTAssertEqual(invalid, LogErrorsFilters())
+    }
+
     func testRequestURLEncodesOnlyBoundedCompositeErrorFilters() throws {
         let filters = LogErrorsFilters(surface: "website", statusCode: 503, errorCode: "http_503", query: "gateway timeout", includeExpected: true)
         let url = try LogErrorsClient.requestURL(apiBaseURL: apiBase, filters: filters)

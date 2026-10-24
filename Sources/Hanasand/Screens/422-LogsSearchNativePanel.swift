@@ -142,7 +142,7 @@ struct LogsSearchNativePanel: View {
         }
       }
     }
-    .task(id: sessionScope) {
+    .task(id: "\(sessionScope)|\(routeFilterScope)") {
       requestID = UUID()
       isLoading = false
       events = []
@@ -152,6 +152,7 @@ struct LogsSearchNativePanel: View {
       loadedFilters = nil
       hasLoaded = false
       errorMessage = ""
+      filters = LogsSearchFilters.fromRouteQuery(model.selectedNativeDashboardQuery)
       await search(reset: true)
     }
   }
@@ -321,5 +322,10 @@ struct LogsSearchNativePanel: View {
 
   private var sessionScope: String {
     "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
+  }
+
+  private var routeFilterScope: String {
+    let keys = ["hours", "service", "search", "severity", "table", "hql", "kql"]
+    return keys.map { "\($0)=\(model.selectedNativeDashboardQuery[$0] ?? "")" }.joined(separator: "&")
   }
 }

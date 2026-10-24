@@ -3,6 +3,22 @@ import XCTest
 @testable import Hanasand
 
 final class LogsRealtimeClientTests: XCTestCase {
+  func testRouteQueryRestoresWebsiteRealtimeFiltersAndBoundsInput() {
+    let filters = LogsRealtimeFilters.fromRouteQuery([
+      "hours": "720", "service": "api-worker", "search": "timeout", "table": "ProcessLogs",
+      "kql": "ProcessLogs | where Severity == \"high\" | take 20",
+    ])
+    XCTAssertEqual(filters.hours, 720)
+    XCTAssertEqual(filters.service, "api-worker")
+    XCTAssertEqual(filters.search, "timeout")
+    XCTAssertEqual(filters.table, "ProcessLogs")
+    XCTAssertTrue(filters.advanced)
+    XCTAssertEqual(filters.hql, "ProcessLogs | where Severity == \"high\" | take 20")
+
+    let invalid = LogsRealtimeFilters.fromRouteQuery(["hours": "0", "service": String(repeating: "x", count: 301)])
+    XCTAssertEqual(invalid, LogsRealtimeFilters())
+  }
+
   func testRequestURLMatchesAuthenticatedWebsiteRealtimeQuery() throws {
     let url = try LogsRealtimeClient.requestURL(
       apiBaseURL: URL(string: "https://api.example.test/api")!)
