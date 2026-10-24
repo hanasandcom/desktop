@@ -58,16 +58,16 @@ extension UsersNativePanel {
 
     var filteredUsers: [DashboardUser] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return model.users }
         return model.users.filter { user in
-            [
-                user.id,
-                user.name ?? "",
-                user.username ?? "",
-                user.email ?? "",
-                user.highestRoleName ?? "",
-                user.highestRoleID ?? "",
-            ].joined(separator: " ").lowercased().contains(query)
+            (showReserved || !user.isReservedPlaceholder)
+                && (query.isEmpty || [
+                    user.id,
+                    user.name ?? "",
+                    user.username ?? "",
+                    user.email ?? "",
+                    user.highestRoleName ?? "",
+                    user.highestRoleID ?? "",
+                ].joined(separator: " ").lowercased().contains(query))
         }
     }
 }

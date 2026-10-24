@@ -146,14 +146,6 @@ extension HanasandLoginGate {
     }
 
 private struct AccountSignupForm: View {
-    private static let reservedUsernames: Set<String> = [
-        "abuse", "admin", "administrator", "billing", "bookkeeper", "cdc", "ceo", "cfo", "chairman",
-        "compliance", "contact", "controller", "coo", "cto", "director", "eirikhanasand", "executive",
-        "facebook", "finance", "google", "hanasand", "help", "hr", "legal", "management", "manager",
-        "meta", "microsoft", "noreply", "owner", "paypal", "postmaster", "president", "root", "security",
-        "soc", "spam", "staff", "support", "sysadmin", "treasurer", "trust", "twitter", "x",
-    ]
-
     @FocusState.Binding var focusedField: HanasandLoginGate.Field?
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -265,18 +257,18 @@ private struct AccountSignupForm: View {
     }
 
     private var canSubmit: Bool {
-        let cleanUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cleanUsername = ReservedUsernamePolicy.normalizedSignupUsername(username)
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let emailLooksValid = cleanEmail.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil,
-              !Self.reservedUsernames.contains(cleanUsername),
+              !ReservedUsernamePolicy.usernames.contains(cleanUsername),
               emailLooksValid, AccountSignupClient.passwordMeetsRequirements(password) else { return false }
         return !waitingForCode || (challengeID != nil && code.count == 6)
     }
 
     private var usernameIsReserved: Bool {
-        Self.reservedUsernames.contains(username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername(username))
     }
 
     @MainActor private func submit() async {

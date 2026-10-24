@@ -15,6 +15,6 @@ struct UsersNativePanel: View {
 
     @Environment(\.desktopTheme) var theme
 
-    @State var searchText = ""; @State var pendingStatusUser: DashboardUser?; @State var pendingDeleteUser: DashboardUser?; @State var pendingImpersonationUser: DashboardUser?
+    @State var searchText = ""; @State var showReserved = false; @State var pendingStatusUser: DashboardUser?; @State var pendingDeleteUser: DashboardUser?; @State var pendingImpersonationUser: DashboardUser?
     @State var impersonationReason = ""; @State var impersonationReasonError = ""
 }

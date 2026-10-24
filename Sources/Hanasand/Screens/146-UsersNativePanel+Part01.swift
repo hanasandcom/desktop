@@ -22,10 +22,18 @@ extension UsersNativePanel {
                 Label("\(model.users.count) users", systemImage: "person.2")
                 Label("\(model.users.filter { $0.active != false }.count) active", systemImage: "checkmark.circle")
                 Label("\(model.users.filter { $0.active == false }.count) inactive", systemImage: "person.crop.circle.badge.xmark")
+                Label("\(model.users.filter(\.isReservedPlaceholder).count) reserved", systemImage: "person.crop.circle.badge.questionmark")
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(theme.textSecondary)
-            SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
+            HStack(spacing: 10) {
+                SearchFieldRow(placeholder: "Filter users by name, username, email, id, or role", text: $searchText)
+                if model.users.contains(where: \.isReservedPlaceholder) {
+                    Toggle("Reserved", isOn: $showReserved)
+                        .toggleStyle(.button)
+                        .help(showReserved ? "Hide reserved placeholder accounts" : "Show reserved placeholder accounts")
+                }
+            }
 
             if model.users.isEmpty {
                 NativeEmptyState(title: "No users loaded", message: "Use Refresh from this dashboard or configure auth in Settings to load user administration data.")

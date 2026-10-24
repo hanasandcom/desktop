@@ -79,6 +79,7 @@ struct DashboardUser: Decodable, Identifiable {
 
     var displayName: String { name?.isEmpty == false ? name! : id }
     var displayUsername: String { username?.isEmpty == false ? username! : id }
+    var isReservedPlaceholder: Bool { ReservedUsernamePolicy.isReservedPlaceholder(id: id, username: username, active: active) }
     var roleLabel: String { highestRoleName ?? highestRoleID ?? "No role" }
     var ownerPickerLabel: String {
         [displayName, organization, id].compactMap { value in
