@@ -116,7 +116,7 @@ extension DesktopAgentModel {
             .route("Database", "Inspect database and operations.", "externaldrive.connected.to.line.below", "/db"),
             .route("Backups", "View database backup status.", "externaldrive.badge.timemachine", "/db/backups"),
             .route("Restore", "Browse and restore backups.", "arrow.counterclockwise.circle", "/db/restore"),
-            .route("Vulnerabilities", "Review scan findings.", "shield.lefthalf.filled.badge.checkmark", "/vulnerabilities"),
+            .route("Vulnerabilities", "Review scan findings.", "shield.lefthalf.filled.badge.checkmark", "/vulnerability-findings"),
             .route("Management", "Admin management console.", "checkmark.shield", "/management"),
             .route("Users", "Manage user accounts.", "person.2", "/users"),
             .route("Roles", "Manage user roles.", "person.badge.key", "/role"),

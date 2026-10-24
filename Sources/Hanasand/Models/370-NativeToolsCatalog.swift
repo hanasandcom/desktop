@@ -28,7 +28,7 @@ enum NativeToolsCatalog {
                 ["/api", "/api/openapi", "/profile"].contains(action.routePath)
             }),
             ("Administration", { action in
-                ["/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
+                ["/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/db", "/db/backups", "/db/restore", "/vulnerability-findings", "/management", "/users", "/role", "/organizations"].contains(action.routePath)
             }),
         ]
 

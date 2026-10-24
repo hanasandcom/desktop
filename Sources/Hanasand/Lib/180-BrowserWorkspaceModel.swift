@@ -92,7 +92,46 @@ final class BrowserWorkspaceModel: ObservableObject {
         if path == "/", host != "hanasand.com" { path = "/dashboard" }
         while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
 
+        // Mirror first-party Next redirects before resolving route parameters.
+        // These are old public links that still need to open their canonical
+        // native feature without loading the website redirect chain.
+        for prefix in ["/dwm", "/dashboard/dwm"] {
+            if path == prefix {
+                path = "/findings"
+                break
+            }
+            if path.hasPrefix(prefix + "/cases/") {
+                path = "/cases/" + String(path.dropFirst((prefix + "/cases/").count))
+                break
+            }
+            if path == prefix + "/cases" {
+                path = "/cases"
+                break
+            }
+            if path.hasPrefix(prefix + "/") {
+                path = "/findings/" + String(path.dropFirst((prefix + "/").count))
+                break
+            }
+        }
+        for prefix in ["/ti/domains", "/dashboard/ti/domains"] {
+            if path == prefix {
+                path = "/ti/sources"
+                break
+            }
+            if path.hasPrefix(prefix + "/") {
+                let sourceID = path.dropFirst((prefix + "/").count).split(separator: "/").first.map(String.init)
+                path = "/ti/sources"
+                detailID = sourceID
+                break
+            }
+        }
+
         let websiteAliases: [String: String] = [
+            "/prompt": "/ai",
+            "/.well-known": "/security.txt",
+            "/.well-known/security.txt": "/security.txt",
+            "/security.txt": "/security.txt",
+            "/vulnerabilities": "/scanner",
             "/automation": "/dashboard/automation",
             "/ai": "/ai",
             "/dashboard/ai": "/ai",
@@ -103,6 +142,11 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/api/openapi": "/api/openapi",
             "/article": "/public-articles",
             "/articles": "/public-articles",
+            "/findings/watchlists": "/watchlists",
+            "/findings/alerts": "/cases",
+            "/findings/cases": "/cases",
+            "/findings/sources": "/ti/sources",
+            "/api/openapi/ti": "/api/openapi",
             "/dashboard/api-docs": "/api",
             "/dashboard/article": "/content/articles",
             "/dashboard/articles": "/content/articles",
@@ -168,6 +212,8 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/dashboard/thought": "/content/thoughts",
             "/dashboard/thoughts": "/content/thoughts",
             "/dashboard/ti": "/ti/overview",
+            "/dashboard/ti/profiles": "/ti/enrichment",
+            "/ti/profiles": "/ti/enrichment",
             "/dashboard/ti/activity": "/ti/activity",
             "/dashboard/ti/control": "/ti/runs",
             "/dashboard/ti/captures": "/ti/captures",
@@ -400,6 +446,13 @@ final class BrowserWorkspaceModel: ObservableObject {
                 alertID: queryValue("alertId"),
                 route: queryValue("route")
             )
+        }
+        if path == "/cases", let currentDetailID = detailID,
+           currentDetailID.range(of: #"^MON-[0-9]+$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            // The website redirects old monitoring IDs to the HA namespace.
+            // Preserve the numeric suffix while giving the native case screen
+            // the same canonical identifier.
+            detailID = "HA-" + String(currentDetailID.dropFirst(4))
         }
         if let requestedDetailID = detailID {
             guard let decodedID = requestedDetailID.removingPercentEncoding else { return nil }

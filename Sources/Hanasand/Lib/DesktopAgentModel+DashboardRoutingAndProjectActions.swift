@@ -121,7 +121,7 @@ extension DesktopAgentModel {
             }
         case "/dashboard/tests":
             recentTests = (try? decoder.decode([DashboardRecentTest].self, from: data)) ?? []
-        case "/vulnerabilities":
+        case "/vulnerability-findings":
             vulnerabilityReport = try? decoder.decode(DashboardVulnerabilityReport.self, from: data)
         case "/traffic":
             trafficMetrics = try? decoder.decode(DashboardTrafficMetrics.self, from: data)

@@ -222,4 +222,51 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
 
         XCTAssertEqual(receivedRoutes.count, websitePagePatterns.count)
     }
+
+    func testLegacyWebsiteRedirectRoutesAlsoHandOffToNativeFeatures() {
+        let legacyURLs = [
+            "https://hanasand.com/prompt",
+            "https://hanasand.com/.well-known",
+            "https://hanasand.com/.well-known/security.txt",
+            "https://hanasand.com/findings/watchlists",
+            "https://hanasand.com/ti/enrichment",
+            "https://hanasand.com/ti/profiles",
+            "https://hanasand.com/ti/domains/example.com",
+            "https://hanasand.com/dashboard/ti/domains/example.com",
+            "https://hanasand.com/api/openapi/ti",
+            "https://hanasand.com/cases/MON-42",
+            "https://hanasand.com/dashboard/cases/MON-42",
+            "https://hanasand.com/dwm",
+            "https://hanasand.com/dwm/cases/HA-42",
+            "https://hanasand.com/dashboard/dwm/cases/HA-43",
+            "https://hanasand.com/solutions/dwm",
+            "https://hanasand.com/solutions/onion-session",
+            "https://hanasand.com/vulnerabilities",
+        ]
+        let workspace = BrowserWorkspaceModel()
+        workspace.configure(settings: HanasandDesktopSettings())
+        let initialTabCount = workspace.groups.flatMap(\.tabs).count
+        var handedOffPaths: [String] = []
+        workspace.onOpenNativeRoute = { route in
+            handedOffPaths.append(route.path)
+            return BrowserWorkspaceModel.hasNativeDestination(for: route.path)
+        }
+
+        for url in legacyURLs {
+            guard let route = BrowserWorkspaceModel.nativeRoute(for: url) else {
+                XCTFail("Legacy website redirect did not resolve: \(url)")
+                continue
+            }
+            XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: route.path), "\(url) resolves to unsupported native route \(route.path)")
+            workspace.open(label: "Legacy route", url: url)
+            XCTAssertEqual(workspace.groups.flatMap(\.tabs).count, initialTabCount, "\(url) opened a web tab")
+            XCTAssertEqual(workspace.selectedTab?.statusText, "Opened in native Desktop", "\(url) did not complete native handoff")
+        }
+
+        XCTAssertEqual(handedOffPaths, [
+            "/ai", "/security.txt", "/security.txt", "/watchlists", "/ti/enrichment", "/ti/enrichment",
+            "/ti/sources", "/ti/sources", "/api/openapi", "/cases", "/cases", "/findings", "/cases",
+            "/cases", "/findings", "/browser", "/scanner",
+        ])
+    }
 }

@@ -296,7 +296,7 @@ extension DesktopAgentModel {
             openNativeDashboard(path: "/db/restore", label: "Restore")
             append(meta: "Dashboard", body: "Opened native Restore panel.", kind: .command)
         } else if command == "open_dashboard_vulnerabilities" {
-            openNativeDashboard(path: "/vulnerabilities", label: "Vulnerabilities")
+            openNativeDashboard(path: "/vulnerability-findings", label: "Vulnerabilities")
             append(meta: "Dashboard", body: "Opened native Vulnerabilities panel.", kind: .command)
         } else if command == "open_dashboard_rate_limits" {
             openNativeDashboard(path: "/system/rates", label: "Rate limits")

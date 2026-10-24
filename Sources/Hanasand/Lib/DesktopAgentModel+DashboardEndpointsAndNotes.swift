@@ -117,7 +117,7 @@ extension DesktopAgentModel {
             return NativeEndpoint(label: "backup services", baseURL: internalAPI, path: "backup", authenticated: true, userAgent: "hanasand_internal")
         case "db/restore":
             return NativeEndpoint(label: "backup files", baseURL: internalAPI, path: "backup/files", authenticated: true, userAgent: "hanasand_internal")
-        case "vulnerabilities":
+        case "vulnerability-findings":
             return NativeEndpoint(label: "vulnerabilities", baseURL: internalAPI, path: "vulnerabilities", authenticated: true, userAgent: "hanasand_internal")
         case "management", "users":
             return NativeEndpoint(label: "users", baseURL: api, path: "users", authenticated: true, userAgent: nil)

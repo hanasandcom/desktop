@@ -11,7 +11,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(websiteDetail?.caseContext?.organizationID, "org-5")
         let monitoringDetail = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-42")
         XCTAssertEqual(monitoringDetail?.path, "/cases")
-        XCTAssertEqual(monitoringDetail?.detailID, "MON-42")
+        XCTAssertEqual(monitoringDetail?.detailID, "HA-42")
         let intelligenceDetail = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/cases/case-43")
         XCTAssertEqual(intelligenceDetail?.path, "/cases")
         XCTAssertEqual(intelligenceDetail?.detailID, "case-43")
@@ -65,6 +65,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/security-monitoring")?.path, "/solutions/security-monitoring")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/scanner")?.path, "/solutions/scanner")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/vulnerabilities")?.path, "/scanner")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/vulnerabilities")?.path, "/scanner")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/dwm")?.path, "/findings")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/onion-session")?.path, "/browser")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/ai/window")?.path, "/ai/workspace")
@@ -89,7 +90,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/test/run-123"), BrowserNativeRoute(path: "/test", label: "Test", detailID: "run-123", caseContext: nil, section: nil, query: [:]))
         let caseRoute = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-123?organizationId=org-9&alertId=alert-7&route=alert_queue")
         XCTAssertEqual(caseRoute?.path, "/cases")
-        XCTAssertEqual(caseRoute?.detailID, "MON-123")
+        XCTAssertEqual(caseRoute?.detailID, "HA-123")
         XCTAssertEqual(caseRoute?.caseContext, BrowserCaseHandoffContext(organizationID: "org-9", alertID: "alert-7", route: "alert_queue"))
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/s/share-123")?.detailID, "share-123")
         let projectFile = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/p/project-1?file=file-9")
@@ -142,6 +143,21 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/findings?panel=actors")?.path, "/ti/profiles")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/documents/scanner")?.path, "/documents/scanner")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-123")?.path, "/cases")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-123")?.detailID, "HA-123")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/cases/MON-123")?.detailID, "HA-123")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/prompt")?.path, "/ai")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/.well-known")?.path, "/security.txt")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/.well-known/security.txt")?.path, "/security.txt")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/findings/watchlists")?.path, "/watchlists")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/ti/profiles")?.path, "/ti/enrichment")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/ti/enrichment")?.path, "/ti/enrichment")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/api/openapi/ti")?.path, "/api/openapi")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dwm")?.path, "/findings")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dwm/alerts")?.path, "/cases")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dwm/cases/HA-90")?.detailID, "HA-90")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/dwm/cases/HA-91")?.detailID, "HA-91")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/onion-session")?.path, "/browser")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/solutions/dwm")?.path, "/findings")
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/g/%2E%2E"))
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/g/a%2Fb"))
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com.evil.example/dashboard"))
@@ -167,6 +183,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         for path in ["/mail", "/browser", "/ai", "/login", "/signup", "/reset-password"] {
             XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: path), path)
         }
+        XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: "/vulnerability-findings"))
     }
 
     func testCanonicalMobileNavigationPathsResolveToTheirNativeWorkflows() {
@@ -264,7 +281,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
     func testEveryCanonicalDashboardNavigationRouteResolvesToANativeScreenRoute() {
         let routes: [(String, String)] = [
             ("/cases", "/cases"), ("/ti", "/ti"), ("/ti/activity", "/ti/activity"),
-            ("/findings/actors", "/ti/profiles"), ("/ti/profiles", "/ti/profiles"),
+            ("/findings/actors", "/ti/profiles"), ("/ti/profiles", "/ti/enrichment"),
             ("/watchlists", "/watchlists"), ("/findings", "/findings"),
             ("/findings/actions", "/integrations"),
             ("/system/virtual-machines", "/vms"), ("/repositories", "/repositories"),

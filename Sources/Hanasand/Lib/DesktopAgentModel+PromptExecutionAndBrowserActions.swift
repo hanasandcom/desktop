@@ -111,7 +111,7 @@ extension DesktopAgentModel {
             openNativeDashboard(path: "/db/backups", label: "Backups")
             finishPromptRun()
         } else if lowered.contains("vulnerabil") || lowered.contains("security scan") {
-            openNativeDashboard(path: "/vulnerabilities", label: "Vulnerabilities")
+            openNativeDashboard(path: "/vulnerability-findings", label: "Vulnerabilities")
             finishPromptRun()
         } else if lowered.contains("traffic") {
             openNativeDashboard(path: "/traffic", label: "Traffic")

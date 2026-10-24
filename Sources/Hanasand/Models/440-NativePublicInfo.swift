@@ -48,6 +48,7 @@ struct NativePublicInfoPage: Identifiable, Hashable {
         case pricing
         case scannerSolution
         case monitoringSolution
+        case securityContact
     }
 
     let route: String
@@ -75,6 +76,7 @@ struct NativePublicInfoPage: Identifiable, Hashable {
         case "/pricing": pricing
         case "/solutions/scanner": scannerSolution
         case "/solutions/security-monitoring": monitoringSolution
+        case "/security.txt": securityContact
         default: nil
         }
     }
@@ -265,6 +267,21 @@ struct NativePublicInfoPage: Identifiable, Hashable {
             .init(title: "Send an event", paragraphs: ["POST https://api.hanasand.com/mill\nAuthorization: Bearer hsk_<organization-key>\nContent-Type: application/json\n\n{\n  \"events\": [{\n    \"timestamp\": \"2026-08-03T08:15:00Z\",\n    \"event_type\": \"authentication\",\n    \"action\": \"login\",\n    \"outcome\": \"success\",\n    \"user\": {\"id\": \"user-123\"},\n    \"source\": {\"ip\": \"203.0.113.10\", \"country\": \"NO\"}\n  }]\n}"], bullets: ["Suspicious login findings", "Impossible-travel evidence", "Organization-specific raw and normalized events", "Extensible path for Sigma and Hanasand rules"])
         ],
         links: [.init(title: "Open cases", route: "/cases"), .init(title: "View API docs", route: "/api")]
+    )
+
+    static let securityContact = NativePublicInfoPage(
+        route: "/security.txt", title: "Report a security issue",
+        eyebrow: "Security contact",
+        intro: "Use this public security contact information to report a vulnerability affecting Hanasand.",
+        kind: .securityContact,
+        sections: [
+            .init(title: "security.txt", paragraphs: [
+                "Contact: mailto:security@hanasand.com",
+                "Canonical: https://hanasand.com/security.txt",
+                "Preferred-Languages: en",
+                "Expires: 2027-10-04T00:00:00Z"
+            ])
+        ]
     )
 
     static let plans: [NativePublicInfoPlan] = [
