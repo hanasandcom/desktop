@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LogsSearchNativePanel: View {
@@ -5,11 +6,15 @@ struct LogsSearchNativePanel: View {
   @Environment(\.desktopTheme) private var theme
   @State private var filters = LogsSearchFilters()
   @State private var events: [LogsSearchEvent] = []
+  @State private var summaryRows: [LogsSearchSummaryRow] = []
+  @State private var summarize: String?
   @State private var nextCursor: String?
   @State private var loadedFilters: LogsSearchFilters?
   @State private var errorMessage = ""
   @State private var isLoading = false
   @State private var hasLoaded = false
+  @State private var requestID = UUID()
+  @State private var copiedEventID = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -17,21 +22,35 @@ struct LogsSearchNativePanel: View {
         Text("Search logs")
           .font(.system(size: 18, weight: .bold))
           .foregroundStyle(theme.text)
-        Text("Filter recent events by time, service, severity, and message.")
+        Text("Filter and page recent events by time, service, severity, log type, or HQL.")
           .font(.system(size: 12, weight: .medium))
           .foregroundStyle(theme.textSecondary)
       }
 
       VStack(alignment: .leading, spacing: 10) {
+        Toggle("Advanced HQL query", isOn: $filters.advanced)
+          .toggleStyle(.checkbox)
+        if filters.advanced {
+          TextEditor(text: $filters.hql)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .frame(minHeight: 76, maxHeight: 150)
+            .padding(5)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.divider, lineWidth: 1))
+          Text("Supports where, project, order by, take, and summarize count() by. Put where before order by; take must be last.")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(theme.textTertiary)
+        }
         ViewThatFits(in: .horizontal) {
           HStack(spacing: 10) {
             timeRangePicker
             severityPicker
+            tablePicker
             Spacer(minLength: 0)
           }
           VStack(alignment: .leading, spacing: 8) {
             timeRangePicker
             severityPicker
+            tablePicker
           }
         }
 
@@ -61,7 +80,7 @@ struct LogsSearchNativePanel: View {
           .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 0)
         if hasLoaded {
-          Text("\(events.count) events")
+          Text(summarize.map { "\(summaryRows.count) groups · \($0)" } ?? "\(events.count) events")
             .font(.system(size: 11, weight: .semibold, design: .monospaced))
             .foregroundStyle(theme.textTertiary)
         }
@@ -75,7 +94,28 @@ struct LogsSearchNativePanel: View {
         NativeNotice(message: errorMessage, title: "Search failed", tone: .error)
       }
 
-      if events.isEmpty {
+      if let summarize {
+        NativeGroupPanel(title: "Summary by \(summarize)", subtitle: "Counts for the selected time range and filters") {
+          if summaryRows.isEmpty {
+            NativeEmptyState(title: "No matching groups", message: "The query completed without matching summary rows.")
+          } else {
+            ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, row in
+              HStack(spacing: 10) {
+                Text(row.value.isEmpty ? "(empty)" : row.value)
+                  .font(.system(size: 12, weight: .medium, design: .monospaced))
+                  .foregroundStyle(theme.text)
+                  .lineLimit(2)
+                  .textSelection(.enabled)
+                Spacer(minLength: 4)
+                Text(row.count.formatted())
+                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                  .foregroundStyle(theme.textSecondary)
+              }
+              .padding(.vertical, 4)
+            }
+          }
+        }
+      } else if events.isEmpty {
         NativeEmptyState(
           title: isLoading
             ? "Searching log events" : hasLoaded ? "No matching events" : "Search logs",
@@ -102,7 +142,18 @@ struct LogsSearchNativePanel: View {
         }
       }
     }
-    .task { await search(reset: true) }
+    .task(id: sessionScope) {
+      requestID = UUID()
+      isLoading = false
+      events = []
+      summaryRows = []
+      summarize = nil
+      nextCursor = nil
+      loadedFilters = nil
+      hasLoaded = false
+      errorMessage = ""
+      await search(reset: true)
+    }
   }
 
   private var statusText: String {
@@ -134,6 +185,17 @@ struct LogsSearchNativePanel: View {
     .frame(maxWidth: 190, alignment: .leading)
   }
 
+  private var tablePicker: some View {
+    Picker("Log type", selection: $filters.table) {
+      Text("All log types").tag("Logs")
+      ForEach(LogsSearchClient.tables.dropFirst(), id: \.self) { table in
+        Text(table).tag(table)
+      }
+    }
+    .disabled(filters.advanced)
+    .frame(maxWidth: 210, alignment: .leading)
+  }
+
   private var serviceField: some View {
     TextField("Service (optional)", text: $filters.service)
       .textFieldStyle(.roundedBorder)
@@ -142,6 +204,7 @@ struct LogsSearchNativePanel: View {
   private var searchField: some View {
     TextField("Search message text", text: $filters.search)
       .textFieldStyle(.roundedBorder)
+      .disabled(filters.advanced)
       .onSubmit { Task { await search(reset: true) } }
   }
 
@@ -185,6 +248,17 @@ struct LogsSearchNativePanel: View {
           .lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+    Button {
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(event.copyJSON, forType: .string)
+      copiedEventID = event.id
+    } label: {
+      Image(systemName: copiedEventID == event.id ? "checkmark" : "doc.on.doc")
+        .foregroundStyle(theme.textTertiary)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(copiedEventID == event.id ? "Copied log JSON" : "Copy log JSON")
+    .help("Copy event JSON")
     }
     .padding(11)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -207,10 +281,14 @@ struct LogsSearchNativePanel: View {
   @MainActor
   private func search(reset: Bool) async {
     guard !isLoading else { return }
+    let request = UUID()
+    requestID = request
     isLoading = true
-    defer { isLoading = false }
+    defer { if requestID == request { isLoading = false } }
     if reset {
       events = []
+      summaryRows = []
+      summarize = nil
       nextCursor = nil
       loadedFilters = nil
       errorMessage = ""
@@ -225,6 +303,9 @@ struct LogsSearchNativePanel: View {
         impersonatingUserID: model.settings.impersonatingUserID
       )
       let page = try await client.load(filters: activeFilters, cursor: reset ? nil : nextCursor)
+      guard requestID == request, !Task.isCancelled else { return }
+      summarize = page.summarize
+      summaryRows = page.summaryRows
       var seen = Set(events.map(\.id))
       events = (events + page.rows).filter { seen.insert($0.id).inserted }.prefix(600).map { $0 }
       nextCursor = page.nextCursor
@@ -232,8 +313,13 @@ struct LogsSearchNativePanel: View {
       hasLoaded = true
       errorMessage = ""
     } catch {
+      guard requestID == request, !Task.isCancelled else { return }
       errorMessage = error.localizedDescription
       if reset { hasLoaded = false }
     }
+  }
+
+  private var sessionScope: String {
+    "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
   }
 }

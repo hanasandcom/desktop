@@ -1,13 +1,23 @@
+import AppKit
 import SwiftUI
 
 struct LogsRealtimeNativePanel: View {
   @EnvironmentObject private var model: DesktopAgentModel
   @Environment(\.desktopTheme) private var theme
   @State private var events: [LogsRealtimeEvent] = []
+  @State private var summaryRows: [LogsSearchSummaryRow] = []
+  @State private var summarize: String?
+  @State private var filters = LogsRealtimeFilters()
+  @State private var appliedFilters = LogsRealtimeFilters()
+  @State private var nextCursor: String?
+  @State private var totalEvents: Int?
+  @State private var browsingOlder = false
   @State private var errorMessage = ""
   @State private var connectionStatus = "Connecting"
   @State private var lastUpdated: Date?
   @State private var isRefreshing = false
+  @State private var requestID = UUID()
+  @State private var copiedEventID = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -27,6 +37,23 @@ struct LogsRealtimeNativePanel: View {
         .disabled(isRefreshing)
       }
 
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 8) { timeRangePicker; tablePicker; serviceField; searchField; applyFiltersButton }
+        VStack(alignment: .leading, spacing: 8) { timeRangePicker; tablePicker; serviceField; searchField; applyFiltersButton }
+      }
+      Toggle("Advanced HQL query", isOn: $filters.advanced)
+        .toggleStyle(.checkbox)
+      if filters.advanced {
+        TextEditor(text: $filters.hql)
+          .font(.system(size: 11, weight: .medium, design: .monospaced))
+          .frame(minHeight: 64, maxHeight: 130)
+          .padding(5)
+          .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.divider, lineWidth: 1))
+        Text("Realtime HQL still limits results to high and critical events. Cursor paging is available in standard mode.")
+          .font(.system(size: 11, weight: .medium))
+          .foregroundStyle(theme.textTertiary)
+      }
+
       HStack(spacing: 8) {
         Circle()
           .fill(errorMessage.isEmpty ? theme.green : theme.accent)
@@ -37,7 +64,7 @@ struct LogsRealtimeNativePanel: View {
           .lineLimit(2)
           .fixedSize(horizontal: false, vertical: true)
         Spacer(minLength: 0)
-        Text("\(events.count) / \(LogsRealtimeClient.retainedLimit)")
+        Text("\(events.count)\(totalEvents.map { " / \($0)" } ?? "")")
           .font(.system(size: 11, weight: .semibold, design: .monospaced))
           .foregroundStyle(theme.textTertiary)
       }
@@ -48,7 +75,28 @@ struct LogsRealtimeNativePanel: View {
           title: lastUpdated == nil ? "Connection failed" : "Showing saved results", tone: .error)
       }
 
-      if events.isEmpty {
+      if let summarize {
+        NativeGroupPanel(title: "Summary by \(summarize)", subtitle: "Counts for the selected time range and filters") {
+          if summaryRows.isEmpty {
+            NativeEmptyState(title: "No matching groups", message: "The query completed without matching summary rows.")
+          } else {
+            ForEach(Array(summaryRows.enumerated()), id: \.offset) { _, row in
+              HStack(spacing: 10) {
+                Text(row.value.isEmpty ? "(empty)" : row.value)
+                  .font(.system(size: 12, weight: .medium, design: .monospaced))
+                  .foregroundStyle(theme.text)
+                  .lineLimit(2)
+                  .textSelection(.enabled)
+                Spacer(minLength: 4)
+                Text(row.count.formatted())
+                  .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                  .foregroundStyle(theme.textSecondary)
+              }
+              .padding(.vertical, 4)
+            }
+          }
+        }
+      } else if events.isEmpty {
         NativeEmptyState(
           title: isRefreshing ? "Loading recent events" : "No high severity events",
           message: isRefreshing
@@ -60,8 +108,82 @@ struct LogsRealtimeNativePanel: View {
           ForEach(events) { event in eventRow(event) }
         }
       }
+      if nextCursor != nil {
+        HStack {
+          Spacer()
+          ActionButton(title: isRefreshing ? "Loading…" : "Load older events", icon: "arrow.down") {
+            Task { await loadOlder() }
+          }
+          .disabled(isRefreshing)
+          Spacer()
+        }
+      }
     }
-    .task { await poll() }
+    .task(id: taskScope) {
+      requestID = UUID()
+      isRefreshing = false
+      events = []
+      summaryRows = []
+      summarize = nil
+      nextCursor = nil
+      totalEvents = nil
+      browsingOlder = false
+      lastUpdated = nil
+      errorMessage = ""
+      await poll()
+    }
+  }
+
+  private var timeRangePicker: some View {
+    Picker("Time range", selection: $filters.hours) {
+      Text("1 hour").tag(1)
+      Text("24 hours").tag(24)
+      Text("7 days").tag(168)
+      Text("30 days").tag(720)
+      Text("90 days").tag(2_160)
+    }
+    .frame(maxWidth: 160, alignment: .leading)
+  }
+
+  private var tablePicker: some View {
+    Picker("Log type", selection: $filters.table) {
+      Text("All log types").tag("Logs")
+      ForEach(LogsSearchClient.tables.dropFirst(), id: \.self) { table in
+        Text(table).tag(table)
+      }
+    }
+    .disabled(filters.advanced)
+    .frame(maxWidth: 190, alignment: .leading)
+  }
+
+  private var serviceField: some View {
+    TextField("Service (optional)", text: $filters.service)
+      .textFieldStyle(.roundedBorder)
+      .frame(minWidth: 150, maxWidth: 240)
+  }
+
+  private var searchField: some View {
+    TextField("Search messages", text: $filters.search)
+      .textFieldStyle(.roundedBorder)
+      .disabled(filters.advanced)
+      .onSubmit { applyFilters() }
+  }
+
+  private var applyFiltersButton: some View {
+    ActionButton(title: "Apply filters", icon: "line.3.horizontal.decrease.circle") {
+      applyFilters()
+    }
+  }
+
+  private func applyFilters() {
+    events = []
+    summaryRows = []
+    summarize = nil
+    nextCursor = nil
+    totalEvents = nil
+    browsingOlder = false
+    errorMessage = ""
+    appliedFilters = filters
   }
 
   private var statusText: String {
@@ -109,6 +231,17 @@ struct LogsRealtimeNativePanel: View {
           .lineLimit(1)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+      Button {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(event.copyJSON, forType: .string)
+        copiedEventID = event.id
+      } label: {
+        Image(systemName: copiedEventID == event.id ? "checkmark" : "doc.on.doc")
+          .foregroundStyle(theme.textTertiary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(copiedEventID == event.id ? "Copied log JSON" : "Copy log JSON")
+      .help("Copy event JSON")
     }
     .padding(11)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -136,7 +269,7 @@ struct LogsRealtimeNativePanel: View {
     }
 
     while !Task.isCancelled {
-      await refresh(using: client)
+      await refresh(using: client, filters: appliedFilters)
       do { try await Task.sleep(for: LogsRealtimeClient.refreshInterval) } catch { return }
     }
   }
@@ -157,27 +290,77 @@ struct LogsRealtimeNativePanel: View {
       connectionStatus = "Disconnected"
       return
     }
-    await refresh(using: client)
+    await refresh(using: client, filters: appliedFilters)
   }
 
   @MainActor
-  private func refresh(using client: LogsRealtimeClient) async {
+  private func refresh(using client: LogsRealtimeClient, filters: LogsRealtimeFilters) async {
     guard !isRefreshing else { return }
+    let request = UUID()
+    requestID = request
     isRefreshing = true
     if lastUpdated == nil { connectionStatus = "Connecting" }
-    defer { isRefreshing = false }
+    defer { if requestID == request { isRefreshing = false } }
     do {
-      let page = try await client.load()
+      let page = try await client.load(filters: filters)
+      guard requestID == request, !Task.isCancelled else { return }
       var seen = Set<String>()
-      events = (page.rows + events).filter { seen.insert($0.id).inserted }.prefix(
-        LogsRealtimeClient.retainedLimit
-      ).map { $0 }
+      events = (page.rows + events).filter { seen.insert($0.id).inserted }.prefix(LogsRealtimeClient.retainedLimit).map { $0 }
+      summarize = page.summarize
+      summaryRows = page.summaryRows
+      if !browsingOlder { nextCursor = page.nextCursor }
+      totalEvents = page.totalEvents
       lastUpdated = Date()
       errorMessage = ""
       connectionStatus = "Live · polling every 10 seconds"
     } catch {
+      guard requestID == request, !Task.isCancelled else { return }
       errorMessage = error.localizedDescription
       connectionStatus = "Disconnected · retrying in 10 seconds"
     }
+  }
+
+  @MainActor
+  private func loadOlder() async {
+    guard !isRefreshing, let cursor = nextCursor else { return }
+    let client: LogsRealtimeClient
+    do {
+      client = try LogsRealtimeClient(
+        apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+        userID: model.settings.userID,
+        token: model.settings.authToken,
+        impersonationToken: model.settings.impersonationToken,
+        impersonatingUserID: model.settings.impersonatingUserID
+      )
+    } catch {
+      errorMessage = error.localizedDescription
+      return
+    }
+    let request = UUID()
+    requestID = request
+    isRefreshing = true
+    defer { if requestID == request { isRefreshing = false } }
+    do {
+      let page = try await client.load(filters: appliedFilters, cursor: cursor)
+      guard requestID == request, !Task.isCancelled else { return }
+      var seen = Set(events.map(\.id))
+      events = (events + page.rows).filter { seen.insert($0.id).inserted }.prefix(LogsRealtimeClient.retainedLimit).map { $0 }
+      nextCursor = page.nextCursor
+      browsingOlder = true
+      totalEvents = page.totalEvents ?? totalEvents
+      lastUpdated = Date()
+      errorMessage = ""
+    } catch {
+      guard requestID == request, !Task.isCancelled else { return }
+      errorMessage = error.localizedDescription
+    }
+  }
+
+  private var sessionScope: String {
+    "\(model.settings.apiBaseURL)|\(model.settings.userID)|\(model.settings.authToken.hashValue)|\(model.settings.impersonationToken.hashValue)|\(model.settings.impersonatingUserID)"
+  }
+
+  private var taskScope: String {
+    "\(sessionScope)|\(appliedFilters.hours)|\(appliedFilters.service)|\(appliedFilters.search)|\(appliedFilters.table)|\(appliedFilters.advanced)|\(appliedFilters.hql)"
   }
 }

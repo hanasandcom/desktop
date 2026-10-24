@@ -7,6 +7,14 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
   let service: String
   let host: String
   let message: String
+  let rawNormalized: APIReferenceJSONValue
+
+  var copyJSON: String {
+    let payload: [String: Any] = ["id": id, "event_timestamp": timestamp, "normalized": logsJSONFoundationValue(rawNormalized)]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+      let value = String(data: data, encoding: .utf8) else { return "{}" }
+    return value
+  }
 
   private enum CodingKeys: String, CodingKey {
     case id
@@ -16,7 +24,8 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
   private enum NormalizedKeys: String, CodingKey { case severity, service, host, message }
 
   init(
-    id: String, timestamp: String, severity: String, service: String, host: String, message: String
+    id: String, timestamp: String, severity: String, service: String, host: String, message: String,
+    rawNormalized: APIReferenceJSONValue? = nil
   ) {
     self.id = id
     self.timestamp = timestamp
@@ -24,6 +33,10 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
     self.service = service
     self.host = host
     self.message = message
+    self.rawNormalized = rawNormalized ?? .object([
+      "severity": .string(severity), "service": .string(service),
+      "host": .string(host), "message": .string(message),
+    ])
   }
 
   init(from decoder: Decoder) throws {
@@ -36,6 +49,7 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
       throw LogsRealtimeClientError.invalidResponse
     }
     timestamp = try values.decode(String.self, forKey: .eventTimestamp)
+    rawNormalized = try values.decode(APIReferenceJSONValue.self, forKey: .normalized)
     let normalized = try values.nestedContainer(keyedBy: NormalizedKeys.self, forKey: .normalized)
     severity = try normalized.decode(String.self, forKey: .severity).lowercased()
     service = try normalized.decode(String.self, forKey: .service)
@@ -62,22 +76,59 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
   }
 }
 
+struct LogsRealtimeFilters: Equatable {
+  var hours = 24
+  var service = ""
+  var search = ""
+  var table = "Logs"
+  var advanced = false
+  var hql = "ProcessLogs | where Severity in (\"high\", \"critical\") | order by TimeGenerated desc | take 100"
+}
+
 struct LogsRealtimeEnvelope: Decodable {
   let rows: [LogsRealtimeEvent]
+  let summaryRows: [LogsSearchSummaryRow]
+  let summarize: String?
   let generatedAt: String?
+  let nextCursor: String?
+  let totalEvents: Int?
 
   private enum CodingKeys: String, CodingKey {
     case rows
+    case summarize
     case generatedAt = "generated_at"
+    case nextCursor = "next_cursor"
+    case totalEvents = "total_events"
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    summarize = try values.decodeIfPresent(String.self, forKey: .summarize)
+    if summarize != nil {
+      rows = []
+      summaryRows = try values.decode([LogsSearchSummaryRow].self, forKey: .rows)
+    } else {
+      rows = try values.decode([LogsRealtimeEvent].self, forKey: .rows)
+      summaryRows = []
+    }
+    generatedAt = try values.decodeIfPresent(String.self, forKey: .generatedAt)
+    nextCursor = try values.decodeIfPresent(String.self, forKey: .nextCursor)
+    totalEvents = try values.decodeIfPresent(Int.self, forKey: .totalEvents)
   }
 
   func validate() throws {
     guard rows.count <= LogsRealtimeClient.pageSize,
-      Set(rows.map(\.id)).count == rows.count
+      summaryRows.count <= LogsSearchClient.summaryLimit,
+      (summarize?.utf8.count ?? 0) <= 120,
+      Set(rows.map(\.id)).count == rows.count,
+      (nextCursor?.utf8.count ?? 0) <= LogsSearchClient.cursorBytes,
+      !(nextCursor ?? "").unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+      totalEvents == nil || totalEvents! >= 0
     else { throw LogsRealtimeClientError.invalidResponse }
     for row in rows {
       try row.validate()
     }
+    for row in summaryRows { try row.validate() }
   }
 }
 
@@ -103,7 +154,7 @@ enum LogsRealtimeClientError: LocalizedError, Equatable {
 
 struct LogsRealtimeClient {
   static let pageSize = 100
-  static let retainedLimit = 120
+  static let retainedLimit = 600
   static let refreshInterval: Duration = .seconds(10)
 
   private let apiBaseURL: URL
@@ -138,8 +189,8 @@ struct LogsRealtimeClient {
     self.send = try send ?? Self.urlSessionSender()
   }
 
-  func load() async throws -> LogsRealtimeEnvelope {
-    let url = try Self.requestURL(apiBaseURL: apiBaseURL)
+  func load(filters: LogsRealtimeFilters = LogsRealtimeFilters(), cursor: String? = nil) async throws -> LogsRealtimeEnvelope {
+    let url = try Self.requestURL(apiBaseURL: apiBaseURL, filters: filters, cursor: cursor)
     var request = URLRequest(url: url, timeoutInterval: 15)
     request.httpMethod = "GET"
     request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -167,20 +218,39 @@ struct LogsRealtimeClient {
     return envelope
   }
 
-  static func requestURL(apiBaseURL: URL) throws -> URL {
+  static func requestURL(apiBaseURL: URL, filters: LogsRealtimeFilters = LogsRealtimeFilters(), cursor: String? = nil) throws -> URL {
     guard apiBaseURL.scheme?.lowercased() == "https", apiBaseURL.host != nil,
       apiBaseURL.user == nil, apiBaseURL.password == nil,
       apiBaseURL.query == nil, apiBaseURL.fragment == nil
     else { throw LogsRealtimeClientError.insecureEndpoint }
+    let hours = filters.hours
+    let service = filters.service.trimmingCharacters(in: .whitespacesAndNewlines)
+    let search = filters.search.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard (1...(24 * 90)).contains(hours), service.utf8.count <= 300,
+      search.utf8.count <= 120,
+      ![service, search].contains(where: { $0.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }),
+      LogsSearchClient.tables.contains(filters.table), filters.hql.utf8.count <= 4_000,
+      !filters.hql.unicodeScalars.contains(where: {
+        CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t"
+      }),
+      !filters.advanced || !filters.hql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      (cursor?.utf8.count ?? 0) <= LogsSearchClient.cursorBytes,
+      !(cursor ?? "").unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+      !filters.advanced || cursor == nil
+    else { throw LogsRealtimeClientError.invalidResponse }
     var components = URLComponents(
       url: apiBaseURL.appendingAPIPath("logs/search"), resolvingAgainstBaseURL: false)
-    components?.queryItems = [
-      URLQueryItem(name: "hours", value: "24"),
-      URLQueryItem(name: "hql", value: "Logs | take 100"),
+    var queryItems = [
+      URLQueryItem(name: "hours", value: String(hours)),
+      URLQueryItem(name: "hql", value: filters.advanced ? filters.hql.trimmingCharacters(in: .whitespacesAndNewlines) : "\(filters.table) | take 100"),
       URLQueryItem(name: "realtime", value: "1"),
       URLQueryItem(name: "severity", value: "high,critical"),
-      URLQueryItem(name: "paginate", value: "1"),
     ]
+    if !filters.advanced { queryItems.append(URLQueryItem(name: "paginate", value: "1")) }
+    if !service.isEmpty { queryItems.append(URLQueryItem(name: "service", value: service)) }
+    if !filters.advanced, !search.isEmpty { queryItems.append(URLQueryItem(name: "search", value: search)) }
+    if !filters.advanced, let cursor, !cursor.isEmpty { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+    components?.queryItems = queryItems
     guard let url = components?.url, url.host == apiBaseURL.host else {
       throw LogsRealtimeClientError.insecureEndpoint
     }

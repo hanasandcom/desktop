@@ -99,6 +99,20 @@ final class InfrastructureViewsTests: XCTestCase {
         XCTAssertEqual(snapshot.accountScope, client.accountScope)
     }
 
+    func testContainerLogsHandoffTargetsNativeLogsWithServiceFilter() {
+        let container = InfrastructureContainer(
+            id: "0123456789abcdef", name: "api-worker", image: "hanasand/api", state: "running",
+            health: "healthy", cpuPercent: nil, memoryBytes: nil, memoryLimitBytes: nil,
+            memoryPercent: nil, uptimeSeconds: nil, restartCount: nil, createdAt: "",
+            statsUpdatedAt: "", unavailableReason: "", ports: [])
+
+        let route = InfrastructureContainerLogsRoute.nativeRoute(for: container)
+
+        XCTAssertEqual(route.path, "/logs")
+        XCTAssertEqual(route.label, "Logs")
+        XCTAssertEqual(route.query["service"], "api-worker")
+    }
+
     func testContainerRestartRequiresFreshAuthorizedOwnAccountSnapshot() async throws {
         var captured: URLRequest?
         let sample = #"{"ok":true,"detail":{"restarted":true}}"#.data(using: .utf8)!

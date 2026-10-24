@@ -17,11 +17,46 @@ final class LogsRealtimeClientTests: XCTestCase {
     XCTAssertEqual(query["paginate"], "1")
   }
 
+  func testRequestURLCarriesWebsiteFiltersAndCursor() throws {
+    let filters = LogsRealtimeFilters(hours: 168, service: "gateway", search: "timeout")
+    let url = try LogsRealtimeClient.requestURL(
+      apiBaseURL: URL(string: "https://api.example.test/api")!, filters: filters,
+      cursor: "older-page")
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let query = Dictionary(
+      uniqueKeysWithValues: try XCTUnwrap(components.queryItems).map { ($0.name, $0.value) })
+    XCTAssertEqual(query["hours"], "168")
+    XCTAssertEqual(query["service"], "gateway")
+    XCTAssertEqual(query["search"], "timeout")
+    XCTAssertEqual(query["cursor"], "older-page")
+    XCTAssertEqual(query["realtime"], "1")
+    XCTAssertEqual(query["severity"], "high,critical")
+  }
+
+  func testAdvancedRealtimeHQLDisablesCursorPagingAndBasicSearch() throws {
+    let filters = LogsRealtimeFilters(
+      hours: 24, service: "api", search: "ignored", table: "ProcessLogs", advanced: true,
+      hql: "ProcessLogs | where Severity == \"high\" | take 50")
+    let url = try LogsRealtimeClient.requestURL(
+      apiBaseURL: URL(string: "https://api.example.test/api")!, filters: filters)
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    let query = Dictionary(
+      uniqueKeysWithValues: try XCTUnwrap(components.queryItems).map { ($0.name, $0.value) })
+    XCTAssertEqual(query["hql"], filters.hql)
+    XCTAssertEqual(query["service"], "api")
+    XCTAssertFalse(components.queryItems!.contains { $0.name == "search" })
+    XCTAssertFalse(components.queryItems!.contains { $0.name == "paginate" })
+    XCTAssertFalse(components.queryItems!.contains { $0.name == "cursor" })
+    XCTAssertThrowsError(try LogsRealtimeClient.requestURL(
+      apiBaseURL: URL(string: "https://api.example.test/api")!, filters: filters,
+      cursor: "not-allowed"))
+  }
+
   func testLoadUsesOwnAccountBearerAndDecodesBoundedHighSeverityRows() async throws {
     let apiBase = URL(string: "https://api.example.test/api")!
     let responseURL = try LogsRealtimeClient.requestURL(apiBaseURL: apiBase)
     let json =
-      #"{"rows":[{"id":"event-1","event_timestamp":"2026-10-23T09:20:00Z","normalized":{"severity":"critical","service":"api","host":"node-1","message":"Read only event"}}],"generated_at":"2026-10-23T09:20:01Z"}"#
+      #"{"rows":[{"id":"event-1","event_timestamp":"2026-10-23T09:20:00Z","normalized":{"severity":"critical","service":"api","host":"node-1","message":"Read only event"}}],"generated_at":"2026-10-23T09:20:01Z","next_cursor":"older-page","total_events":132}"#
       .data(using: .utf8)!
     var captured: URLRequest?
     let client = try LogsRealtimeClient(
@@ -47,6 +82,8 @@ final class LogsRealtimeClientTests: XCTestCase {
           id: "event-1", timestamp: "2026-10-23T09:20:00Z", severity: "critical", service: "api",
           host: "node-1", message: "Read only event")
       ])
+    XCTAssertEqual(envelope.nextCursor, "older-page")
+    XCTAssertEqual(envelope.totalEvents, 132)
   }
 
   func testImpersonatedAndInsecureClientsAreRejected() {
@@ -73,5 +110,14 @@ final class LogsRealtimeClientTests: XCTestCase {
     XCTAssertThrowsError(try envelope.validate()) { error in
       XCTAssertEqual(error as? LogsRealtimeClientError, .invalidResponse)
     }
+  }
+
+  func testRealtimeAdvancedSummaryDecodesWithoutEventRows() throws {
+    let json = #"{"rows":[{"value":503,"count":2}],"summarize":"status","generated_at":"2026-10-23T09:20:01Z"}"#.data(using: .utf8)!
+    let envelope = try JSONDecoder().decode(LogsRealtimeEnvelope.self, from: json)
+    try envelope.validate()
+    XCTAssertEqual(envelope.summarize, "status")
+    XCTAssertEqual(envelope.summaryRows, [LogsSearchSummaryRow(value: "503", count: 2)])
+    XCTAssertTrue(envelope.rows.isEmpty)
   }
 }

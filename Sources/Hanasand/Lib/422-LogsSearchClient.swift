@@ -42,8 +42,10 @@ struct LogsSearchClient {
   typealias Sender = (URLRequest) async throws -> (Data, URLResponse)
 
   static let pageSize = 200
+  static let summaryLimit = 500
   static let responseBytes = 4 * 1024 * 1024
   static let cursorBytes = 2_048
+  static let tables = ["Logs", "ProcessLogs", "SigninLogs", "ApplicationLogs", "HttpLogs", "SystemLogs"]
 
   private let apiBaseURL: URL
   private let userID: String
@@ -82,8 +84,14 @@ struct LogsSearchClient {
       filters.search.count <= 120, filters.service.count <= 300,
       filters.search.rangeOfCharacter(from: .controlCharacters) == nil,
       filters.service.rangeOfCharacter(from: .controlCharacters) == nil,
+      Self.tables.contains(filters.table), filters.hql.utf8.count <= 4_000,
+      !filters.hql.unicodeScalars.contains(where: {
+        CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t"
+      }),
+      !filters.advanced || !filters.hql.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
       (cursor?.utf8.count ?? 0) <= Self.cursorBytes,
-      !(cursor ?? "").unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+      !(cursor ?? "").unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+      !filters.advanced || cursor == nil
     else { throw LogsSearchClientError.invalidFilters }
 
     let url = try Self.requestURL(apiBaseURL: apiBaseURL, filters: filters, cursor: cursor)
@@ -112,6 +120,45 @@ struct LogsSearchClient {
     return page
   }
 
+  func loadDashboardSummary() async throws -> LogsDashboardSummary {
+    let value = try await loadJSON(path: "logs/services/summary", authenticated: true, as: LogsDashboardSummary.self)
+    try value.validate()
+    return value
+  }
+
+  func loadPublicThroughputMetrics() async throws -> LogsThroughputMetrics {
+    let value = try await loadJSON(path: "logs/metrics/public", authenticated: false, as: LogsThroughputMetrics.self)
+    try value.validate()
+    return value
+  }
+
+  private func loadJSON<T: Decodable>(path: String, authenticated: Bool, as type: T.Type) async throws -> T {
+    let url = apiBaseURL.appendingAPIPath(path)
+    guard url.scheme?.lowercased() == "https", url.host == apiBaseURL.host else {
+      throw LogsSearchClientError.insecureEndpoint
+    }
+    var request = URLRequest(url: url, timeoutInterval: 10)
+    request.httpMethod = "GET"
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.httpShouldHandleCookies = false
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+    if authenticated {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+      request.setValue(userID, forHTTPHeaderField: "id")
+    }
+    let (data, response) = try await send(request)
+    guard let http = response as? HTTPURLResponse,
+      response.url?.scheme?.lowercased() == "https", response.url?.host == apiBaseURL.host
+    else { throw LogsSearchClientError.invalidResponse }
+    guard (200..<300).contains(http.statusCode) else {
+      throw LogsSearchClientError.requestFailed(http.statusCode)
+    }
+    guard data.count <= Self.responseBytes else { throw LogsSearchClientError.invalidResponse }
+    do { return try JSONDecoder().decode(type, from: data) }
+    catch { throw LogsSearchClientError.invalidResponse }
+  }
+
   static func requestURL(
     apiBaseURL: URL, filters: LogsSearchFilters, cursor: String? = nil
   ) throws -> URL {
@@ -123,9 +170,11 @@ struct LogsSearchClient {
       url: apiBaseURL.appendingAPIPath("logs/search"), resolvingAgainstBaseURL: false)
     var queryItems = [
       URLQueryItem(name: "hours", value: String(filters.hours)),
-      URLQueryItem(name: "paginate", value: "1"),
+      URLQueryItem(name: "hql", value: filters.advanced ? filters.hql.trimmingCharacters(in: .whitespacesAndNewlines) : "\(filters.table) | take 200"),
     ]
-    let search = filters.search.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !filters.advanced { queryItems.append(URLQueryItem(name: "paginate", value: "1")) }
+    if filters.dashboardStats { queryItems.append(URLQueryItem(name: "stats", value: "1")) }
+    let search = filters.advanced ? "" : filters.search.trimmingCharacters(in: .whitespacesAndNewlines)
     let service = filters.service.trimmingCharacters(in: .whitespacesAndNewlines)
     if !search.isEmpty { queryItems.append(URLQueryItem(name: "search", value: search)) }
     if !service.isEmpty { queryItems.append(URLQueryItem(name: "service", value: service)) }

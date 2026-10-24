@@ -135,10 +135,13 @@ struct InfrastructureContainersNativePanel: View {
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
-                ActionButton(title: "Review restart", icon: "arrow.clockwise") { restartCandidate = container }
-                    .disabled(access?.canWrite != true || !clientIsCurrent)
-                ActionButton(title: "Refresh runtime logs", icon: "doc.text.magnifyingglass") { Task { await loadLogs(container) } }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    containerActions(container)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    containerActions(container)
+                }
             }
             if let runtimeLogs {
                 Text("Runtime logs · \(runtimeLogs.source.isEmpty ? "source not reported" : runtimeLogs.source) · \(runtimeLogs.generatedAt)")
@@ -161,6 +164,16 @@ struct InfrastructureContainersNativePanel: View {
                         .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func containerActions(_ container: InfrastructureContainer) -> some View {
+        ActionButton(title: "Review restart", icon: "arrow.clockwise") { restartCandidate = container }
+            .disabled(access?.canWrite != true || !clientIsCurrent)
+        ActionButton(title: "Refresh runtime logs", icon: "doc.text.magnifyingglass") { Task { await loadLogs(container) } }
+        ActionButton(title: "Open full Logs", icon: "list.bullet.rectangle") {
+            model.openNativeHanasandRoute(InfrastructureContainerLogsRoute.nativeRoute(for: container))
         }
     }
 
@@ -236,6 +249,13 @@ struct InfrastructureContainersNativePanel: View {
             status = "Restart requested for \(container.displayName). Refresh to review current state."
             await load()
         } catch { status = error.localizedDescription }
+    }
+}
+
+enum InfrastructureContainerLogsRoute {
+    static func nativeRoute(for container: InfrastructureContainer) -> BrowserNativeRoute {
+        BrowserNativeRoute(path: "/logs", label: "Logs", detailID: nil, caseContext: nil, section: nil,
+                           query: ["service": container.name])
     }
 }
 
