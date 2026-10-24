@@ -8,6 +8,8 @@ struct SandboxHistoryNativePanel: View {
     @State private var initialRunID: String?
     @State private var selectedRunID = ""
     @State private var isLoading = false
+    @State private var isLoadingReport = false
+    @State private var reportRequestID = UUID()
     @State private var error = ""
     @State private var selectedReport: SandboxHistoryReport?
 
@@ -73,6 +75,13 @@ struct SandboxHistoryNativePanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
                         }
                     }
+                } else if isLoadingReport {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading saved report…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
+                    }
                 }
 
                 if nextOffset != nil {
@@ -95,8 +104,11 @@ struct SandboxHistoryNativePanel: View {
             if selectedRunID == run.id {
                 selectedRunID = ""
                 selectedReport = nil
+                reportRequestID = UUID()
+                isLoadingReport = false
             } else {
                 selectedRunID = run.id
+                selectedReport = nil
                 Task { await loadReport(run) }
             }
         } label: {
@@ -133,10 +145,19 @@ struct SandboxHistoryNativePanel: View {
 
     @MainActor
     private func loadReport(_ run: SandboxHistoryRun) async {
+        let requestID = UUID()
+        reportRequestID = requestID
+        isLoadingReport = true
+        defer {
+            if reportRequestID == requestID { isLoadingReport = false }
+        }
         error = ""
         do {
-            selectedReport = try await makeReportClient().loadReport(resultID: run.resultID)
+            let report = try await makeReportClient().loadReport(resultID: run.resultID)
+            guard reportRequestID == requestID, selectedRunID == run.id else { return }
+            selectedReport = report
         } catch {
+            guard reportRequestID == requestID, selectedRunID == run.id else { return }
             selectedReport = nil
             self.error = error.localizedDescription
         }
@@ -161,7 +182,7 @@ struct SandboxHistoryNativePanel: View {
             var page = try await client.loadPage()
             var loadedRuns = page.runs
             if let requestedID = initialRunID, !requestedID.isEmpty {
-                for _ in 0..<5 {
+                for _ in 0..<4 {
                     if loadedRuns.contains(where: { $0.id == requestedID || $0.resultID == requestedID }) { break }
                     guard let offset = page.nextOffset else { break }
                     page = try await client.loadPage(offset: offset)
@@ -171,6 +192,7 @@ struct SandboxHistoryNativePanel: View {
             }
             runs = loadedRuns
             nextOffset = page.nextOffset
+            error = ""
             if let requestedID = initialRunID, !requestedID.isEmpty {
                 if let run = loadedRuns.first(where: { $0.id == requestedID || $0.resultID == requestedID }) {
                     selectedRunID = run.id
@@ -180,8 +202,12 @@ struct SandboxHistoryNativePanel: View {
                     error = "The requested saved run was not found in the latest 250 records. Refresh the history and try again."
                 }
             }
-            if !runs.contains(where: { $0.id == selectedRunID }) { selectedRunID = "" }
-            if initialRunID == nil { error = "" }
+            if !runs.contains(where: { $0.id == selectedRunID }) {
+                selectedRunID = ""
+                selectedReport = nil
+                reportRequestID = UUID()
+                isLoadingReport = false
+            }
         } catch {
             self.error = error.localizedDescription
         }
