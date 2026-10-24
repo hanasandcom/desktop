@@ -17,21 +17,23 @@ extension IDEWorkspace {
             HStack(spacing: 8) {
                 Label("Terminal", systemImage: "terminal")
                     .font(.system(size: 12, weight: .black))
-                Text(model.terminal.cwd)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.textTertiary)
-                    .lineLimit(1)
-                Spacer()
+                Spacer(minLength: 2)
                 if model.terminal.isRunning {
                     ProgressView()
                         .scaleEffect(0.55)
                 }
-                BrowserAgentButton(title: "Stop", icon: "stop.fill") {
-                    model.terminal.stop()
+                Button { model.terminal.stop() } label: {
+                    Image(systemName: "stop.fill").frame(width: 22, height: 22)
                 }
-                BrowserAgentButton(title: "Run", icon: "play.fill") {
-                    model.terminal.run()
+                .buttonStyle(.borderless)
+                .help("Stop terminal command")
+                .accessibilityLabel("Stop")
+                Button { model.terminal.run() } label: {
+                    Image(systemName: "play.fill").frame(width: 22, height: 22)
                 }
+                .buttonStyle(.borderless)
+                .help("Run terminal command")
+                .accessibilityLabel("Run")
                 Menu {
                     Section("Quick commands") {
                         ForEach(model.quickCommands) { quickCommand in
@@ -92,7 +94,7 @@ extension IDEWorkspace {
             }
             .background(Color.black.opacity(0.16))
 
-            HStack(spacing: 8) {
+            VStack(spacing: 0) {
                 TextField(
                     "cwd",
                     text: Binding(
@@ -107,27 +109,35 @@ extension IDEWorkspace {
                     .textFieldStyle(.plain)
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(theme.textTertiary)
-                    .frame(width: 220)
-                Text("$")
-                    .font(.system(size: 12, weight: .black, design: .monospaced))
-                    .foregroundStyle(theme.accent)
-                TextField(
-                    "Run command",
-                    text: Binding(
-                        get: { model.terminal.command },
-                        set: { model.terminal.command = $0 }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(model.terminal.cwd)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                HStack(spacing: 8) {
+                    Text("$")
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
+                        .foregroundStyle(theme.accent)
+                    TextField(
+                        "Run command",
+                        text: Binding(
+                            get: { model.terminal.command },
+                            set: { model.terminal.command = $0 }
+                        )
                     )
-                )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.text)
-                    .onSubmit {
-                        model.terminal.run()
-                        model.scanProjectFiles()
-                    }
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.text)
+                        .frame(minWidth: 44, maxWidth: .infinity, alignment: .leading)
+                        .onSubmit {
+                            model.terminal.run()
+                            model.scanProjectFiles()
+                        }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
             }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
             .background(theme.field)
         }
         .overlay(alignment: .top) {

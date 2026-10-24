@@ -21,14 +21,6 @@ extension IDEWorkspaceModel {
         runDiagnostics()
     }
 
-    func preview(_ file: IDEShareFile, settings: HanasandDesktopSettings) {
-        let base = settings.websiteBaseURL.normalizedBaseURL
-        let trimmed = file.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let url = trimmed.isEmpty ? base.absoluteString : base.appendingPathComponent(trimmed).absoluteString
-        previewTab?.load(url)
-        status = "Previewing \(file.path)"
-    }
-
     func closeTab(_ file: IDEShareFile) {
         guard openFileIDs.count > 1 else { return }
         persistCurrentInMemory()

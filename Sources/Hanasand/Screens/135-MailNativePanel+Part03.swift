@@ -14,6 +14,34 @@ extension MailNativePanel {
 
     func threadedMessageList(_ overview: MailOverviewEnvelope) -> some View {
         NativeGroupPanel(title: "Messages", subtitle: "\(filteredMessages.count) visible · \(threadCount) threads") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(MailQuickFilter.allCases) { filter in
+                        let selected = quickFilter == filter
+                        Button {
+                            quickFilter = filter
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: filter.symbol)
+                                Text(filter.title)
+                                Text("\(quickFilterCounts[filter, default: 0])")
+                                    .monospacedDigit()
+                            }
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(selected ? theme.accent : theme.textSecondary)
+                            .padding(.horizontal, 9)
+                            .frame(height: 30)
+                            .background(selected ? theme.accentSoft : theme.cardRaised)
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(selected ? theme.accent.opacity(0.35) : theme.divider, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+
             LazyVGrid(columns: mailToolbarActionColumns, alignment: .leading, spacing: 8) {
                 mailToolbarActionButton(title: "All", icon: "checkmark.circle") {
                     model.selectAllVisibleMailMessages(filteredMessages)

@@ -21,10 +21,10 @@ final class APIReferenceTests: XCTestCase {
       "servers": [{"url": "https://api.example.test/v1"}],
       "security": [{"Bearer": []}],
       "paths": {
-        "/actors": {"parameters": [], "get": {"summary": "List actors", "operationId": "listActors", "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Actor"}}}}}}},
+        "/actors": {"parameters": [], "get": {"summary": "List actors", "operationId": "listActors", "parameters": [{"$ref": "#/components/parameters/Query"}], "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Actor"}}}}, "404": {"$ref": "#/components/responses/NotFound"}}}},
         "/public": {"post": {"security": [], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object"}}}}, "responses": {"201": {"description": "Created"}}}}
       },
-      "components": {"schemas": {"Actor": {"type": "object", "properties": {"id": {"type": "string"}}}}, "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}}}
+      "components": {"parameters": {"Query": {"name": "q", "in": "query", "schema": {"type": "string"}}}, "responses": {"NotFound": {"description": "Actor not found", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}}, "schemas": {"Actor": {"type": "object", "properties": {"id": {"type": "string"}}}, "Error": {"type": "object", "properties": {"actor": {"$ref": "#/components/schemas/Actor"}}}, "Node": {"type": "object", "properties": {"next": {"$ref": "#/components/schemas/Node"}}}}, "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}}}
     }
     """#
 
@@ -49,6 +49,37 @@ final class APIReferenceTests: XCTestCase {
         XCTAssertEqual(APIReferenceSecurity.label(operation: [], document: document.security), "Public")
         XCTAssertEqual(APIReferenceSecurity.label(operation: [.object([:])], document: document.security), "Public")
         XCTAssertEqual(APIReferenceSecurity.label(operation: nil, document: nil), "Public (no security requirement declared)")
+    }
+
+    func testResolvesNestedComponentReferencesInOperationDetails() throws {
+        let document = try APIReferenceDocument.decode(Data(contract.utf8))
+        let operation = try XCTUnwrap(document.operations.first?.operation)
+
+        let parameters = document.resolvingComponentReferences(in: .array(try XCTUnwrap(operation.parameters)))
+        guard case .array(let parameterRows) = parameters,
+              case .object(let parameter) = parameterRows.first else {
+            return XCTFail("Expected the referenced query parameter to be expanded")
+        }
+        XCTAssertEqual(parameter["name"], .string("q"))
+        XCTAssertEqual(parameter["in"], .string("query"))
+
+        let response = try XCTUnwrap(operation.responses["404"])
+        let expandedResponse = document.resolvingComponentReferences(in: response)
+        XCTAssertEqual(expandedResponse.objectValue?["description"], .string("Actor not found"))
+        let content = expandedResponse.objectValue?["content"]?.objectValue?["application/json"]?.objectValue
+        let schema = content?["schema"]?.objectValue
+        XCTAssertEqual(schema?["properties"]?.objectValue?["actor"]?.objectValue?["type"], .string("object"))
+    }
+
+    func testLeavesUnsupportedAndCyclicReferencesVisible() throws {
+        let document = try APIReferenceDocument.decode(Data(contract.utf8))
+        let external = APIReferenceJSONValue.object(["$ref": .string("https://example.test/schema.json")])
+        XCTAssertEqual(document.resolvingComponentReferences(in: external), external)
+
+        let recursive = APIReferenceJSONValue.object(["$ref": .string("#/components/schemas/Node")])
+        let expanded = document.resolvingComponentReferences(in: recursive)
+        let next = expanded.objectValue?["properties"]?.objectValue?["next"]?.objectValue
+        XCTAssertEqual(next?["$ref"], .string("#/components/schemas/Node"))
     }
 
     func testRejectsMalformedOrOversizedContractsAndNonOpenAPIResponses() {
@@ -95,7 +126,7 @@ final class APIReferenceTests: XCTestCase {
         model.query = "listActors"
         XCTAssertEqual(model.operationRows.map { $0.id }, ["GET /actors"])
         model.section = APIReferenceModel.Section.schemas
-        model.query = "Actor"
+        model.query = "id"
         XCTAssertEqual(model.filteredSchemas.map { $0.0 }, ["Actor"])
     }
 

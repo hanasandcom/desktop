@@ -17,11 +17,29 @@ private enum ThreatResultSection: String, CaseIterable {
     case targets = "Targets"
 }
 
+enum ThreatIntelligenceRouteSearch {
+    static func initialQuery(path: String?, detailID: String, query: String? = nil) -> String? {
+        guard path == "/ti" else { return nil }
+        let detail = detailID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detail.isEmpty { return detail }
+        let routeQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return routeQuery.isEmpty ? nil : routeQuery
+    }
+}
+
 struct ThreatIntelligenceNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var section: ThreatResultSection = .activity
     @State private var removingSearch: String?
+
+    private var routeSearchQuery: String? {
+        ThreatIntelligenceRouteSearch.initialQuery(
+            path: model.selectedDashboardPath,
+            detailID: model.selectedNativeDashboardDetailID,
+            query: model.selectedNativeDashboardQuery["q"]
+        )
+    }
 
     private var result: ThreatIntelSearchResult? { model.threatSearchResult }
     private var rowsRemaining: Int {
@@ -93,6 +111,11 @@ struct ThreatIntelligenceNativePanel: View {
             } else if !model.isLoadingThreatSearch {
                 NativeEmptyState(title: "Search for threat intelligence", message: "Search the Hanasand intelligence catalogue and review source-backed activity.")
             }
+        }
+        .task(id: routeSearchQuery) {
+            guard let query = routeSearchQuery else { return }
+            model.threatSearchQuery = query
+            await model.searchThreatIntelligence()
         }
         .confirmationDialog("Remove saved search?", isPresented: Binding(get: { removingSearch != nil }, set: { if !$0 { removingSearch = nil } }), titleVisibility: .visible) {
             Button("Remove", role: .destructive) {

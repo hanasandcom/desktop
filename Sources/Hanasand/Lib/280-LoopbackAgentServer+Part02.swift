@@ -120,6 +120,8 @@ extension LoopbackAgentServer {
                 "open_dashboard_log_errors",
                 "open_dashboard_ti_profiles",
                 "open_dashboard_ti_sources",
+                "open_dashboard_ti_runs",
+                "open_dashboard_ti_captures",
                 "open_dashboard_ti_timeliness",
                 "open_dashboard_health_checks",
                 "open_dashboard_personal_cron",
@@ -225,6 +227,12 @@ extension LoopbackAgentServer {
             }
             if command == "open_dashboard_ti_sources" {
                 return http(body: #"{"ok":true,"message":"Native Intelligence Sources panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_ti_runs" {
+                return http(body: #"{"ok":true,"message":"Native Collection Runs panel opened in the Desktop app."}"#)
+            }
+            if command == "open_dashboard_ti_captures" {
+                return http(body: #"{"ok":true,"message":"Native Capture History panel opened in the Desktop app."}"#)
             }
             if command == "open_dashboard_ti_timeliness" {
                 return http(body: #"{"ok":true,"message":"Native Threat Delivery Health panel opened in the Desktop app."}"#)

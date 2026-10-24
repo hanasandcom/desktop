@@ -108,11 +108,10 @@ extension DesktopAgentModel {
         }
     }
 
-    func lookupShortcutLink() async {
-        let id = linkLookupID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty else {
-            nativeDashboardStatus = "Enter a shortcut id first."
-            return
+    func lookupShortcutLink() async -> DashboardShortcutLink? {
+        guard let id = NativeRouteSelection.resolve(linkLookupID, among: [linkLookupID]) else {
+            nativeDashboardStatus = "Enter a valid shortcut id first."
+            return nil
         }
 
         do {
@@ -124,10 +123,12 @@ extension DesktopAgentModel {
             linkDraftPath = link.path
             nativeDashboardStatus = "Loaded /g/\(link.id)"
             append(meta: "Link loaded", body: "\(link.id) -> \(link.path)", kind: .command)
+            return link
         } catch {
             linkLookupResult = nil
             nativeDashboardStatus = error.localizedDescription
             append(meta: "Link lookup failed", body: error.localizedDescription, kind: .error)
+            return nil
         }
     }
 

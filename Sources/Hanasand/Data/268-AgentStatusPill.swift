@@ -21,13 +21,15 @@ struct AgentStatusPill: View {
                 .frame(width: 7, height: 7)
             Text(status.message)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
         .font(.system(size: 11, weight: .bold))
         .padding(.horizontal, 9)
+        .frame(maxWidth: 260, alignment: .leading)
         .frame(height: 28)
         .background(theme.cardRaised)
         .overlay(Capsule().stroke(theme.divider, lineWidth: 1))
         .clipShape(Capsule())
-        .fixedSize(horizontal: true, vertical: false)
+        .help(status.message)
     }
 }

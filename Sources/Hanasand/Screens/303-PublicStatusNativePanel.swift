@@ -10,7 +10,14 @@ private enum PublicStatusSection: String, CaseIterable, Identifiable {
 struct PublicStatusNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @StateObject private var model = PublicStatusViewModel()
-    @State private var section: PublicStatusSection = .overview
+    private let incidentID: String?
+    @State private var section: PublicStatusSection
+
+    init(incidentID: String? = nil) {
+        let normalizedID = incidentID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.incidentID = normalizedID?.isEmpty == false ? normalizedID : nil
+        _section = State(initialValue: normalizedID?.isEmpty == false ? .incidents : .overview)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -54,7 +61,13 @@ struct PublicStatusNativePanel: View {
                 NativeEmptyState(title: "No status data", message: "No public status snapshot is available yet.")
             }
         }
-        .task { await model.refresh() }
+        .task(id: incidentID) {
+            if let incidentID {
+                await model.loadIncident(id: incidentID)
+            } else {
+                await model.refresh()
+            }
+        }
     }
 
     @ViewBuilder private func overview(_ payload: PublicStatusPayload) -> some View {
@@ -74,8 +87,8 @@ struct PublicStatusNativePanel: View {
                 Spacer(minLength: 8)
                 if model.isLoading { ProgressView().controlSize(.small) }
             }
-            Text(payload.lastVerifiedAt.map { "Last verified \($0)" } ?? "No verified snapshot is available yet.")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+            Text(payload.lastVerifiedAt.map { "Last verified \(formatDateText($0, fallback: $0))" } ?? "No verified snapshot is available yet.")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.textSecondary)
                 .textSelection(.enabled)
         }
@@ -85,13 +98,13 @@ struct PublicStatusNativePanel: View {
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                 ForEach(payload.checks) { check in
-                    NativeGroupPanel(title: check.checkName, subtitle: check.service) {
+                    NativeGroupPanel(title: check.checkName, subtitle: check.displayService) {
                         HStack {
                             Label(statusLabel(check.status), systemImage: statusSymbol(check.status))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(statusColor(check.status))
                             Spacer()
-                            Text(check.latencyMilliseconds.map { "\($0) ms" } ?? "Latency unavailable")
+                            Text(check.latencyMilliseconds.map { "\(Int($0.rounded())) ms" } ?? "Latency unavailable")
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                                 .foregroundStyle(theme.textSecondary)
                         }
@@ -99,14 +112,14 @@ struct PublicStatusNativePanel: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(theme.textSecondary)
                             .textSelection(.enabled)
-                        HStack {
-                            Text("30 day uptime: \(check.uptime30Days ?? "unverified")")
-                            Spacer()
-                            Text(check.checkedAt ?? "Not verified")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(check.uptime90Days == nil ? "30" : "90") day uptime: \(check.uptime90Days ?? check.uptime30Days ?? "unverified")")
+                            Text(formatDateText(check.checkedAt, fallback: "Not verified"))
+                                .lineLimit(2)
+                                .textSelection(.enabled)
                         }
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(theme.textTertiary)
-                        .textSelection(.enabled)
                     }
                 }
             }
@@ -115,7 +128,7 @@ struct PublicStatusNativePanel: View {
 
     @ViewBuilder private func incidents(_ payload: PublicStatusPayload) -> some View {
         if let incident = model.selectedIncident {
-            NativeGroupPanel(title: incident.title, subtitle: "\(incident.service) · \(incident.checkName)") {
+            NativeGroupPanel(title: incident.title, subtitle: "\(incident.displayService) · \(incident.checkName)") {
                 Button {
                     model.clearSelectedIncident()
                 } label: { Label("All incidents", systemImage: "chevron.left") }
@@ -124,8 +137,8 @@ struct PublicStatusNativePanel: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(statusColor(incident.status == "resolved" ? "up" : "degraded"))
                 Text(incident.summary).font(.system(size: 13, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
-                Text("Started: \(incident.startedAt)\nResolved: \(incident.resolvedAt ?? "Still open")\nCause: \(incident.cause ?? "Not provided")")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+                Text("Started: \(formatDateText(incident.startedAt, fallback: incident.startedAt))\nResolved: \(formatDateText(incident.resolvedAt, fallback: "Still open"))\nCause: \(incident.cause ?? "Not provided")")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
                 if let error = model.incidentError { NativeNotice(message: "Could not load incident details: \(error)") }
                 if model.isLoadingIncident { ProgressView("Loading incident details…").controlSize(.small) }
                 if incident.updates.isEmpty {
@@ -133,7 +146,7 @@ struct PublicStatusNativePanel: View {
                 } else {
                     ForEach(incident.updates) { update in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(update.status) · \(update.at)").font(.system(size: 10, weight: .semibold, design: .monospaced)).foregroundStyle(theme.textTertiary)
+                            Text("\(update.status) · \(formatDateText(update.at, fallback: update.at))").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
                             Text(update.message).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
                             if let evidence = update.evidence, !evidence.isEmpty {
                                 Text(evidence).font(.system(size: 11, weight: .regular)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
@@ -147,10 +160,10 @@ struct PublicStatusNativePanel: View {
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                 ForEach(payload.incidents) { incident in
-                    NativeGroupPanel(title: incident.title, subtitle: "\(incident.service) · \(incident.impact) · \(incident.status.capitalized)") {
+                    NativeGroupPanel(title: incident.title, subtitle: "\(incident.displayService) · \(incident.impact) · \(incident.status.capitalized)") {
                         Text(incident.summary).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).lineLimit(4).textSelection(.enabled)
-                        Text("Started \(incident.startedAt) · \(incident.resolvedAt ?? "Ongoing")")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary)
+                        Text("Started \(formatDateText(incident.startedAt, fallback: incident.startedAt)) · \(formatDateText(incident.resolvedAt, fallback: "Ongoing"))")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
                         Button {
                             Task { await model.selectIncident(incident) }
                         } label: {
@@ -172,7 +185,7 @@ struct PublicStatusNativePanel: View {
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                 ForEach(payload.history) { day in
-                    NativeGroupPanel(title: day.checkName, subtitle: "\(day.service) · \(day.date)") {
+                    NativeGroupPanel(title: day.checkName, subtitle: "\(day.displayService) · \(formatDateText(day.date, fallback: day.date))") {
                         Label(statusLabel(day.status), systemImage: statusSymbol(day.status))
                             .font(.system(size: 12, weight: .semibold)).foregroundStyle(statusColor(day.status))
                         Text("Samples: \(day.samples.map { String($0) } ?? "—") · Healthy: \(day.healthySamples.map { String($0) } ?? "—") · Degraded: \(day.degradedSamples.map { String($0) } ?? "—") · Failed: \(day.failedSamples.map { String($0) } ?? "—")")
@@ -187,7 +200,7 @@ struct PublicStatusNativePanel: View {
     }
 
     private func statusDescription(_ payload: PublicStatusPayload) -> String {
-        payload.lastVerifiedAt.map { "Public monitoring · last verified \($0)" } ?? "Public monitoring snapshot"
+        payload.lastVerifiedAt.map { "Public monitoring · last verified \(formatDateText($0, fallback: $0))" } ?? "Public monitoring snapshot"
     }
 
     private func statusLabel(_ value: String) -> String {

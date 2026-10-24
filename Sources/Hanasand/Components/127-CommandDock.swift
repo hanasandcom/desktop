@@ -55,38 +55,10 @@ struct CommandDock: View {
                         model.submitAIChatPrompt()
                     }
 
-                HStack(spacing: 10) {
-                    CommandDockQuickButton(title: model.isRunning ? "Send next" : "Send now", icon: model.isRunning ? "arrow.turn.down.right" : "paperplane") {
-                        model.submitAIChatPrompt()
-                    }
-                    CommandDockQuickButton(title: "Dashboard", icon: "gauge.with.dots.needle") {
-                        model.recordCommand("open_section_dashboard")
-                    }
-                    CommandDockQuickButton(title: "AI drill", icon: "graduationcap") {
-                        model.submitAppParityTrainingPrompt()
-                    }
-                    Spacer()
-                    ProgressView()
-                        .scaleEffect(0.55)
-                        .opacity(model.isRunning ? 1 : 0.35)
-                    Text(model.status.ok ? "Agent online" : "Agent offline")
-                        .foregroundStyle(.secondary)
-                    CommandDockQuickButton(title: "Status", icon: "waveform.path.ecg") {
-                        model.runStatusCommand()
-                    }
-                    Button(action: model.submitAIChatPrompt) {
-                        Image(systemName: model.isRunning ? "arrow.turn.down.right" : "paperplane.fill")
-                            .foregroundStyle(theme.commandPanel)
-                            .frame(width: 32, height: 32)
-                            .background(canSubmit ? theme.text : theme.textTertiary.opacity(0.45))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSubmit)
-                    .help(model.isRunning ? "Send this after the current step" : "Send now")
+                ViewThatFits(in: .horizontal) {
+                    actionRow
+                    compactActionRows
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(theme.textSecondary)
             }
             .padding(.horizontal, 18)
             .padding(.top, 26)
@@ -142,6 +114,82 @@ struct CommandDock: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 20)
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 10) {
+            primaryActions
+            Spacer(minLength: 8)
+            agentStatus
+            secondaryActions
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(theme.textSecondary)
+    }
+
+    private var compactActionRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                primaryActions
+                Spacer(minLength: 0)
+                submitButton
+            }
+            HStack(spacing: 8) {
+                agentStatus
+                Spacer(minLength: 0)
+                secondaryActions
+            }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(theme.textSecondary)
+    }
+
+    private var primaryActions: some View {
+        Group {
+            CommandDockQuickButton(title: model.isRunning ? "Send next" : "Send now", icon: model.isRunning ? "arrow.turn.down.right" : "paperplane") {
+                model.submitAIChatPrompt()
+            }
+            CommandDockQuickButton(title: "Dashboard", icon: "gauge.with.dots.needle") {
+                model.recordCommand("open_section_dashboard")
+            }
+            CommandDockQuickButton(title: "AI drill", icon: "graduationcap") {
+                model.submitAppParityTrainingPrompt()
+            }
+        }
+    }
+
+    private var secondaryActions: some View {
+        Group {
+            CommandDockQuickButton(title: "Status", icon: "waveform.path.ecg") {
+                model.runStatusCommand()
+            }
+            submitButton
+        }
+    }
+
+    private var agentStatus: some View {
+        HStack(spacing: 5) {
+            ProgressView()
+                .scaleEffect(0.55)
+                .opacity(model.isRunning ? 1 : 0.35)
+            Text(model.status.ok ? "Agent online" : "Agent offline")
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+    }
+
+    private var submitButton: some View {
+        Button(action: model.submitAIChatPrompt) {
+            Image(systemName: model.isRunning ? "arrow.turn.down.right" : "paperplane.fill")
+                .foregroundStyle(theme.commandPanel)
+                .frame(width: 32, height: 32)
+                .background(canSubmit ? theme.text : theme.textTertiary.opacity(0.45))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canSubmit)
+        .help(model.isRunning ? "Send this after the current step" : "Send now")
     }
 
     var scheduledTray: some View {

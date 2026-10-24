@@ -17,7 +17,12 @@ DIST_DIR="${HANASAND_APP_OUTPUT_DIR:-${ROOT_DIR}/dist}"
 if [[ "${DIST_DIR}" != /* ]]; then
   DIST_DIR="${PWD}/${DIST_DIR}"
 fi
-BUILD_DIR="${ROOT_DIR}/.build/release"
+BUILD_CONFIGURATION="${HANASAND_BUILD_CONFIGURATION:-release}"
+if [[ "$BUILD_CONFIGURATION" != "debug" && "$BUILD_CONFIGURATION" != "release" ]]; then
+  echo "Invalid HANASAND_BUILD_CONFIGURATION: ${BUILD_CONFIGURATION} (expected debug or release)." >&2
+  exit 64
+fi
+BUILD_DIR="${ROOT_DIR}/.build/${BUILD_CONFIGURATION}"
 APP_DIR="${DIST_DIR}/Hanasand.app"
 PACKAGE_PATH="${DIST_DIR}/Hanasand-${VERSION}-macos.zip"
 ICON_FILE="${ROOT_DIR}/Resources/Hanasand.icns"
@@ -35,8 +40,8 @@ fi
 rm -rf "$APP_DIR" "$PACKAGE_PATH"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$DIST_DIR"
 
-swift build --package-path "$ROOT_DIR" -c release
-BUILD_DIR="$(swift build --package-path "$ROOT_DIR" -c release --show-bin-path)"
+swift build --package-path "$ROOT_DIR" -c "$BUILD_CONFIGURATION"
+BUILD_DIR="$(swift build --package-path "$ROOT_DIR" -c "$BUILD_CONFIGURATION" --show-bin-path)"
 
 cp "$BUILD_DIR/Hanasand" "$APP_DIR/Contents/MacOS/Hanasand"
 chmod +x "$APP_DIR/Contents/MacOS/Hanasand"
@@ -76,6 +81,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>NSApplication</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Hanasand uses the camera to capture pages for document scans.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Hanasand reads your Photos library so you can review photos and delete marked images.</string>
   <key>CFBundleSupportedPlatforms</key>
   <array>
     <string>MacOSX</string>
@@ -88,6 +97,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
       <key>CFBundleURLSchemes</key>
       <array>
         <string>hanasand-desktop</string>
+        <string>hanasand</string>
       </array>
     </dict>
   </array>

@@ -2,6 +2,11 @@ import Foundation
 
 enum TrafficRecentClient {
     static let pageSize = 50
+    static let autoRefreshIntervalSeconds: Double = 30
+
+    static func shouldAutoRefresh(page: Int, isLoading: Bool) -> Bool {
+        page == 1 && !isLoading
+    }
 
     static func domainsURL(apiBaseURL: URL) throws -> URL {
         try endpoint(apiBaseURL: apiBaseURL, path: "traffic/domains")

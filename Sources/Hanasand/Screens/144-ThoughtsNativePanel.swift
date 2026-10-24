@@ -14,6 +14,15 @@ struct ThoughtsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State var deletingThought: DashboardThought?
+    @State private var search = ""
+    @State private var sortByTitle = false
+    @State private var page = 0
+
+    private var filteredThoughts: [DashboardThought] {
+        PublishingList.thoughts(model.thoughts, matching: search, order: sortByTitle ? .title : .newest)
+    }
+    private var pageCount: Int { PublishingList.pageCount(for: filteredThoughts.count) }
+    private var currentPage: Int { min(page, pageCount - 1) }
 
     let columns = [
         GridItem(.adaptive(minimum: 230), spacing: 12, alignment: .top),
@@ -72,55 +81,76 @@ struct ThoughtsNativePanel: View {
             if model.thoughts.isEmpty {
                 NativeEmptyState(title: "No thoughts loaded", message: "Create a thought or refresh the API-backed thought list.")
             } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                    ForEach(model.thoughts) { thought in
-                        VStack(alignment: .leading, spacing: 9) {
-                            Text(thought.displayTitle)
-                                .font(.system(size: 14, weight: .black))
-                                .foregroundStyle(theme.text)
-                                .lineLimit(3)
-                            if !thought.markdownRemainder.isEmpty {
-                                MarkdownPreviewView(markdown: thought.markdownRemainder, theme: theme, compact: true)
-                            }
-                            HStack(spacing: 8) {
-                                Label(thought.updatedLabel, systemImage: "clock")
-                                if let creator = thought.createdBy, !creator.isEmpty {
-                                    Label(creator, systemImage: "person.crop.circle")
+                HStack(spacing: 10) {
+                    TextField("Search titles or IDs", text: Binding(get: { search }, set: { search = $0; page = 0 }))
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Search thought titles or IDs")
+                    ActionButton(title: sortByTitle ? "Sort: title" : "Sort: newest", icon: "arrow.up.arrow.down") {
+                        sortByTitle.toggle(); page = 0
+                    }
+                }
+                Text("\(filteredThoughts.count) of \(model.thoughts.count) thoughts · page \(currentPage + 1) of \(pageCount)")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                if filteredThoughts.isEmpty {
+                    NativeEmptyState(title: "No matching thoughts", message: "Try another title or ID search.")
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                        ForEach(PublishingList.page(filteredThoughts, number: currentPage)) { thought in
+                            VStack(alignment: .leading, spacing: 9) {
+                                Text(thought.displayTitle)
+                                    .font(.system(size: 14, weight: .black))
+                                    .foregroundStyle(theme.text)
+                                    .lineLimit(3)
+                                if !thought.markdownRemainder.isEmpty {
+                                    MarkdownPreviewView(markdown: thought.markdownRemainder, theme: theme, compact: true)
                                 }
-                            }
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(theme.textTertiary)
-                            .lineLimit(1)
-                            HStack(spacing: 12) {
-                                Button("Open") {
-                                    model.openWebsite(path: "/thoughts/\(thought.id)", label: thought.title)
+                                HStack(spacing: 8) {
+                                    Label(thought.updatedLabel, systemImage: "clock")
+                                    if let creator = thought.createdBy, !creator.isEmpty {
+                                        Label(creator, systemImage: "person.crop.circle")
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.accent)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.textTertiary)
+                                .lineLimit(1)
+                                HStack(spacing: 12) {
+                                    Button("Open") {
+                                        model.loadThoughtIntoEditor(thought)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(theme.accent)
 
-                                Button("Edit") {
-                                    model.loadThoughtIntoEditor(thought)
-                                }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.textSecondary)
+                                    Button("Edit") {
+                                        model.loadThoughtIntoEditor(thought)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(theme.textSecondary)
 
-                                Button("Delete") {
-                                    deletingThought = thought
+                                    Button("Delete") {
+                                        deletingThought = thought
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(theme.danger)
                                 }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(theme.danger)
                             }
+                            .padding(13)
+                            .background(theme.card)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(theme.divider, lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
-                        .padding(13)
-                        .background(theme.card)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(theme.divider, lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    HStack {
+                        ActionButton(title: "Previous", icon: "chevron.left") { page = max(0, currentPage - 1) }
+                            .disabled(currentPage == 0)
+                        Spacer()
+                        ActionButton(title: "Next", icon: "chevron.right") { page = min(pageCount - 1, currentPage + 1) }
+                            .disabled(currentPage >= pageCount - 1)
                     }
                 }
             }

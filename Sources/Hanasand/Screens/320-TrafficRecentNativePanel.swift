@@ -13,6 +13,7 @@ struct TrafficRecentNativePanel: View {
     @State private var statusPrefix = "All statuses"
     @State private var expandedRecordID: String?
     @State private var status = "Recent traffic has not been loaded."
+    @State private var lastUpdatedAt: Date?
     @State private var isLoading = false
     @State private var requestGeneration = UUID()
 
@@ -48,6 +49,11 @@ struct TrafficRecentNativePanel: View {
                 .foregroundStyle(status.hasPrefix("Could not") || status.contains("unavailable") ? theme.danger : theme.textSecondary)
                 .textSelection(.enabled)
 
+            Text(refreshStatus)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             if isLoading && records.isEmpty {
                 NativeEmptyState(title: "Loading recent requests", message: "Fetching the latest traffic records.")
             } else if filteredRecords.isEmpty {
@@ -79,7 +85,10 @@ struct TrafficRecentNativePanel: View {
                 .disabled(page >= max(1, (total + pageSize - 1) / pageSize) || isLoading)
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            await refreshWhileVisible()
+        }
         .onDisappear { requestGeneration = UUID() }
     }
 
@@ -217,6 +226,7 @@ struct TrafficRecentNativePanel: View {
             domains = newDomains
             records = newPage.result
             total = newPage.total
+            lastUpdatedAt = .now
             status = "Loaded \(records.count) recent requests."
         } catch {
             guard requestGeneration == generation else { return }
@@ -235,6 +245,7 @@ struct TrafficRecentNativePanel: View {
             guard requestGeneration == generation else { return }
             records = result.result
             total = result.total
+            lastUpdatedAt = .now
             status = "Loaded \(records.count) recent requests."
         } catch {
             guard requestGeneration == generation else { return }
@@ -256,5 +267,26 @@ struct TrafficRecentNativePanel: View {
 
     private var apiBaseURL: URL {
         model.settings.apiBaseURL.normalizedBaseURL
+    }
+
+    private var refreshStatus: String {
+        guard let lastUpdatedAt else { return "Updates automatically every 30 seconds while viewing page 1." }
+        let updatedTime = lastUpdatedAt.formatted(date: .omitted, time: .standard)
+        return "Updated \(updatedTime) · Auto-refreshes every 30 seconds on page 1."
+    }
+
+    @MainActor
+    private func refreshWhileVisible() async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(TrafficRecentClient.autoRefreshIntervalSeconds))
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled,
+                  TrafficRecentClient.shouldAutoRefresh(page: page, isLoading: isLoading) else { continue }
+            await loadRecordsOnly()
+        }
     }
 }

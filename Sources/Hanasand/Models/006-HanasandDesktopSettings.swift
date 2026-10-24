@@ -29,6 +29,7 @@ struct HanasandDesktopSettings: Codable, Equatable {
     var desktopAgentBaseURL = "https://localhost:45731"
     var vpnURLScheme = "ciscoanyconnect://"
     var rdpHost = "localhost:5900"
+    var vncHost = "localhost:5900"
     var rdpUser = "macmini"
     var remoteDesktopProtocol = RemoteDesktopProtocol.screenSharing.rawValue
     var remoteDesktopTunnelCommand = Self.macMiniTunnelCommand
@@ -54,6 +55,7 @@ struct HanasandDesktopSettings: Codable, Equatable {
         case desktopAgentBaseURL
         case vpnURLScheme
         case rdpHost
+        case vncHost
         case rdpUser
         case remoteDesktopProtocol
         case remoteDesktopTunnelCommand
@@ -90,6 +92,9 @@ struct HanasandDesktopSettings: Codable, Equatable {
         }
         vpnURLScheme = try container.decodeIfPresent(String.self, forKey: .vpnURLScheme) ?? vpnURLScheme
         rdpHost = try container.decodeIfPresent(String.self, forKey: .rdpHost) ?? rdpHost
+        // Older Desktop versions used `rdpHost` for both Screen Sharing and RDP.
+        // Copy it into the new VNC field when loading an existing settings file.
+        vncHost = try container.decodeIfPresent(String.self, forKey: .vncHost) ?? rdpHost
         rdpUser = try container.decodeIfPresent(String.self, forKey: .rdpUser) ?? rdpUser
         remoteDesktopProtocol = try container.decodeIfPresent(String.self, forKey: .remoteDesktopProtocol) ?? remoteDesktopProtocol
         remoteDesktopTunnelCommand = try container.decodeIfPresent(String.self, forKey: .remoteDesktopTunnelCommand) ?? remoteDesktopTunnelCommand

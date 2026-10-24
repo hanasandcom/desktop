@@ -148,6 +148,43 @@ extension DesktopAgentModel {
         }
     }
 
+    func beginGoogleSignIn() async {
+        guard !isLoggingIn else { return }
+        isLoggingIn = true
+        loginStatus = "Checking Google sign-in"
+        do {
+            let client = DesktopGoogleOAuthClient(websiteBaseURL: settings.websiteBaseURL.normalizedBaseURL)
+            guard try await client.isConfigured() else {
+                throw DesktopGoogleOAuthError.server("Google sign-in is not configured on the server yet.")
+            }
+            let verifier = try makeCodeVerifier()
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URLString
+            let url = try client.authorizationURL(challenge: challenge)
+            loginStatus = "Connecting to Google"
+            try DesktopGoogleSignInSession.shared.start(url: url, verifier: verifier, model: self)
+        } catch {
+            isLoggingIn = false
+            loginStatus = error.localizedDescription
+        }
+    }
+
+    func completeHanasandGoogleSignIn(code: String, verifier: String) async {
+        defer { isLoggingIn = false }
+        loginStatus = "Completing Google sign-in"
+        do {
+            let client = DesktopGoogleOAuthClient(websiteBaseURL: settings.websiteBaseURL.normalizedBaseURL)
+            let response = try await client.exchange(code: code, verifier: verifier)
+            try activateHanasandSession(response, fallbackUserID: "")
+        } catch {
+            loginStatus = error.localizedDescription
+        }
+    }
+
+    func completeGoogleSignInWithError(_ message: String) {
+        isLoggingIn = false
+        loginStatus = message
+    }
+
     func completeHanasandSso(code: String, verifier: String) async {
         defer { isLoggingIn = false }
         loginStatus = "Completing sign-in"
@@ -308,6 +345,55 @@ private final class DesktopSsoSession: NSObject, ASWebAuthenticationPresentation
         }
 
         Task { await model.completeHanasandSso(code: code, verifier: verifier) }
+    }
+}
+
+@MainActor
+private final class DesktopGoogleSignInSession: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = DesktopGoogleSignInSession()
+
+    private var session: ASWebAuthenticationSession?
+    private weak var model: DesktopAgentModel?
+    private var verifier = ""
+
+    func start(url: URL, verifier: String, model: DesktopAgentModel) throws {
+        self.model = model
+        self.verifier = verifier
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "hanasand") { [weak self] callbackURL, error in
+            Task { @MainActor in self?.finish(callbackURL: callbackURL, error: error) }
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        self.session = session
+        guard session.start() else {
+            self.session = nil
+            self.model = nil
+            self.verifier = ""
+            throw DesktopGoogleOAuthError.couldNotStart
+        }
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first ?? NSWindow()
+    }
+
+    private func finish(callbackURL: URL?, error: Error?) {
+        session = nil
+        let verifier = self.verifier
+        self.verifier = ""
+        guard let model else { return }
+        self.model = nil
+        let wasCancelled = (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin
+        let result = DesktopGoogleOAuthCallback.sessionOutcome(callbackURL: callbackURL, wasCancelled: wasCancelled)
+        switch result {
+        case .success(let code):
+            Task { await model.completeHanasandGoogleSignIn(code: code, verifier: verifier) }
+        case .failure(let failure):
+            let message = failure == .invalidResponse && callbackURL != nil
+                ? "Google sign-in returned an invalid callback."
+                : failure.localizedDescription
+            model.completeGoogleSignInWithError(message)
+        }
     }
 }
 

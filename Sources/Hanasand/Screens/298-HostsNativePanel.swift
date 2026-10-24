@@ -4,6 +4,12 @@ import Foundation
 struct HostsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
+    @State private var consoleHost: HostOverviewEnvelope.Host?
+    @State private var initialConsoleHostID: String?
+
+    init(initialConsoleHostID: String? = nil) {
+        _initialConsoleHostID = State(initialValue: initialConsoleHostID)
+    }
 
     private let columns = [GridItem(.adaptive(minimum: 310), spacing: 12, alignment: .top)]
 
@@ -35,10 +41,34 @@ struct HostsNativePanel: View {
                 .font(.system(size: 12))
                 .foregroundStyle(theme.textSecondary)
         }
+        .sheet(item: $consoleHost) { host in
+            HostConsoleView(host: host,
+                            apiBaseURL: model.settings.apiBaseURL,
+                            userID: model.userIDForRequests,
+                            token: model.authTokenForRequests,
+                            isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty)
+        }
+        .task(id: model.hostOverview?.hosts.map { $0.id.rawValue }.joined(separator: ",") ?? "") {
+            guard let initialConsoleHostID,
+                  let host = model.hostOverview?.hosts.first(where: { $0.id.rawValue == initialConsoleHostID }) else { return }
+            consoleHost = host
+            self.initialConsoleHostID = nil
+        }
     }
 
     private func hostCard(_ host: HostOverviewEnvelope.Host) -> some View {
         NativeGroupPanel(title: host.name, subtitle: host.id.rawValue.uppercased()) {
+            HStack(spacing: 8) {
+                ActionButton(title: "Console", icon: "terminal") { consoleHost = host }
+                    .disabled(!hostConsoleMayOpen(
+                        hasAuth: model.hasHanasandAuth,
+                        isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty,
+                        userID: model.userIDForRequests,
+                        token: model.authTokenForRequests
+                    ))
+                Spacer(minLength: 0)
+            }
+
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Circle().fill(statusColor(host.status)).frame(width: 8, height: 8)

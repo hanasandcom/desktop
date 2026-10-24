@@ -28,7 +28,7 @@ extension DesktopAgentModel {
             uploadStatus = "No uploaded URL to open yet."
             return
         }
-        NSWorkspace.shared.open(url)
+        openURL(url.absoluteString, label: "Uploaded file")
         uploadStatus = "Opened uploaded file."
         append(meta: "Upload", body: url.absoluteString, kind: .command)
     }

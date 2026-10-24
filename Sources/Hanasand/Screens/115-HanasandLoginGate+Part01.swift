@@ -115,6 +115,14 @@ extension HanasandLoginGate {
             }
 
             secondaryButton(
+                title: model.isLoggingIn ? "Waiting" : "Continue with Google",
+                busy: model.isLoggingIn,
+                action: { Task { await model.beginGoogleSignIn() } }
+            )
+            .frame(maxWidth: .infinity)
+            .disabled(model.isLoggingIn)
+
+            secondaryButton(
                 title: model.isLoggingIn ? "Waiting" : "Continue with SSO",
                 busy: model.isLoggingIn,
                 action: { model.beginHanasandSso() }

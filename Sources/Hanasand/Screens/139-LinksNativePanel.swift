@@ -92,11 +92,14 @@ struct LinksNativePanel: View {
                     NSPasteboard.general.setString("\(model.settings.websiteBaseURL.normalizedBaseURL.appendingPathComponent("g").appendingPathComponent(link.id))", forType: .string)
                 }
                 ActionButton(title: "Open shortcut", icon: "arrow.up.right") {
-                    model.openWebsite(path: "/g/\(link.id)", label: link.id)
+                    guard let identifier = NativeRouteSelection.resolve(link.id, among: [link.id]) else { return }
+                    model.linkLookupID = identifier
+                    model.openNativeDashboard(path: "/g", label: "Link \(identifier)")
+                    Task { await model.lookupShortcutLink() }
                 }
                 ActionButton(title: "Open destination", icon: "safari") {
                     if let url = URL(string: link.path), url.scheme != nil {
-                        NSWorkspace.shared.open(url)
+                        model.openURL(url.absoluteString, label: "Shortcut destination")
                     }
                 }
                 Spacer()

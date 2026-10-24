@@ -32,7 +32,7 @@ extension IDEWorkspace {
                         }
                         BrowserAgentButton(title: "Preview", icon: "play.rectangle") {
                             if let file = model.selectedFile {
-                                model.preview(file, settings: appModel.settings)
+                                openNativeIDEPreview(file)
                                 model.showPreview = true
                                 model.persistWorkspaceState()
                             }

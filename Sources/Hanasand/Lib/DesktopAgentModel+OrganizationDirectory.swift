@@ -40,6 +40,33 @@ extension DesktopAgentModel {
         )
     }
 
+    @discardableResult
+    func selectOrganizationFromDeepLink(_ organizationID: String) async -> Bool {
+        guard hasHanasandAuth, !isImpersonatingForOrganizationSwitch,
+              !organizationID.isEmpty, organizationID != "personal" else { return false }
+        let accountID = userIDForRequests
+        let sessionToken = authTokenForRequests
+        do {
+            let snapshot = try await organizationDirectoryClient().loadSnapshot()
+            guard accountID == userIDForRequests, sessionToken == authTokenForRequests,
+                  !isImpersonatingForOrganizationSwitch else { return false }
+            applyOrganizationDirectory(snapshot, accountID: accountID)
+            guard snapshot.organizations.contains(where: { $0.id == organizationID && $0.status == "active" }),
+                  snapshot.memberships.contains(where: { $0.id == organizationID && $0.status == "active" }) else {
+                organizationDirectoryError = "This link targets an organization without an active membership."
+                return false
+            }
+            settings.selectedOrganizationID = organizationID
+            settings.selectedOrganizationUserID = accountID
+            organizationDirectoryError = nil
+            return true
+        } catch {
+            organizationDirectoryError = error.localizedDescription
+            organizationDirectorySnapshotUserID = ""
+            return false
+        }
+    }
+
     func loadOrganizationDirectory() async {
         guard !isLoadingOrganizationDirectory else { return }
         guard hasHanasandAuth else {

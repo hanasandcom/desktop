@@ -18,6 +18,11 @@ struct LogsNativePanel: View {
     @State var selectedLevel = "all"
     @State var expandedIDs: Set<String> = []
 
+    init(initialServiceFilter: String? = nil) {
+        let service = initialServiceFilter?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        _selectedService = State(initialValue: service.isEmpty ? "all" : service)
+    }
+
     let columns = [
         GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top),
     ]
@@ -43,7 +48,7 @@ struct LogsNativePanel: View {
                     FilterChip(title: "All services", active: selectedService == "all") {
                         selectedService = "all"
                     }
-                    ForEach(services.prefix(12), id: \.self) { service in
+                    ForEach(displayedServices, id: \.self) { service in
                         FilterChip(title: service, active: selectedService == service) {
                             selectedService = service
                         }
@@ -81,6 +86,12 @@ struct LogsNativePanel: View {
 
     var services: [String] {
         Array(Set(model.logs.map(\.service))).sorted()
+    }
+
+    private var displayedServices: [String] {
+        let visible = Array(services.prefix(12))
+        guard selectedService != "all", !visible.contains(selectedService) else { return visible }
+        return [selectedService] + visible
     }
 
     var filteredLogs: [DashboardLogEntry] {

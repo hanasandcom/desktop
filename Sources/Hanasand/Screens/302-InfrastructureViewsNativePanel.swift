@@ -52,7 +52,10 @@ struct InfrastructureContainersNativePanel: View {
                 ActionButton(title: isLoading ? "Loading…" : "Load containers", icon: "arrow.clockwise") { Task { await load() } }
                     .disabled(isLoading)
             }
-            if status != "Ready" && (snapshot != nil || status.contains("failed") || status.contains("sign in") || status.contains("access")) {
+            if let snapshot,
+               status != "Ready",
+               status != snapshot.unavailableReason,
+               (status.contains("failed") || status.contains("sign in") || status.contains("access")) {
                 NativeInlineStatus(message: status, isError: status.lowercased().contains("failed") || status.lowercased().contains("access") || status.lowercased().contains("sign in"))
             }
         }

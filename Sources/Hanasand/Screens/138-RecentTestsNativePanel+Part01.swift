@@ -69,6 +69,11 @@ extension RecentTestsNativePanel {
                 await refresh(manual: false)
             }
         }
+        .task(id: initialTestID) {
+            guard let initialTestID, !initialTestID.isEmpty else { return }
+            lookupID = initialTestID
+            await openResult(id: initialTestID)
+        }
         .confirmationDialog("Start this load test?", isPresented: $showStartConfirmation, titleVisibility: .visible) {
             Button("I own this endpoint or have written permission · Start", role: .destructive) {
                 Task { await createTest() }

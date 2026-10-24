@@ -25,18 +25,87 @@ extension DesktopAgentModel {
         let isUpdate = !selectedNoteID.isEmpty
         let path = isUpdate ? "notes/\(selectedNoteID)" : "notes"
         let method = isUpdate ? "PUT" : "POST"
+        let draftID = isUpdate ? selectedNoteID : DashboardNoteDraftStore.newNoteID
 
         do {
+            if isUpdate {
+                let store = DashboardNoteDraftStore()
+                let draft = store.draft(noteID: selectedNoteID, for: userIDForRequests)
+                let baseUpdatedAt = draft?.baseUpdatedAt ?? notes.first(where: { $0.id == selectedNoteID })?.updatedAt
+                let latestNotes: [DashboardNote] = try await requestJSON(
+                    settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("notes"),
+                    authenticated: true
+                )
+                notes = latestNotes
+                let latest = latestNotes.first(where: { $0.id == selectedNoteID })
+                guard let baseUpdatedAt, let latest, latest.updatedAt == baseUpdatedAt else {
+                    noteSaveConflict = true
+                    noteConflictServerNote = latest
+                    nativeDashboardStatus = latest == nil
+                        ? "This note was deleted on the website. Your local draft is preserved; review the conflict before saving."
+                        : "This note changed on the website. Your local draft is preserved; review both versions before saving."
+                    return
+                }
+            }
             _ = try await requestPrettyText(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath(path),
                 method: method,
                 body: body,
                 authenticated: true
             )
+            DashboardNoteDraftStore().remove(noteID: draftID, for: userIDForRequests)
+            noteSaveConflict = false
+            noteConflictServerNote = nil
             nativeDashboardStatus = "Saved note."
             await loadNativeDashboardData()
         } catch {
             nativeDashboardStatus = error.localizedDescription
+        }
+    }
+
+    func useWebsiteNoteVersion() {
+        guard let noteConflictServerNote else { return }
+        DashboardNoteDraftStore().remove(noteID: noteConflictServerNote.id, for: userIDForRequests)
+        selectedNoteID = noteConflictServerNote.id
+        noteDraftTitle = noteConflictServerNote.title
+        noteDraftContent = noteConflictServerNote.content
+        noteSaveConflict = false
+        self.noteConflictServerNote = nil
+        nativeDashboardStatus = "Loaded the website version."
+    }
+
+    func saveNoteConflictAsNewNote() async {
+        guard noteSaveConflict else { return }
+        let conflictedID = selectedNoteID
+        let title = noteDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = noteDraftContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty || !content.isEmpty else {
+            nativeDashboardStatus = "Write something first."
+            return
+        }
+        let payload = ["title": title, "content": content, "source": "desktop"]
+        guard let body = try? JSONEncoder().encode(payload) else {
+            nativeDashboardStatus = "Unable to encode note."
+            return
+        }
+        do {
+            _ = try await requestPrettyText(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("notes"),
+                method: "POST",
+                body: body,
+                authenticated: true
+            )
+            DashboardNoteDraftStore().remove(noteID: conflictedID, for: userIDForRequests)
+            DashboardNoteDraftStore().remove(noteID: DashboardNoteDraftStore.newNoteID, for: userIDForRequests)
+            noteSaveConflict = false
+            noteConflictServerNote = nil
+            selectedNoteID = ""
+            noteDraftTitle = ""
+            noteDraftContent = ""
+            nativeDashboardStatus = "Saved your draft as a new note."
+            await loadNativeDashboardData()
+        } catch {
+            nativeDashboardStatus = "The new note could not be confirmed. Your local draft is preserved. Review notes before retrying."
         }
     }
 
@@ -48,6 +117,9 @@ extension DesktopAgentModel {
                 method: "DELETE",
                 authenticated: true
             )
+            DashboardNoteDraftStore().remove(noteID: selectedNoteID, for: userIDForRequests)
+            noteSaveConflict = false
+            noteConflictServerNote = nil
             nativeDashboardStatus = "Deleted note."
             selectedNoteID = ""
             noteDraftTitle = ""
@@ -59,6 +131,13 @@ extension DesktopAgentModel {
     }
 
     func loadSelectedNoteIntoDraft() {
+        let draftStore = DashboardNoteDraftStore()
+        let draftID = selectedNoteID.isEmpty ? DashboardNoteDraftStore.newNoteID : selectedNoteID
+        if let draft = draftStore.draft(noteID: draftID, for: userIDForRequests) {
+            noteDraftTitle = draft.title
+            noteDraftContent = draft.content
+            return
+        }
         guard let selected = notes.first(where: { $0.id == selectedNoteID }) else {
             noteDraftTitle = ""
             noteDraftContent = ""
@@ -118,8 +197,9 @@ extension DesktopAgentModel {
     }
 
     func openShare(_ share: DashboardShare) {
-        let target = share.path?.trimmingCharacters(in: .whitespacesAndNewlines)
-        openWebsite(path: "/s/\((target?.isEmpty == false ? target : share.id) ?? share.id)", label: share.displayName)
+        guard NativeRouteSelection.resolve(share.id, among: shares.map(\.id)) != nil else { return }
+        loadShareIntoEditor(share)
+        openNativeDashboard(path: "/s", label: share.displayName)
     }
 
     func loadShareIntoEditor(_ share: DashboardShare) {

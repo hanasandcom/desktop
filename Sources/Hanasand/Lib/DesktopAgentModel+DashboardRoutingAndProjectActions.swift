@@ -33,28 +33,42 @@ extension DesktopAgentModel {
         case "/db/restore":
             backupFiles = (try? decoder.decode([DashboardBackupFile].self, from: data)) ?? []
         case "/notes":
-            notes = (try? decoder.decode([DashboardNote].self, from: data)) ?? []
-            if selectedNoteID.isEmpty || !notes.contains(where: { $0.id == selectedNoteID }) {
-                selectedNoteID = notes.first?.id ?? ""
+            guard let remoteNotes = try? decoder.decode([DashboardNote].self, from: data) else { return }
+            notes = remoteNotes
+            let draftStore = DashboardNoteDraftStore()
+            if selectedNoteID.isEmpty,
+               let draft = draftStore.drafts(for: userIDForRequests).first {
+                restoreNoteDraft(draft)
+            } else if !selectedNoteID.isEmpty,
+                      !notes.contains(where: { $0.id == selectedNoteID }),
+                      let draft = draftStore.draft(noteID: selectedNoteID, for: userIDForRequests) {
+                restoreNoteDraft(draft)
+            } else {
+                if selectedNoteID.isEmpty || !notes.contains(where: { $0.id == selectedNoteID }) {
+                    selectedNoteID = notes.first?.id ?? ""
+                }
+                loadSelectedNoteIntoDraft()
             }
-            loadSelectedNoteIntoDraft()
         case "/s":
             shares = (try? decoder.decode([DashboardShare].self, from: data)) ?? []
+            if let selectedShare = shares.first(where: { $0.id == selectedNativeDashboardDetailID || $0.path == selectedNativeDashboardDetailID }) {
+                loadShareIntoEditor(selectedShare)
+            }
         case "/content/articles":
             articles = (try? decoder.decode([DashboardArticle].self, from: data)) ?? []
             if selectedArticleID.isEmpty || !articles.contains(where: { $0.id == selectedArticleID }) {
                 selectedArticleID = articles.first?.id ?? ""
-                if let article = articles.first {
-                    loadArticleIntoEditor(article)
-                }
+            }
+            if let article = articles.first(where: { $0.id == selectedArticleID }) {
+                loadArticleIntoEditor(article)
             }
         case "/content/thoughts":
             thoughts = (try? decoder.decode([DashboardThought].self, from: data)) ?? []
             if selectedThoughtID.isEmpty || !thoughts.contains(where: { $0.id == selectedThoughtID }) {
                 selectedThoughtID = thoughts.first?.id ?? ""
-                if let thought = thoughts.first {
-                    loadThoughtIntoEditor(thought)
-                }
+            }
+            if let thought = thoughts.first(where: { $0.id == selectedThoughtID }) {
+                loadThoughtIntoEditor(thought)
             }
         case "/system/ai":
             if let envelope = try? decoder.decode(AIModelsEnvelope.self, from: data) {
@@ -74,7 +88,9 @@ extension DesktopAgentModel {
             }
         case "/users", "/management":
             users = (try? decoder.decode([DashboardUser].self, from: data)) ?? []
-            if selectedUserID.isEmpty || !users.contains(where: { $0.id == selectedUserID }) {
+            if !selectedNativeDashboardDetailID.isEmpty, users.contains(where: { $0.id == selectedNativeDashboardDetailID }) {
+                selectedUserID = selectedNativeDashboardDetailID
+            } else if selectedUserID.isEmpty || !users.contains(where: { $0.id == selectedUserID }) {
                 selectedUserID = users.first?.id ?? ""
             }
         case "/role":

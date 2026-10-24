@@ -30,8 +30,11 @@ struct ProfileNativePanel: View {
     @State var confirmRevokeOtherSessions = false
     @State var confirmLogout = false
     @State var confirmDeleteAccount = false
+    var initialSection: String? = nil
 
     var body: some View {
+        ScrollViewReader { proxy in
+        Group {
         if let profile = model.profile {
             VStack(alignment: .leading, spacing: 14) {
                 NativeGroupPanel(title: "Account", subtitle: profile.id) {
@@ -104,6 +107,7 @@ struct ProfileNativePanel: View {
                         CompactInfoCard(title: "Roles", lines: ["No roles returned for this session."])
                     }
                 }
+                .id("profile")
 
                 accountActivitySection
 
@@ -114,7 +118,7 @@ struct ProfileNativePanel: View {
                             title: "Active sessions",
                             value: isLoadingAccountSessions ? "Loading" : (accountSessionsError == nil ? "\(accountSessions.filter(\.isActive).count)" : "Unavailable"),
                             icon: "laptopcomputer"
-                        )
+                        ).id("sessions")
                         FeatureCard(title: "Managed certs", value: "\(model.profileCertificates.filter { $0.isManaged }.count)", icon: "checkmark.shield")
                     }
                     HStack(spacing: 10) {
@@ -222,6 +226,7 @@ struct ProfileNativePanel: View {
 
                     sshKeysSection
                 }
+                .id("security")
             }
             .alert("Revoke session?", isPresented: sessionRevokePresented) {
                 Button("Revoke", role: .destructive) {
@@ -282,6 +287,12 @@ struct ProfileNativePanel: View {
             .task(id: activityCredentialKey) { await loadAccountActivity() }
         } else {
             NativeEmptyState(title: "Profile not loaded", message: "Hanasand session is not ready yet. Log in again if this profile does not load.")
+        }
+        }
+        .onChange(of: initialSection, initial: true) { _, section in
+            guard let section else { return }
+            DispatchQueue.main.async { proxy.scrollTo(section, anchor: .top) }
+        }
         }
     }
 
@@ -455,6 +466,7 @@ struct ProfileNativePanel: View {
             }
             .disabled(model.isLoadingNativeDashboard || model.isProfileIdentityImpersonating)
         }
+        .id("ssh-keys")
         if model.isProfileIdentityImpersonating {
             NativeNotice(message: "Return to your own account to manage SSH keys.", tone: .info)
         }
@@ -490,6 +502,13 @@ struct ProfileNativePanel: View {
                                 [key.lastUsedServer, key.lastUsedIp].compactMap { $0 }.joined(separator: " · "),
                             ].filter { !$0.isEmpty }
                         )
+                        if let userAgent = key.lastUsedUserAgent, !userAgent.isEmpty {
+                            Text("Last used by: \(userAgent)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(theme.textTertiary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         HStack {
                             Spacer()
                             ActionButton(title: "Remove", icon: "trash", tone: .danger) {

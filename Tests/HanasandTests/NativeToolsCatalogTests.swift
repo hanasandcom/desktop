@@ -37,34 +37,17 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertTrue(NativeToolsCatalog.sections(dashboard: dashboard, administration: []).isEmpty)
     }
 
-    func testWebsiteOwnedCollectionRunsIsDiscoverableAndKeepsItsExactDestination() {
-        let collectionRuns = DesktopAction.url(
-            "Collection Runs",
-            "Open the global intelligence collection run history.",
-            "clock.arrow.circlepath",
-            "https://ti.hanasand.com/dashboard/ti/runs"
-        )
-
-        let sections = NativeToolsCatalog.sections(dashboard: [collectionRuns], administration: [])
-
-        XCTAssertEqual(sections.map(\.title), ["Security & intelligence"])
-        XCTAssertEqual(sections.flatMap(\.actions).map(\.title), ["Collection Runs"])
-        guard case .url(let destination) = sections[0].actions[0].kind else {
-            return XCTFail("Collection Runs should open the website-owned destination")
-        }
-        XCTAssertEqual(destination, "https://ti.hanasand.com/dashboard/ti/runs")
-    }
-
-    func testCollectionRunsCatalogClassificationRejectsLookalikeOrModifiedURLs() {
-        let actions = [
-            DesktopAction.url("Spoofed host", "", "link", "https://ti.hanasand.com.attacker.example/dashboard/ti/runs"),
-            DesktopAction.url("Insecure scheme", "", "link", "http://ti.hanasand.com/dashboard/ti/runs"),
-            DesktopAction.url("Modified destination", "", "link", "https://ti.hanasand.com/dashboard/ti/runs?user=other"),
-            DesktopAction.url("Credential URL", "", "link", "https://user@ti.hanasand.com/dashboard/ti/runs"),
-            DesktopAction.url("Alternate port", "", "link", "https://ti.hanasand.com:8443/dashboard/ti/runs"),
+    func testCollectionRunsAndCaptureHistoryAreNativeDestinations() {
+        let intelligence = [
+            DesktopAction.route("Collection Runs", "Review global intelligence collection runs.", "clock.arrow.circlepath", "/ti/runs"),
+            DesktopAction.route("Capture History", "Review safe source capture metadata.", "doc.text.magnifyingglass", "/ti/captures"),
         ]
 
-        XCTAssertTrue(NativeToolsCatalog.sections(dashboard: actions, administration: []).isEmpty)
+        let sections = NativeToolsCatalog.sections(dashboard: intelligence, administration: [])
+
+        XCTAssertEqual(sections.map(\.title), ["Security & intelligence"])
+        XCTAssertEqual(sections.flatMap(\.actions).map(\.title), ["Collection Runs", "Capture History"])
+        XCTAssertEqual(sections[0].actions.compactMap(\.routePath), ["/ti/runs", "/ti/captures"])
     }
 
     func testParityRoutesAreDiscoverableInTheirNativeSections() {

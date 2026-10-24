@@ -72,6 +72,7 @@ struct SettingsWorkspace: View {
                 isExpanded: $showEndpointSettings
             ) {
                 VStack(alignment: .leading, spacing: 10) {
+                    SettingsField(label: "Site base URL", text: $model.settings.websiteBaseURL)
                     SettingsField(label: "API base", text: $model.settings.apiBaseURL)
                     SettingsField(label: "Internal API", text: $model.settings.internalAPIBaseURL)
                     SettingsField(label: "CDN base", text: $model.settings.cdnBaseURL)
@@ -96,7 +97,8 @@ struct SettingsWorkspace: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    SettingsField(label: "Remote host", text: $model.settings.rdpHost)
+                    SettingsField(label: "RDP host", text: $model.settings.rdpHost)
+                    SettingsField(label: "VNC host", text: $model.settings.vncHost)
                     SettingsField(label: "Remote user", text: $model.settings.rdpUser)
                     SettingsField(label: "Tunnel command", text: $model.settings.remoteDesktopTunnelCommand)
                     SettingsField(label: "Server base", text: $model.settings.serverBaseURL)

@@ -2,6 +2,18 @@ import XCTest
 @testable import Hanasand
 
 final class ThreatIntelligenceTests: XCTestCase {
+    func testNativeThreatSearchRouteUsesItsDetailAsTheInitialQuery() {
+        XCTAssertEqual(
+            ThreatIntelligenceRouteSearch.initialQuery(path: "/ti", detailID: "  CVE-2026-1234  "),
+            "CVE-2026-1234"
+        )
+        XCTAssertNil(ThreatIntelligenceRouteSearch.initialQuery(path: "/ti", detailID: "  "))
+        XCTAssertNil(ThreatIntelligenceRouteSearch.initialQuery(path: "/ti/sources", detailID: "feed-123"))
+        XCTAssertEqual(ThreatIntelligenceRouteSearch.initialQuery(path: "/ti", detailID: "", query: "domain.example"), "domain.example")
+        XCTAssertEqual(ThreatIntelligenceRouteSearch.initialQuery(path: "/ti", detailID: "CVE-1", query: "ignored"), "CVE-1")
+        XCTAssertNil(ThreatIntelligenceRouteSearch.initialQuery(path: "/ti", detailID: "  ", query: "  "))
+    }
+
     func testDecodesSearchEvidenceAndMarksCatalogOnlyIdentity() throws {
         let result = try JSONDecoder().decode(ThreatIntelSearchResult.self, from: Data(#"""
         {"query":"Example Actor","summary":"Public reporting summary","status":"ready","mode":"seeded","generatedAt":"2026-01-01T00:00:00Z","confidence":0.82,"aliases":["Alias"],"notes":["Review source"],"actorIdentity":{"catalogMatched":true,"activityEvidenceAvailable":false,"candidates":[{"canonicalName":"Example Actor","description":"Catalog match","sourceUrl":"https://reports.example.org/a","associatedNames":["Alias"]}]},"sources":[{"id":"s1","name":"Report","type":"public_report","provenance":"Publisher report","url":"https://reports.example.org/a","lastCollectedAt":"2026-01-01T00:00:00Z"}],"recentActivity":[{"title":"Reported incident","detail":"Claim under review","date":"2026-01-01","sourceIds":["s1"],"reviewState":"unverified","corroborationState":"single_source","url":"https://reports.example.org/a"}],"ttps":[{"attackId":"T1001","name":"Data Obfuscation","tactic":"Command and Control","detail":"Description","sourceIds":["s1"]}],"targets":[{"sector":"Finance","regions":["Europe"],"rationale":"Publicly reported"}]}

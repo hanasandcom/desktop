@@ -1,0 +1,314 @@
+import AppKit
+import SwiftUI
+
+struct NativePublicInfoPanel: View {
+    let page: NativePublicInfoPage
+    let onNavigate: (String) -> Void
+
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    @AppStorage("hanasand.desktop.optionalCookieConsent") private var optionalConsent = "unset"
+    @State private var contactName = ""
+    @State private var contactEmail = ""
+    @State private var contactCompany = ""
+    @State private var contactSubject = ""
+    @State private var contactMessage = ""
+    @State private var contactStatus = ""
+    @State private var contactError = ""
+    @State private var contactTicket = ""
+    @State private var isSubmitting = false
+    @State private var search = ""
+    @State private var selectedFAQCategory = "All"
+
+    private var filteredFAQs: [NativePublicInfoFAQ] {
+        NativePublicInfoPage.faqItems.filter { item in
+            (selectedFAQCategory == "All" || item.category == selectedFAQCategory)
+                && (search.isEmpty || "\(item.question) \(item.answer)".localizedCaseInsensitiveContains(search))
+        }
+    }
+
+    private var faqCategories: [String] {
+        ["All"] + Array(Set(NativePublicInfoPage.faqItems.map(\.category))).sorted()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            NativeGroupPanel(title: page.eyebrow, subtitle: "") {
+                Text(page.title)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(page.intro)
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if page.kind == .home { homeSearch }
+                if page.kind == .contact { contactForm }
+                if page.kind == .faq { faqControls }
+                if page.kind == .cookieSettings { cookieSettingsControls }
+            }
+
+            if page.kind == .faq {
+                faqContent
+            } else if page.kind == .reservedUsernames {
+                reservedUsernameContent
+            } else if page.kind == .pricing {
+                pricingContent
+            } else {
+                ForEach(page.sections) { section in
+                    NativeGroupPanel(title: section.title, subtitle: "") {
+                        ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                            Text(paragraph)
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                        if !section.bullets.isEmpty {
+                            VStack(alignment: .leading, spacing: 7) {
+                                ForEach(section.bullets, id: \.self) { bullet in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Image(systemName: "circle.fill")
+                                            .font(.system(size: 4))
+                                            .foregroundStyle(theme.accent)
+                                            .padding(.top, 6)
+                                        Text(bullet)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(theme.textSecondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if page.kind == .home {
+                PublicExposureActivityNativePanel()
+            }
+
+            if !page.links.isEmpty {
+                NativeGroupPanel(title: page.kind == .home ? "Explore Hanasand" : "Related", subtitle: "") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), alignment: .leading)], alignment: .leading, spacing: 8) {
+                        ForEach(page.links) { link in
+                            Button { open(link.route) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(link.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                                    if !link.detail.isEmpty {
+                                        Text(link.detail).font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                                .padding(9)
+                                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens the native \(link.title) page")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var homeSearch: some View {
+        HStack(spacing: 8) {
+            TextField("Search a company, vendor, or domain", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { submitSearch() }
+            ActionButton(title: "Search", icon: "magnifyingglass") { submitSearch() }
+        }
+    }
+
+    private var faqControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search questions", text: $search).textFieldStyle(.roundedBorder)
+            Picker("Category", selection: $selectedFAQCategory) {
+                ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var faqContent: some View {
+        NativeGroupPanel(title: "Frequently asked questions", subtitle: "\(filteredFAQs.count) answers") {
+            if filteredFAQs.isEmpty {
+                NativeEmptyState(title: "No matching answers", message: "Try a different search or category.")
+            } else {
+                ForEach(filteredFAQs) { item in
+                    DisclosureGroup {
+                        Text(item.answer)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.question).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
+                            Text(item.category.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                        }
+                    }
+                    .padding(.vertical, 5)
+                    if item.id != filteredFAQs.last?.id { Divider().overlay(theme.divider) }
+                }
+            }
+        }
+    }
+
+    private var reservedUsernameContent: some View {
+        NativeGroupPanel(title: "Protected usernames", subtitle: "\(NativePublicInfoPage.reservedNames.count) exact names, plus lookalike patterns") {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)], alignment: .leading, spacing: 7) {
+                ForEach(NativePublicInfoPage.reservedNames, id: \.self) { username in
+                    Text(username)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var pricingContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), alignment: .top)], alignment: .leading, spacing: 10) {
+                ForEach(NativePublicInfoPage.plans) { plan in
+                    NativeGroupPanel(title: plan.name, subtitle: plan.quota) {
+                        Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
+                        ForEach(plan.features, id: \.self) { feature in
+                            Label(feature, systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                        }
+                        ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
+                            open("/subscription")
+                        }
+                    }
+                }
+            }
+            ForEach(page.sections) { section in
+                NativeGroupPanel(title: section.title, subtitle: "") {
+                    ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                        Text(paragraph).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    ActionButton(title: "Manage a container", icon: "shippingbox") { open("/vms") }
+                }
+            }
+            Text("Secure checkout is handled by Stripe.")
+                .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    private var cookieSettingsControls: some View {
+        NativeGroupPanel(title: "Optional app measurement", subtitle: optionalConsent == "optional" ? "Optional consent saved" : optionalConsent == "essential" ? "Essential only" : "No preference saved") {
+            Text("Required account and security functions remain enabled. This preference applies to the desktop app; it does not change website cookies or browser storage.")
+                .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    consentActions
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    consentActions
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var consentActions: some View {
+        ActionButton(title: "Allow optional", icon: "checkmark.circle") { optionalConsent = "optional" }
+        ActionButton(title: "Essential only", icon: "lock.shield") { optionalConsent = "essential" }
+        ActionButton(title: "Reset choice", icon: "arrow.counterclockwise") { optionalConsent = "unset" }
+    }
+
+    private var contactForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            contactField("Name", text: $contactName)
+            contactField("Email", text: $contactEmail)
+            contactField("Company or team (optional)", text: $contactCompany)
+            contactField("Subject", text: $contactSubject)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Message").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                TextEditor(text: $contactMessage)
+                    .frame(minHeight: 130)
+                    .padding(5)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            if !contactError.isEmpty { NativeNotice(message: contactError) }
+            if !contactStatus.isEmpty {
+                NativeNotice(message: contactStatus + (contactTicket.isEmpty ? "" : " Ticket \(contactTicket)."), tone: .success)
+            }
+            ActionButton(title: isSubmitting ? "Sending…" : "Send request", icon: isSubmitting ? "hourglass" : "paperplane") {
+                Task { await submitContactRequest() }
+            }
+            .disabled(isSubmitting || !contactFormIsValid)
+            Text("Or email contact@hanasand.com")
+                .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
+        }
+    }
+
+    private var contactFormIsValid: Bool {
+        let emailParts = contactEmail.split(separator: "@")
+        return !contactName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && emailParts.count == 2 && emailParts[1].contains(".")
+            && contactSubject.trimmingCharacters(in: .whitespacesAndNewlines).count >= 5
+            && contactMessage.trimmingCharacters(in: .whitespacesAndNewlines).count >= 20
+    }
+
+    private func contactField(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary)
+            TextField(title, text: text).textFieldStyle(.roundedBorder)
+        }
+    }
+
+    @MainActor private func submitContactRequest() async {
+        guard contactFormIsValid, !isSubmitting else { return }
+        isSubmitting = true
+        contactError = ""
+        contactStatus = ""
+        defer { isSubmitting = false }
+        do {
+            let client = try NativePublicInfoClient(apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL.absoluteString)
+            let response = try await client.submit(NativePublicContactRequest(
+                name: contactName.trimmingCharacters(in: .whitespacesAndNewlines),
+                email: contactEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                company: contactCompany.trimmingCharacters(in: .whitespacesAndNewlines),
+                subject: contactSubject.trimmingCharacters(in: .whitespacesAndNewlines),
+                message: contactMessage.trimmingCharacters(in: .whitespacesAndNewlines),
+                source: page.route
+            ))
+            contactTicket = response.ticketID ?? "received"
+            contactStatus = response.nextStep ?? "We received your request and will reply by email."
+        } catch {
+            contactError = (error as? LocalizedError)?.errorDescription ?? "Unable to send the request right now."
+        }
+    }
+
+    private func submitSearch() {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        var components = URLComponents()
+        components.path = "/ti"
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        open(components.string ?? "/ti")
+    }
+
+    private func open(_ route: String) {
+        if route.hasPrefix("mailto:"), let url = URL(string: route) {
+            NSWorkspace.shared.open(url)
+        } else {
+            onNavigate(route)
+        }
+    }
+}

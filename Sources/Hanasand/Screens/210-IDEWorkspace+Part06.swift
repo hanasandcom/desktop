@@ -12,6 +12,13 @@ import WebKit
 
 extension IDEWorkspace {
 
+    func openNativeIDEPreview(_ file: IDEShareFile) {
+        let base = appModel.settings.websiteBaseURL.normalizedBaseURL
+        let trimmed = file.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let url = trimmed.isEmpty ? base.absoluteString : base.appendingPathComponent(trimmed).absoluteString
+        _ = appModel.routeOwnedHanasandBrowserURL(url, source: "IDE preview")
+    }
+
     var ideHeader: some View {
         HStack(spacing: 10) {
             if let file = model.selectedFile {
@@ -86,7 +93,7 @@ extension IDEWorkspace {
             }
             BrowserAgentButton(title: "Preview", icon: "play.rectangle") {
                 if let file = model.selectedFile {
-                    model.preview(file, settings: appModel.settings)
+                    openNativeIDEPreview(file)
                 }
             }
             BrowserAgentButton(title: model.showPreview ? "Hide preview" : "Show preview", icon: "rectangle.rightthird.inset.filled") {
@@ -98,7 +105,7 @@ extension IDEWorkspace {
                 model.persistWorkspaceState()
             }
             BrowserAgentButton(title: "Open /s", icon: "square.and.arrow.up") {
-                model.previewTab?.load(appModel.settings.websiteBaseURL.normalizedBaseURL.appendingPathComponent("s").absoluteString)
+                appModel.openNativeDashboard(path: "/s", label: "Shares")
             }
         }
         .foregroundStyle(theme.text)

@@ -162,7 +162,73 @@ extension DesktopAgentModel {
 
     func newNoteDraft() {
         selectedNoteID = ""
-        noteDraftTitle = ""
-        noteDraftContent = ""
+        if let draft = DashboardNoteDraftStore().draft(noteID: DashboardNoteDraftStore.newNoteID, for: userIDForRequests) {
+            noteDraftTitle = draft.title
+            noteDraftContent = draft.content
+        } else {
+            noteDraftTitle = ""
+            noteDraftContent = ""
+        }
+    }
+
+    func updateNoteDraftTitle(_ title: String) {
+        noteDraftTitle = title
+        persistNoteDraft()
+    }
+
+    func updateNoteDraftContent(_ content: String) {
+        noteDraftContent = content
+        persistNoteDraft()
+    }
+
+    func persistNoteDraft() {
+        let draftID = selectedNoteID.isEmpty ? DashboardNoteDraftStore.newNoteID : selectedNoteID
+        let store = DashboardNoteDraftStore()
+        if draftID == DashboardNoteDraftStore.newNoteID,
+           noteDraftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           noteDraftContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.remove(noteID: draftID, for: userIDForRequests)
+            return
+        }
+        let existingDraft = store.draft(noteID: draftID, for: userIDForRequests)
+        let baseUpdatedAt = notes.first(where: { $0.id == selectedNoteID })?.updatedAt ?? existingDraft?.baseUpdatedAt
+        let draft = DashboardNoteDraft(
+            noteID: draftID,
+            title: noteDraftTitle,
+            content: noteDraftContent,
+            baseUpdatedAt: baseUpdatedAt,
+            savedAt: Date()
+        )
+        store.save(draft, for: userIDForRequests)
+    }
+
+    func restoreLatestNoteDraft() {
+        let store = DashboardNoteDraftStore()
+        guard let draft = store.drafts(for: userIDForRequests).first else { return }
+        restoreNoteDraft(draft)
+    }
+
+    func restoreNoteDraft(_ draft: DashboardNoteDraft) {
+        if draft.noteID == DashboardNoteDraftStore.newNoteID {
+            selectedNoteID = ""
+            noteDraftTitle = draft.title
+            noteDraftContent = draft.content
+            return
+        }
+
+        selectedNoteID = draft.noteID
+        noteDraftTitle = draft.title
+        noteDraftContent = draft.content
+        if !notes.contains(where: { $0.id == draft.noteID }) {
+            notes = [DashboardNote(
+                id: draft.noteID,
+                title: draft.title,
+                content: draft.content,
+                source: "desktop",
+                ownerID: userIDForRequests,
+                createdAt: nil,
+                updatedAt: draft.baseUpdatedAt
+            )] + notes
+        }
     }
 }

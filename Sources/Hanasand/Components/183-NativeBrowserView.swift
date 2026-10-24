@@ -12,10 +12,17 @@ import WebKit
 
 struct NativeBrowserView: NSViewRepresentable {
     @ObservedObject var tab: BrowserTabState
+    var onOpenNativeHanasandRoute: ((String) -> Bool)? = nil
+    var configuredWebsiteBaseURL: String? = nil
 
     func makeNSView(context: Context) -> WKWebView {
-        tab.webView
+        tab.onOpenNativeHanasandRoute = onOpenNativeHanasandRoute
+        tab.configuredWebsiteBaseURL = configuredWebsiteBaseURL
+        return tab.webView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        tab.onOpenNativeHanasandRoute = onOpenNativeHanasandRoute
+        tab.configuredWebsiteBaseURL = configuredWebsiteBaseURL
+    }
 }

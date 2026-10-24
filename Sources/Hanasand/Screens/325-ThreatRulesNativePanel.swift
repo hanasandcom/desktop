@@ -4,6 +4,7 @@ struct ThreatRulesNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     let category: String
+    var initialRuleID: String? = nil
     @State private var page: ThreatRulesPage?
     @State private var selected: ThreatRuleRecord?
     @State private var selectedDetail: RuleDetailEnvelope?
@@ -78,7 +79,7 @@ struct ThreatRulesNativePanel: View {
             } else if busy { NativeEmptyState(title: "Loading rules", message: "Checking the selected organization and rule access.") }
             else { NativeEmptyState(title: model.hasHanasandAuth ? "Select an organization" : "Sign in required", message: model.hasHanasandAuth ? "Choose an active organization in Organizations to review its rules." : "Sign in to review organization rules.") }
         }
-        .task(id: "\(organizationID):\(category):\(model.userIDForRequests)") { await load() }
+        .task(id: "\(organizationID):\(category):\(initialRuleID ?? ""):\(model.userIDForRequests)") { await load() }
         .task(id: "\(organizationID):\(selected?.id ?? "")") { await refreshSelectedRuleMetrics() }
         .confirmationDialog("Save rule changes?", isPresented: $confirmSave, titleVisibility: .visible) {
             Button(selected == nil ? "Create rule" : "Save changes", role: draftAction == "drop" ? .destructive : nil) { Task { await save() } }
@@ -238,6 +239,10 @@ struct ThreatRulesNativePanel: View {
         storageEstimateStatus = ""
         showingEditor = false
         guard model.hasHanasandAuth, !organizationID.isEmpty, model.settings.selectedOrganizationUserID == model.userIDForRequests else { page = nil; return }
+        if let initialRuleID, !initialRuleID.isEmpty {
+            await loadRuleDetail(id: initialRuleID)
+            return
+        }
         busy = true; error = ""; status = "Loading \(title.lowercased())"
         defer { busy = false }
         do {

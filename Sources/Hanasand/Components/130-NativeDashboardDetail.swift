@@ -14,6 +14,16 @@ struct NativeDashboardDetail: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
 
+    static func hasNativePanel(for path: String) -> Bool {
+        switch path {
+        case "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings", "/privacy", "/terms", "/reserved-usernames", "/pricing", "/solutions/scanner", "/solutions/security-monitoring",
+             "/dashboard", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/monitor", "/ti/darkweb/index", "/activity", "/ai/workspace", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/organizations", "/organizations/team", "/ti", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/organization-api-keys", "/api", "/api/openapi", "/developers", "/public-profile", "/sandbox", "/sandbox/result", "/sandbox/report", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/images/library", "/cdn/files", "/shared/album", "/scanner", "/dashboard/scanner", "/organization-privacy", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/system/hosts", "/system/updates", "/g", "/dashboard/tests", "/load-testing", "/test", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron", "/mail", "/system", "/system/containers", "/traffic/blocklist", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/system/ai", "/system/rates", "/profile", "/management", "/users", "/role", "/s", "/repositories", "/content/articles", "/content/thoughts", "/notes", "/db", "/db/backups", "/db/restore", "/vulnerabilities", "/traffic", "/upload", "/dashboard/files":
+            return true
+        default:
+            return false
+        }
+    }
+
     var body: some View {
         FeatureWorkspace(title: model.selectedDashboardTitle, subtitle: statusSubtitle) {
             HStack(spacing: 8) {
@@ -34,12 +44,16 @@ struct NativeDashboardDetail: View {
             nativeDashboardBody
         }
         .task(id: model.selectedDashboardPath) {
+            let path = model.selectedDashboardPath ?? ""
+            let ownedByPanel = ["/activity", "/ai/workspace", "/sandbox/result", "/sandbox/report", "/images/library", "/cdn/files", "/shared/album"].contains(path)
+                || (path == "/s" && !model.selectedNativeDashboardDetailID.isEmpty)
+            guard !ownedByPanel else { return }
             await model.loadNativeDashboardData()
         }
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/s", "/repositories", "/ti/profiles", "/ti/sources", "/ti/timeliness", "/vulnerabilities", "/db/backups"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/sandbox/result", "/sandbox/report", "/activity", "/ai/workspace", "/monitor", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/cdn/files", "/shared/album", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/s", "/repositories", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/vulnerabilities", "/db/backups"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
@@ -64,9 +78,37 @@ struct NativeDashboardDetail: View {
         case "/dashboard":
             DashboardOverviewNativePanel()
         case "/cases":
-            MonitoringCasesNativePanel()
+            CasesWorkspaceNativePanel(initialCaseID: model.selectedNativeDashboardDetailID)
+        case "/cases/intelligence":
+            IntelligenceCasesNativePanel(initialCaseID: model.selectedNativeDashboardDetailID)
+        case "/documents/scanner":
+            DocumentScannerNativePanel()
+        case "/monitor":
+            NativeDomainMonitorPanel()
         case "/status":
-            PublicStatusNativePanel()
+            PublicStatusNativePanel(incidentID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
+        case "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings", "/privacy", "/terms", "/reserved-usernames", "/pricing", "/solutions/scanner", "/solutions/security-monitoring":
+            if let page = NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "/") {
+                NativePublicInfoPanel(page: page) { route in
+                    let base = model.settings.websiteBaseURL.normalizedBaseURL
+                    let destination = URL(string: route, relativeTo: base)?.absoluteURL.absoluteString ?? route
+                    model.openURL(destination, label: page.title)
+                }
+            } else {
+                NativeRouteFallbackPanel()
+            }
+        case "/ti/darkweb/index":
+            NativeTIDarkwebIndexNativePanel()
+        case "/activity":
+            PublicExposureActivityNativePanel()
+        case "/ai/workspace":
+            DesktopAIWorkspaceNativePanel(
+                conversationID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID,
+                shareID: model.selectedNativeDashboardQuery["shareID"],
+                shareFileID: model.selectedNativeDashboardQuery["file"],
+                shareFilePath: model.selectedNativeDashboardQuery["filePath"],
+                createShareConversation: model.selectedNativeDashboardQuery["new"] == "1"
+            )
         case "/organization-workspace":
             OrganizationWorkspaceNativePanel()
         case "/organizations/settings":
@@ -81,22 +123,60 @@ struct NativeDashboardDetail: View {
             OrganizationMembersNativePanel()
         case "/ti":
             ThreatIntelligenceNativePanel()
+        case "/ti/overview":
+            ThreatIntelligenceOverviewNativePanel(onOpenRoute: { path in
+                guard let route = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com\(path)") else { return }
+                _ = model.openNativeHanasandRoute(route)
+            })
+        case "/ti/workbench":
+            ThreatIntelligenceWorkbenchNativePanel()
+        case "/ti/enrichment":
+            ActorEnrichmentNativePanel(section: .enrichment)
+        case "/ti/activity":
+            ActorEnrichmentNativePanel(section: .activity)
         case "/ti/profiles":
-            ThreatIntelligenceOperationsNativePanel(section: .profiles)
+            ThreatIntelligenceOperationsNativePanel(
+                section: .profiles,
+                initialQuery: model.selectedNativeDashboardDetailID,
+                initialOrganizationID: model.selectedNativeDashboardQuery["organizationId"]
+            )
         case "/ti/sources":
-            ThreatIntelligenceOperationsNativePanel(section: .sources)
+            ThreatIntelligenceOperationsNativePanel(
+                section: .sources,
+                initialQuery: model.selectedNativeDashboardDetailID,
+                selectedSourceID: model.selectedNativeDashboardDetailID,
+                initialOrganizationID: model.selectedNativeDashboardQuery["organizationId"]
+                    ?? model.selectedNativeDashboardQuery["org"]
+                    ?? model.selectedNativeDashboardQuery["orgId"]
+            )
+        case "/ti/runs":
+            ThreatIntelligenceOperationsNativePanel(section: .sources, initialSourceView: .runs, initialQuery: model.selectedNativeDashboardDetailID)
+        case "/ti/captures":
+            ThreatIntelligenceOperationsNativePanel(section: .sources, initialSourceView: .captures, initialQuery: model.selectedNativeDashboardDetailID)
         case "/ti/timeliness":
             ThreatIntelligenceOperationsNativePanel(section: .timeliness)
         case "/watchlists":
-            OrganizationWatchlistsNativePanel()
+            OrganizationWatchlistsNativePanel(
+                initialOrganizationID: model.selectedNativeDashboardQuery["organizationId"]
+                    ?? model.selectedNativeDashboardQuery["org"]
+                    ?? model.selectedNativeDashboardQuery["orgId"]
+            )
         case "/organization-api-keys":
             OrganizationApiKeysNativePanel()
         case "/api":
             APIReferenceNativePanel()
         case "/api/openapi":
             APIReferenceNativePanel(initialSection: .json)
+        case "/developers":
+            NativeDeveloperOnboardingPanel()
+        case "/public-profile":
+            NativePublicProfilePanel(userID: model.selectedNativeDashboardDetailID)
         case "/sandbox":
-            SandboxHistoryNativePanel()
+            SandboxHistoryNativePanel(initialRunID: model.selectedNativeDashboardDetailID)
+        case "/sandbox/result":
+            SandboxStoredReportNativePanel(resultID: model.selectedNativeDashboardDetailID, reportToken: model.selectedNativeDashboardQuery["token"], selectedRunID: model.selectedNativeDashboardQuery["run"])
+        case "/sandbox/report":
+            SandboxStoredReportNativePanel(runID: model.selectedNativeDashboardDetailID, reportToken: model.selectedNativeDashboardQuery["token"])
         case "/pwned":
             PasswordCheckNativePanel()
         case "/support":
@@ -108,13 +188,17 @@ struct NativeDashboardDetail: View {
         case "/traffic/map":
             TrafficMapNativePanel()
         case "/images/library":
-            GalleryLibraryNativePanel()
+            ImagesJourneyNativePanel(initialSection: model.selectedNativeDashboardQuery["section"])
+        case "/cdn/files":
+            NativeCDNFilePreviewPanel(fileID: model.selectedNativeDashboardDetailID)
+        case "/shared/album":
+            NativePublicAlbumPanel(token: model.selectedNativeDashboardDetailID)
         case "/scanner", "/dashboard/scanner":
             SecurityScannerNativePanel()
         case "/organization-privacy":
             OrganizationPrivacyNativePanel()
         case "/dashboard/delivery-history":
-            ThreatDeliveryHistoryNativePanel()
+            ThreatDeliveryHistoryNativePanel(initialOrganizationID: model.selectedNativeDashboardQuery["org"] ?? model.selectedNativeDashboardQuery["organizationId"] ?? model.selectedNativeDashboardQuery["orgId"])
         case "/traffic/recent":
             TrafficRecentNativePanel()
         case "/subscription":
@@ -122,25 +206,27 @@ struct NativeDashboardDetail: View {
         case "/findings":
             ThreatFindingsNativePanel()
         case "/rules/match":
-            ThreatRulesNativePanel(category: "match")
+            ThreatRulesNativePanel(category: "match", initialRuleID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
+        case "/rules/detail":
+            ThreatRulesNativePanel(category: "match", initialRuleID: model.selectedNativeDashboardDetailID)
         case "/rules/analysis":
-            ThreatRulesNativePanel(category: "analysis")
+            ThreatRulesNativePanel(category: "analysis", initialRuleID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
         case "/rules/detection":
-            ThreatRulesNativePanel(category: "detection")
+            ThreatRulesNativePanel(category: "detection", initialRuleID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
         case "/rules/tuning":
             ThreatRuleTuningNativePanel()
         case "/integrations":
-            IntegrationsNativePanel()
+            IntegrationsNativePanel(initialOrganizationID: model.selectedNativeDashboardQuery["org"] ?? model.selectedNativeDashboardQuery["organizationId"] ?? model.selectedNativeDashboardQuery["orgId"])
         case "/dashboard/management/service-accounts":
             ServiceAccountsNativePanel()
         case "/system/hosts":
-            HostsNativePanel()
+            HostsNativePanel(initialConsoleHostID: model.selectedNativeDashboardDetailID)
         case "/system/updates":
             HostUpdatesNativePanel()
         case "/g":
             LinksNativePanel()
         case "/dashboard/tests", "/load-testing", "/test":
-            RecentTestsNativePanel()
+            RecentTestsNativePanel(initialTestID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
         case "/dashboard/automations", "/dashboard/automation":
             AutomationsNativePanel()
         case "/automation/health":
@@ -158,9 +244,18 @@ struct NativeDashboardDetail: View {
         case "/traffic/blocklist":
             InfrastructureBlocklistNativePanel()
         case "/vms":
-            VMsNativePanel()
+            VMsNativePanel(initialVMID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
+        case "/vms/console":
+            NativeVMConsolePanel(
+                vmName: model.selectedNativeDashboardDetailID,
+                apiBaseURL: model.settings.apiBaseURL,
+                userID: model.userIDForRequests,
+                token: model.authTokenForRequests,
+                isImpersonating: !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty,
+                provisioningFlow: model.selectedNativeDashboardQuery["provisioning"] == "1"
+            )
         case "/logs":
-            LogsNativePanel()
+            LogsNativePanel(initialServiceFilter: model.selectedNativeDashboardQuery["service"])
         case "/logs/realtime":
             LogsRealtimeNativePanel()
         case "/logs/search":
@@ -172,13 +267,32 @@ struct NativeDashboardDetail: View {
         case "/system/rates":
             RateLimitsNativePanel()
         case "/profile":
-            ProfileNativePanel()
+            ProfileNativePanel(initialSection: model.selectedNativeDashboardQuery["section"])
         case "/management", "/users":
             UsersNativePanel()
         case "/role":
             RolesNativePanel()
         case "/s":
-            SharesNativePanel()
+            if model.selectedNativeDashboardDetailID.isEmpty {
+                SharesNativePanel()
+            } else {
+                NativeShareWorkspacePanel(
+                    alias: model.selectedNativeDashboardDetailID,
+                    fileID: model.selectedNativeDashboardQuery["file"],
+                    isProject: model.selectedNativeDashboardQuery["workspace"] == "project",
+                    initialChatOpen: model.selectedNativeDashboardQuery["chat"] == "1",
+                    createIfMissing: model.selectedNativeDashboardQuery["new"] == "1",
+                    onOpenChat: {
+                        var query = ["shareID": model.selectedNativeDashboardDetailID, "new": "1"]
+                        if let fileID = model.selectedNativeDashboardQuery["file"] { query["file"] = fileID }
+                        model.openNativeDashboard(
+                            path: "/ai/workspace",
+                            label: "Share chat",
+                            query: query
+                        )
+                    }
+                )
+            }
         case "/repositories":
             RepositoryWorkspaceNativePanel()
         case "/content/articles":

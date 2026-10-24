@@ -43,11 +43,16 @@ extension DesktopAgentModel {
     }
 
     func openArticle(_ article: DashboardArticle) {
-        openWebsite(path: "/articles/\(article.id.replacingOccurrences(of: ".md", with: ""))", label: article.title)
+        guard NativeRouteSelection.resolve(article.id, among: articles.map(\.id)) != nil else { return }
+        loadArticleIntoEditor(article)
+        openNativeDashboard(path: "/content/articles", label: article.title)
     }
 
     func openUserProfile(_ user: DashboardUser) {
-        openWebsite(path: "/profile/\(user.id)", label: user.displayName)
+        guard let userID = NativeRouteSelection.resolve(user.id, among: users.map(\.id)) else { return }
+        selectedUserID = userID
+        openNativeDashboard(path: "/management", label: user.displayName)
+        Task { await loadSelectedUserRoles() }
     }
 
     func selectDashboardUser(_ user: DashboardUser) {
@@ -224,25 +229,30 @@ extension DesktopAgentModel {
         }
 
         isLoadingNativeDashboard = true
-        nativeDashboardStatus = "Deleting user"
+        nativeDashboardStatus = "Scheduling user deletion"
         defer { isLoadingNativeDashboard = false }
 
         do {
-            _ = try await requestPrettyText(
+            let receipt: DashboardUserDeletionReceipt = try await requestJSON(
                 settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/\(user.id)"),
                 method: "DELETE",
                 authenticated: true
             )
-            if selectedUserID == user.id {
-                selectedUserID = ""
-                selectedUserRoles = []
+            guard receipt.confirmsDeletion(of: user.id) else {
+                append(meta: "User deletion needs review", body: user.id, kind: .error)
+                await loadNativeDashboardData()
+                nativeDashboardStatus = "Deletion was not confirmed. Refresh and review the account before retrying."
+                return
             }
-            nativeDashboardStatus = "Deleted \(user.id)"
-            append(meta: "User deleted", body: user.id, kind: .change)
+            if selectedUserID == user.id {
+                selectedUserID = user.id
+            }
+            append(meta: "User deletion scheduled", body: "\(user.id) · \(receipt.user.deletionScheduledAt ?? "date unavailable")", kind: .change)
             await loadNativeDashboardData()
+            nativeDashboardStatus = "Deletion scheduled for \(receipt.user.deletionScheduledAt ?? "an unknown date"). Access is revoked now."
         } catch {
-            nativeDashboardStatus = error.localizedDescription
-            append(meta: "User delete failed", body: error.localizedDescription, kind: .error)
+            append(meta: "User deletion needs review", body: error.localizedDescription, kind: .error)
+            nativeDashboardStatus = "Deletion could not be confirmed. Refresh and review the account before retrying."
         }
     }
 

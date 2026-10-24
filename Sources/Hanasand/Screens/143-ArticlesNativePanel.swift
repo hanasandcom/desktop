@@ -14,6 +14,15 @@ struct ArticlesNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State var deletingArticle: DashboardArticle?
+    @State private var search = ""
+    @State private var sortByTitle = false
+    @State private var page = 0
+
+    private var filteredArticles: [DashboardArticle] {
+        PublishingList.articles(model.articles, matching: search, order: sortByTitle ? .title : .newest)
+    }
+    private var pageCount: Int { PublishingList.pageCount(for: filteredArticles.count) }
+    private var currentPage: Int { min(page, pageCount - 1) }
 
     let columns = [
         GridItem(.adaptive(minimum: 270), spacing: 12, alignment: .top),
@@ -139,11 +148,23 @@ struct ArticlesNativePanel: View {
                 }
             }
 
-            if model.articles.isEmpty {
-                NativeEmptyState(title: "No articles loaded", message: "Create an article or refresh the API-backed article list.")
+            HStack(spacing: 10) {
+                TextField("Search titles or IDs", text: Binding(get: { search }, set: { search = $0; page = 0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search article titles or IDs")
+                ActionButton(title: sortByTitle ? "Sort: title" : "Sort: newest", icon: "arrow.up.arrow.down") {
+                    sortByTitle.toggle(); page = 0
+                }
+            }
+            Text("\(filteredArticles.count) of \(model.articles.count) articles · page \(currentPage + 1) of \(pageCount)")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+
+            if filteredArticles.isEmpty {
+                NativeEmptyState(title: model.articles.isEmpty ? "No articles loaded" : "No matching articles",
+                                 message: model.articles.isEmpty ? "Create an article or refresh the API-backed article list." : "Try another title or ID search.")
             } else {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                    ForEach(model.articles) { article in
+                    ForEach(PublishingList.page(filteredArticles, number: currentPage)) { article in
                         VStack(alignment: .leading, spacing: 10) {
                             Text(article.title)
                                 .font(.system(size: 15, weight: .black))
@@ -194,6 +215,13 @@ struct ArticlesNativePanel: View {
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                }
+                HStack {
+                    ActionButton(title: "Previous", icon: "chevron.left") { page = max(0, currentPage - 1) }
+                        .disabled(currentPage == 0)
+                    Spacer()
+                    ActionButton(title: "Next", icon: "chevron.right") { page = min(pageCount - 1, currentPage + 1) }
+                        .disabled(currentPage >= pageCount - 1)
                 }
             }
         }

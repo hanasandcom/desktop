@@ -75,6 +75,35 @@ final class PublicStatusViewModel: ObservableObject {
         }
     }
 
+    func loadIncident(id: String) async {
+        let requestedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requestedID.isEmpty else {
+            incidentError = "This incident link is invalid."
+            return
+        }
+        isLoading = true
+        isLoadingIncident = true
+        errorMessage = nil
+        incidentError = nil
+        defer {
+            isLoading = false
+            isLoadingIncident = false
+        }
+        do {
+            let detail = try await client.incident(id: requestedID)
+            payload = detail
+            selectedIncident = detail.incidents.first(where: {
+                $0.id == requestedID || $0.aliases?.contains(requestedID) == true
+            }) ?? detail.incidents.first
+            if selectedIncident == nil {
+                incidentError = "This incident is no longer available."
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            incidentError = error.localizedDescription
+        }
+    }
+
     func selectIncident(_ incident: PublicStatusIncident) async {
         selectedIncident = incident
         isLoadingIncident = true

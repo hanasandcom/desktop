@@ -5,12 +5,29 @@ import XCTest
 final class RepositoryWorkspaceTests: XCTestCase {
     private let base = URL(string: "https://api.example.test/api")!
 
+    private final class RequestRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [URLRequest] = []
+
+        func append(_ request: URLRequest) {
+            lock.lock()
+            stored.append(request)
+            lock.unlock()
+        }
+
+        var requests: [URLRequest] {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
+    }
+
     func testLoadsBoundedAuthenticatedRepositoryAndFileLists() async throws {
-        var requests: [URLRequest] = []
+        let recorder = RequestRecorder()
         let client = try RepositoryWorkspaceClient(
             apiBaseURL: base, userID: "user-1", token: "opaque-token", organizationID: "org-1"
         ) { request in
-            requests.append(request)
+            recorder.append(request)
             let body: String
             if request.url?.path == "/api/projects/user/user-1" {
                 body = #"[{"alias":"repo-a","owner":"user-1","editors":["user-1"],"file_count":2,"total_size":42,"last_updated":"2026-10-22T10:00:00Z"}]"#
@@ -24,8 +41,8 @@ final class RepositoryWorkspaceTests: XCTestCase {
 
         XCTAssertEqual(workspace.projects.map(\.alias), ["repo-a"])
         XCTAssertEqual(workspace.files.map(\.displayName), ["README.md"])
-        XCTAssertEqual(requests.count, 2)
-        for request in requests {
+        XCTAssertEqual(recorder.requests.count, 2)
+        for request in recorder.requests {
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer opaque-token")
             XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "user-1")

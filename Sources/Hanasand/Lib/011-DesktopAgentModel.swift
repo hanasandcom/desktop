@@ -73,6 +73,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var aiRateLimit: AIRateLimitSnapshot?; @Published var aiRateLimitClock = Date()
 
     @Published var isCheckingServerReachability = false; @Published var isRunningServerAction = false; @Published var serverActionStatus = "No server action running"; @Published var selectedDashboardPath: String?
+    @Published var noteSaveConflict = false; @Published var noteConflictServerNote: DashboardNote?
 
     @Published var organizationDirectory: [DashboardDirectoryOrganization] = []; @Published var organizationMemberships: [DashboardOrganizationMembership] = []
     @Published var isLoadingOrganizationDirectory = false; @Published var organizationDirectoryError: String?; @Published var organizationDirectorySnapshotUserID = ""
@@ -89,7 +90,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var hostUpdates: HostUpdateEnvelope?; @Published var hostUpdatesStatus = "Select Host Updates to load automatic package status."; @Published var isLoadingHostUpdates = false; @Published var selectedHostUpdatesHost: HostUpdateTarget = .inspur; @Published var selectedHostUpdatesView: HostUpdateView = .pending; @Published var hostUpdatesSearch = ""; @Published var visibleHostUpdateLimit = 30
     var hostOverviewLoadID = UUID(); var hostUpdatesLoadID = UUID()
 
-    @Published var selectedDashboardTitle = "Dashboard"; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
+    @Published var selectedDashboardTitle = "Dashboard"; @Published var selectedNativeDashboardDetailID = ""; @Published var selectedNativeDashboardQuery: [String: String] = [:]; @Published var nativeCaseHandoffContext: BrowserCaseHandoffContext?; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
     var nativeDashboardLoadID = UUID()
 
     @Published var backupServices: [DashboardBackupService] = []; @Published var backupFiles: [DashboardBackupFile] = []; @Published var notes: [DashboardNote] = []; @Published var selectedNoteID = ""
@@ -143,6 +144,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var databaseOverview: DashboardDatabaseOverview?; @Published var trafficMetrics: DashboardTrafficMetrics?; @Published var rateLimitOverview: DashboardRateLimitOverview?; @Published var apiKeys: [DashboardApiKeySummary] = []
 
     @Published var monitoringCases: [MonitoringCase] = []; @Published var selectedMonitoringCase: MonitoringCase?; @Published var monitoringCaseSearch = ""; @Published var monitoringCaseStatusFilter = "active"; @Published var monitoringCaseSeverityFilter = "all"; @Published var monitoringCaseOwnerFilter = "all"; @Published var monitoringCaseReviewFilter = "all"; @Published var monitoringCaseResolutionFilter = "all"; @Published var monitoringCaseComment = ""
+    @Published var monitoringCaseMutationNeedsReview = false; @Published var monitoringCaseMutationReviewRefreshed = false
 
     @Published var threatSearchQuery = ""; @Published var threatSearchResult: ThreatIntelSearchResult?; @Published var threatSearchStatus = ""; @Published var isLoadingThreatSearch = false; @Published var threatSearchResultLimit = 20; @Published var threatSavedSearches: [ThreatSavedSearch] = []; @Published var threatSavedSearchStatus = ""; @Published var isMutatingThreatSavedSearch = false
 

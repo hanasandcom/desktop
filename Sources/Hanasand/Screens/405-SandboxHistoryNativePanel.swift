@@ -5,17 +5,23 @@ struct SandboxHistoryNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @State private var runs: [SandboxHistoryRun] = []
     @State private var nextOffset: Int?
+    @State private var initialRunID: String?
     @State private var selectedRunID = ""
     @State private var isLoading = false
     @State private var error = ""
+    @State private var selectedReport: SandboxHistoryReport?
 
     private var selectedRun: SandboxHistoryRun? { runs.first { $0.id == selectedRunID } }
 
+    init(initialRunID: String? = nil) {
+        _initialRunID = State(initialValue: initialRunID)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "Saved Sandbox runs", subtitle: "Owner-only run history · metadata only") {
+            NativeGroupPanel(title: "Saved Sandbox runs", subtitle: "Owner-only run history and reports") {
                 HStack(spacing: 10) {
-                    Text("Saved runs are shown as text. Selecting a run does not open its report or target.")
+                    Text("Saved runs and reports are loaded in the app. Selecting a run never opens its target.")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -25,17 +31,6 @@ struct SandboxHistoryNativePanel: View {
                     }
                     .disabled(isLoading || !model.hasHanasandAuth)
                 }
-                Button {
-                    let url = SandboxHistoryWebsiteLink.url(siteBaseURL: model.settings.websiteBaseURL)
-                    model.openURL(url.absoluteString, label: "Sandbox website")
-                } label: {
-                    Label("Open full Sandbox on website", systemImage: "arrow.up.right.square")
-                }
-                .buttonStyle(.bordered)
-                Text("The website provides full Sandbox reports. Desktop history remains metadata-only.")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if !error.isEmpty { NativeNotice(message: error) }
             }
 
@@ -66,6 +61,20 @@ struct SandboxHistoryNativePanel: View {
                     .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
 
+                if let selectedReport {
+                    NativeGroupPanel(title: "Saved report", subtitle: selectedReport.target) {
+                        ForEach(Array(selectedReport.entries.enumerated()), id: \.offset) { _, entry in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.title.isEmpty ? entry.kind : entry.title)
+                                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                                if !entry.url.isEmpty { Text(entry.url).font(.system(size: 10, design: .monospaced)).textSelection(.enabled) }
+                                if !entry.detail.isEmpty { Text(entry.detail).font(.system(size: 11)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(8).background(theme.card, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+
                 if nextOffset != nil {
                     HStack {
                         Spacer()
@@ -83,7 +92,13 @@ struct SandboxHistoryNativePanel: View {
 
     private func runRow(_ run: SandboxHistoryRun) -> some View {
         Button {
-            selectedRunID = selectedRunID == run.id ? "" : run.id
+            if selectedRunID == run.id {
+                selectedRunID = ""
+                selectedReport = nil
+            } else {
+                selectedRunID = run.id
+                Task { await loadReport(run) }
+            }
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: selectedRunID == run.id ? "checkmark.circle.fill" : "circle")
@@ -116,6 +131,17 @@ struct SandboxHistoryNativePanel: View {
         .buttonStyle(.plain)
     }
 
+    @MainActor
+    private func loadReport(_ run: SandboxHistoryRun) async {
+        error = ""
+        do {
+            selectedReport = try await makeReportClient().loadReport(resultID: run.resultID)
+        } catch {
+            selectedReport = nil
+            self.error = error.localizedDescription
+        }
+    }
+
     private func metadataLine(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
@@ -132,11 +158,30 @@ struct SandboxHistoryNativePanel: View {
         defer { isLoading = false }
         do {
             let client = try makeClient()
-            let page = try await client.loadPage()
-            runs = page.runs
+            var page = try await client.loadPage()
+            var loadedRuns = page.runs
+            if let requestedID = initialRunID, !requestedID.isEmpty {
+                for _ in 0..<5 {
+                    if loadedRuns.contains(where: { $0.id == requestedID || $0.resultID == requestedID }) { break }
+                    guard let offset = page.nextOffset else { break }
+                    page = try await client.loadPage(offset: offset)
+                    let known = Set(loadedRuns.map(\.id))
+                    loadedRuns.append(contentsOf: page.runs.filter { !known.contains($0.id) })
+                }
+            }
+            runs = loadedRuns
             nextOffset = page.nextOffset
+            if let requestedID = initialRunID, !requestedID.isEmpty {
+                if let run = loadedRuns.first(where: { $0.id == requestedID || $0.resultID == requestedID }) {
+                    selectedRunID = run.id
+                    initialRunID = nil
+                    await loadReport(run)
+                } else {
+                    error = "The requested saved run was not found in the latest 250 records. Refresh the history and try again."
+                }
+            }
             if !runs.contains(where: { $0.id == selectedRunID }) { selectedRunID = "" }
-            error = ""
+            if initialRunID == nil { error = "" }
         } catch {
             self.error = error.localizedDescription
         }
@@ -160,6 +205,16 @@ struct SandboxHistoryNativePanel: View {
 
     private func makeClient() throws -> SandboxHistoryClient {
         try SandboxHistoryClient(
+            apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+            userID: model.settings.userID,
+            token: model.settings.authToken,
+            impersonationToken: model.settings.impersonationToken,
+            impersonatingUserID: model.settings.impersonatingUserID
+        )
+    }
+
+    private func makeReportClient() throws -> SandboxHistoryReportClient {
+        try SandboxHistoryReportClient(
             apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
             userID: model.settings.userID,
             token: model.settings.authToken,

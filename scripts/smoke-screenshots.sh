@@ -445,13 +445,15 @@ run_dashboard_smoke() {
   run_step "58-repositories" "open_dashboard_repositories"
   run_step "59-ti-profiles" "open_dashboard_ti_profiles"
   run_step "60-ti-sources" "open_dashboard_ti_sources"
-  run_step "61-ti-timeliness" "open_dashboard_ti_timeliness"
-  run_step "62-containers" "open_dashboard_containers"
-  run_step "63-blocklist" "open_dashboard_blocklist"
-  run_step "64-log-search" "open_dashboard_log_search"
-  run_step "65-openapi-json" "open_dashboard_openapi_json"
-  run_step "66-organization-team" "open_dashboard_organization_team"
-  run_step "67-sandbox-history" "open_dashboard_sandbox_history"
+  run_step "61-ti-runs" "open_dashboard_ti_runs"
+  run_step "62-ti-captures" "open_dashboard_ti_captures"
+  run_step "63-ti-timeliness" "open_dashboard_ti_timeliness"
+  run_step "64-containers" "open_dashboard_containers"
+  run_step "65-blocklist" "open_dashboard_blocklist"
+  run_step "66-log-search" "open_dashboard_log_search"
+  run_step "67-openapi-json" "open_dashboard_openapi_json"
+  run_step "68-organization-team" "open_dashboard_organization_team"
+  run_step "69-sandbox-history" "open_dashboard_sandbox_history"
 }
 
 assert_dashboard_smoke_covers_loopback_commands() {

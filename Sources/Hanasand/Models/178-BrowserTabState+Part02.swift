@@ -86,13 +86,20 @@ extension BrowserTabState {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard navigationAction.targetFrame?.isMainFrame != false else {
-            decisionHandler(.allow)
-            return
-        }
         guard let url = navigationAction.request.url,
               let scheme = url.scheme?.lowercased() else {
             decisionHandler(.cancel)
+            return
+        }
+        if BrowserWorkspaceModel.isHanasandOwnedURL(url.absoluteString, configuredWebsiteBaseURL: configuredWebsiteBaseURL) {
+            let isMainFrame = navigationAction.targetFrame?.isMainFrame != false
+            let openedNatively = isMainFrame && (onOpenNativeHanasandRoute?(url.absoluteString) ?? false)
+            statusText = openedNatively ? "Opened in native Desktop" : "This Hanasand page does not have a native Desktop route yet."
+            decisionHandler(.cancel)
+            return
+        }
+        guard navigationAction.targetFrame?.isMainFrame != false else {
+            decisionHandler(.allow)
             return
         }
         if ["http", "https"].contains(scheme), url.host != nil {

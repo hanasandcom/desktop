@@ -142,6 +142,9 @@ extension DesktopAgentModel {
             let thoughtsScopeIsCurrent = thoughtsRefreshScope.map { $0 == selectedOrganizationID } ?? true
             guard !Task.isCancelled, nativeDashboardLoadID == loadID, selectedDashboardPath == path,
                   thoughtsUserIsCurrent, thoughtsScopeIsCurrent else { return }
+            if path == "/notes", notes.isEmpty {
+                restoreLatestNoteDraft()
+            }
             nativeDashboardStatus = error.localizedDescription
             nativeDashboardPayload = "Could not load \(endpoint.label): \(error.localizedDescription)"
         }

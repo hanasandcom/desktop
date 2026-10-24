@@ -6,33 +6,6 @@ import XCTest
 final class SandboxHistoryTests: XCTestCase {
     private let api = URL(string: "https://api.example.test/api")!
 
-    func testWebsiteHandoffUsesConfiguredHTTPSOriginAndCanonicalSandboxPath() {
-        XCTAssertEqual(
-            SandboxHistoryWebsiteLink.url(siteBaseURL: "https://staging.hanasand.example/deployment/").absoluteString,
-            "https://staging.hanasand.example/sandbox"
-        )
-        XCTAssertEqual(
-            SandboxHistoryWebsiteLink.url(siteBaseURL: " https://hanasand.com ").absoluteString,
-            "https://hanasand.com/sandbox"
-        )
-    }
-
-    func testWebsiteHandoffFallsBackToCanonicalProductionPageForUnsafeOrMalformedBases() {
-        for siteBaseURL in [
-            "http://hanasand.com",
-            "not a URL",
-            "https://user:password@hanasand.com",
-            "https://hanasand.com/?workspace=private",
-            "https://hanasand.com/#section",
-        ] {
-            XCTAssertEqual(
-                SandboxHistoryWebsiteLink.url(siteBaseURL: siteBaseURL),
-                URL(string: "https://hanasand.com/sandbox"),
-                "Unexpected handoff for \(siteBaseURL)"
-            )
-        }
-    }
-
     func testLoadsOwnerHistoryWithNarrowAuthenticatedRequest() async throws {
         var captured: URLRequest?
         let client = try makeClient { request in
@@ -116,6 +89,55 @@ final class SandboxHistoryTests: XCTestCase {
             _ = try await client.loadPage(offset: 25)
             XCTFail("Offsets must align to the API page size")
         } catch { XCTAssertEqual(error as? SandboxHistoryError, .invalidOffset) }
+    }
+
+    func testLoadsOwnerReportWithBoundedSameOriginAuthenticatedRequest() async throws {
+        var captured: URLRequest?
+        let client = try makeReportClient { request in
+            captured = request
+            let body = #"{"target":"https://sample.test","captures":[{"type":"page","title":"Landing","url":"https://sample.test/","text":"Rendered content"}],"evidenceEvents":[{"type":"request","url":"https://sample.test/api","message":"GET"}]}"#
+            return (Data(body.utf8), Self.response(for: request, status: 200))
+        }
+        let report = try await client.loadReport(resultID: "result-1")
+        XCTAssertEqual(captured?.url?.absoluteString, "https://api.example.test/api/browser/results/result-1")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "owner.test")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertEqual(report.entries.count, 2)
+        XCTAssertEqual(report.entries[0].title, "Landing")
+        XCTAssertEqual(report.entries[0].detail, "Rendered content")
+    }
+
+    func testRejectsOversizedOrCrossOriginReportResponse() async throws {
+        let oversized = try makeReportClient { request in
+            (Data(repeating: 0x20, count: SandboxHistoryLimits.reportResponseBytes + 1), Self.response(for: request, status: 200))
+        }
+        do {
+            _ = try await oversized.loadReport(resultID: "result-1")
+            XCTFail("Oversized reports must be rejected")
+        } catch { XCTAssertEqual(error as? SandboxHistoryError, .responseTooLarge) }
+
+        let crossOrigin = try makeReportClient { request in
+            let response = HTTPURLResponse(url: URL(string: "https://elsewhere.example/result")!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+            return (Data(#"{"target":"https://sample.test","captures":[],"evidenceEvents":[]}"#.utf8), response)
+        }
+        do {
+            _ = try await crossOrigin.loadReport(resultID: "result-1")
+            XCTFail("Cross-origin report responses must be rejected")
+        } catch { XCTAssertEqual(error as? SandboxHistoryError, .invalidResponse) }
+    }
+
+    func testReportClientRejectsImpersonatedAccounts() {
+        XCTAssertThrowsError(try SandboxHistoryReportClient(apiBaseURL: api, userID: "owner.test", token: "session-token", impersonationToken: "proxy")) {
+            XCTAssertEqual($0 as? SandboxHistoryError, .ownAccountRequired)
+        }
+        XCTAssertThrowsError(try SandboxHistoryReportClient(apiBaseURL: api, userID: "owner.test", token: "session-token", impersonatingUserID: "other-user")) {
+            XCTAssertEqual($0 as? SandboxHistoryError, .ownAccountRequired)
+        }
+    }
+
+    private func makeReportClient(send: @escaping SandboxHistoryReportClient.Sender) throws -> SandboxHistoryReportClient {
+        try SandboxHistoryReportClient(apiBaseURL: api, userID: "owner.test", token: "session-token", send: send)
     }
 
     private func makeClient(send: @escaping SandboxHistoryClient.Sender) throws -> SandboxHistoryClient {

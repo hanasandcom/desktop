@@ -20,7 +20,10 @@ struct DesktopShell: View {
         let theme = DesktopTheme(preference: model.appearancePreference, systemScheme: colorScheme)
 
         Group {
-            if model.hasHanasandAuth {
+            if let accountPath = model.selectedDashboardPath,
+               NativeAccountRoutePanel.supports(path: accountPath) {
+                NativeAccountRoutePanel(path: accountPath, query: model.selectedNativeDashboardQuery)
+            } else if model.hasHanasandAuth {
                 HStack(spacing: 0) {
                     if model.sidebarVisible {
                         Sidebar()

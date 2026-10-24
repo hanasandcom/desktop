@@ -13,8 +13,12 @@ import WebKit
 struct VMsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
-    @State var searchText = ""
+    @State var searchText: String
     @State var selectedStatus = "all"
+
+    init(initialVMID: String? = nil) {
+        _searchText = State(initialValue: initialVMID ?? "")
+    }
 
     let columns = [
         GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top),

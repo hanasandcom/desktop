@@ -41,6 +41,27 @@ final class HostsNativePanelTests: XCTestCase {
         XCTAssertFalse(hostOverviewMayLoad(hasAuth: true, isImpersonating: true))
     }
 
+    func testHostConsoleConnectsToAuthenticatedNativeWebSocketEndpoint() throws {
+        XCTAssertEqual(hostConsoleWebSocketURL(apiBaseURL: "https://api.hanasand.com/api/", host: .inspur)?.absoluteString,
+                       "wss://api.hanasand.com/api/ws/host/inspur/console")
+        XCTAssertEqual(hostConsoleWebSocketURL(apiBaseURL: "https://api.hanasand.com/api", host: .ovh)?.absoluteString,
+                       "wss://api.hanasand.com/api/ws/host/ovh/console")
+        XCTAssertEqual(hostConsoleWebSocketURL(apiBaseURL: "http://localhost:3000/api", host: .inspur)?.absoluteString,
+                       "ws://localhost:3000/api/ws/host/inspur/console")
+        XCTAssertNil(hostConsoleWebSocketURL(apiBaseURL: "https://user:password@api.hanasand.com/api", host: .inspur))
+        XCTAssertNil(hostConsoleWebSocketURL(apiBaseURL: "https://api.hanasand.com/api?token=secret", host: .inspur))
+        XCTAssertNil(hostConsoleWebSocketURL(apiBaseURL: "file:///tmp/api", host: .inspur))
+        XCTAssertNil(hostConsoleWebSocketURL(apiBaseURL: "http://api.hanasand.com/api", host: .inspur))
+    }
+
+    func testHostConsoleRequiresOwnAuthenticatedNonImpersonatedAccount() {
+        XCTAssertTrue(hostConsoleMayOpen(hasAuth: true, isImpersonating: false, userID: "user-1", token: "secret"))
+        XCTAssertFalse(hostConsoleMayOpen(hasAuth: false, isImpersonating: false, userID: "user-1", token: "secret"))
+        XCTAssertFalse(hostConsoleMayOpen(hasAuth: true, isImpersonating: true, userID: "user-1", token: "secret"))
+        XCTAssertFalse(hostConsoleMayOpen(hasAuth: true, isImpersonating: false, userID: "", token: "secret"))
+        XCTAssertFalse(hostConsoleMayOpen(hasAuth: true, isImpersonating: false, userID: "user-1", token: ""))
+    }
+
     func testUpdateAgeUsesReportedEpochSecondsAndNeverGoesNegative() {
         let now = Date(timeIntervalSince1970: 2_000_000)
         XCTAssertEqual(hostUpdateAgeHours(firstSeen: 1_996_400, delayHours: 72, now: now), 1)

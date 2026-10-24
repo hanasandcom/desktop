@@ -17,13 +17,31 @@ private struct PendingOrganizationWatchlistAction: Identifiable {
 }
 
 struct OrganizationWatchlistsNativePanel: View {
+    let initialOrganizationID: String?
+
+    init(initialOrganizationID: String? = nil) {
+        self.initialOrganizationID = initialOrganizationID?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var pending: PendingOrganizationWatchlistAction?
+    @State private var initialOrganizationResolved = false
+    @State private var initialOrganizationError = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if model.selectedOrganizationID.isEmpty {
+            if let initialOrganizationID, !initialOrganizationID.isEmpty,
+               model.selectedOrganizationID != initialOrganizationID,
+               initialOrganizationResolved, !initialOrganizationError.isEmpty {
+                NativeEmptyState(title: "Organization link unavailable", message: initialOrganizationError)
+                ActionButton(title: "Open organization directory", icon: "building.2") {
+                    model.openNativeDashboard(path: "/organizations", label: "Organizations")
+                }
+            } else if !initialOrganizationResolved
+                || (initialOrganizationID?.isEmpty == false && model.selectedOrganizationID != initialOrganizationID) {
+                NativeEmptyState(title: "Opening organization watchlists", message: "Validating the organization link before loading its watch terms.")
+            } else if model.selectedOrganizationID.isEmpty {
                 NativeEmptyState(title: "Select an organization", message: "Watchlists belong to an organization. Select an active organization in the directory before viewing or changing its terms.")
                 ActionButton(title: "Open organization directory", icon: "building.2") {
                     model.openNativeDashboard(path: "/organizations", label: "Organizations")
@@ -67,6 +85,28 @@ struct OrganizationWatchlistsNativePanel: View {
                     }
                 }
             }
+        }
+        .task(id: initialOrganizationID) {
+            guard let initialOrganizationID, !initialOrganizationID.isEmpty else {
+                initialOrganizationError = ""
+                initialOrganizationResolved = true
+                return
+            }
+            initialOrganizationResolved = false
+            initialOrganizationError = ""
+            if initialOrganizationID == model.selectedOrganizationID {
+                initialOrganizationResolved = true
+                return
+            }
+            guard await model.selectOrganizationFromDeepLink(initialOrganizationID),
+                  model.selectedOrganizationID == initialOrganizationID else {
+                initialOrganizationError = model.organizationDirectoryError.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "This link does not target an active organization you can access."
+                initialOrganizationResolved = true
+                return
+            }
+            initialOrganizationResolved = true
+            await model.loadOrganizationWatchlists()
         }
         .onChange(of: model.selectedOrganizationID) { _, _ in Task { await model.loadOrganizationWatchlists() } }
         .confirmationDialog(pending?.action == "archive" ? "Archive watch term?" : "Pause watch term?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {

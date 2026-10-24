@@ -70,7 +70,11 @@ extension MailNativePanel {
                     .textSelection(.enabled)
 
                     if message.hasHTMLBody {
-                        MailHTMLBodyView(html: message.renderedHTML(mailboxUser: overview.mailboxUser, apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL))
+                        MailHTMLBodyView(
+                            html: message.renderedHTML(mailboxUser: overview.mailboxUser, apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL),
+                            configuredWebsiteBaseURL: model.settings.websiteBaseURL,
+                            onOpenURL: { model.openURL($0, label: "Mail link") }
+                        )
                             .frame(minHeight: 380)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     } else {

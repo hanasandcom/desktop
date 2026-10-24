@@ -2,6 +2,29 @@ import Foundation
 
 enum HostAvailability: String, Decodable { case online, offline, unknown }
 
+func hostConsoleWebSocketURL(apiBaseURL: String, host: HostOverviewEnvelope.Host.ID) -> URL? {
+    guard var components = URLComponents(string: apiBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+          let scheme = components.scheme?.lowercased(),
+          let hostname = components.host?.lowercased(),
+          components.user == nil,
+          components.password == nil,
+          components.query == nil,
+          components.fragment == nil,
+          scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(hostname)) else {
+        return nil
+    }
+
+    let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    components.scheme = scheme == "https" ? "wss" : "ws"
+    components.path = "/" + [basePath, "ws", "host", host.rawValue, "console"].filter { !$0.isEmpty }.joined(separator: "/")
+    return components.url
+}
+
+func hostConsoleMayOpen(hasAuth: Bool, isImpersonating: Bool, userID: String, token: String) -> Bool {
+    hasAuth && !isImpersonating && !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+}
+
 struct HostOverviewEnvelope: Decodable {
     struct Host: Decodable, Identifiable {
         enum ID: String, Decodable { case inspur, ovh }

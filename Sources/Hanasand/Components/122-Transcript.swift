@@ -32,9 +32,11 @@ struct Transcript: View {
                         }
                     }
                 }
-                .padding(.horizontal, 210)
                 .padding(.top, 52)
                 .padding(.bottom, 190)
+                .frame(maxWidth: 900)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
             }
             .onChange(of: model.aiMessages.count) {
                 scrollToLatest(proxy)

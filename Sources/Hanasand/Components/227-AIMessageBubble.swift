@@ -29,7 +29,7 @@ struct AIMessageBubble: View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
             HStack {
                 if message.role == .user {
-                    Spacer(minLength: 120)
+                    Spacer(minLength: 0)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     if message.role == .assistant && message.isPending {
@@ -65,7 +65,7 @@ struct AIMessageBubble: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: message.role == .user ? 14 : 0, style: .continuous))
                 if message.role == .assistant {
-                    Spacer(minLength: 120)
+                    Spacer(minLength: 0)
                 }
             }
             if isHovered && !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

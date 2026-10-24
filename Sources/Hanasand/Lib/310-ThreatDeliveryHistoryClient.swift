@@ -160,7 +160,8 @@ struct ThreatDeliveryHistoryClient {
         switch action {
         case .test, .send:
             guard let finding, ThreatDeliveryHistory.actionAllowed(action, page: page, finding: finding),
-                  let currentFinding = page.findings.first(where: { $0.id == finding.id }) else { throw ThreatDeliveryHistoryError.actionUnavailable }
+                  let currentFinding = page.findings.first(where: { $0.id == finding.id }),
+                  sameConfirmedFinding(finding, currentFinding) else { throw ThreatDeliveryHistoryError.actionUnavailable }
             payload["alertId"] = currentFinding.id
             payload["alert"] = currentFinding.full
             payload["dryRun"] = action == .test
@@ -175,6 +176,24 @@ struct ThreatDeliveryHistoryClient {
             payload["deliveryId"] = currentAttempt.id
         }
         return payload
+    }
+
+    private static func sameConfirmedFinding(_ selected: ThreatDeliveryHistory.Finding,
+                                             _ current: ThreatDeliveryHistory.Finding) -> Bool {
+        guard let selectedPayload = selectedFindingJSON(selected.full),
+              let currentPayload = selectedFindingJSON(current.full) else { return false }
+        return selected.organizationID == current.organizationID
+            && selected.title == current.title
+            && selected.actor == current.actor
+            && selected.matchedTerm == current.matchedTerm
+            && selected.reviewState == current.reviewState
+            && selected.deliveryState == current.deliveryState
+            && selected.caseID == current.caseID
+            && selectedPayload == currentPayload
+    }
+
+    private static func selectedFindingJSON(_ finding: [String: Any]) -> Data? {
+        try? JSONSerialization.data(withJSONObject: finding, options: [.sortedKeys])
     }
 
     static func validatedReceipts(data: Data, response: URLResponse, action: ThreatDeliveryAction,

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct IntegrationsNativePanel: View {
+    var initialOrganizationID: String? = nil
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var page: IntegrationPage?
@@ -16,7 +17,7 @@ struct IntegrationsNativePanel: View {
     @State private var revision = 0
     @State private var refreshRequired = false
 
-    private var scopeID: String { model.selectedOrganizationID }
+    private var scopeID: String { initialOrganizationID ?? model.selectedOrganizationID }
     private var personal: Bool { scopeID.isEmpty || scopeID == "personal" || scopeID == model.userIDForRequests }
     private var isImpersonating: Bool { !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty }
     private var canManage: Bool { !isImpersonating && page?.destinationAdminProof.access?.canManage == true }

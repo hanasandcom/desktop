@@ -86,7 +86,7 @@ extension IDEWorkspace {
                         ForEach(model.filteredFiles) { file in
                             Button {
                                 model.select(file)
-                                model.preview(file, settings: appModel.settings)
+                                openNativeIDEPreview(file)
                             } label: {
                                 HStack(spacing: 10) {
                                     Image(systemName: file.icon)

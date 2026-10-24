@@ -54,34 +54,46 @@ struct SystemCronNativePanel: View {
                     message: message.isEmpty ? "No scheduled jobs were returned." : message
                 )
             } else {
-                HStack(alignment: .top, spacing: 14) {
-                    NativeGroupPanel(title: "Schedule", subtitle: "") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(["all", "failed", "blocked", "running", "enabled", "paused", "observable"], id: \.self) { status in
-                                    statusFilter(status)
-                                }
-                            }
-                        }
-                        if filtered.isEmpty {
-                            Text("No jobs match the active filters.").font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
-                        } else {
-                            LazyVStack(alignment: .leading, spacing: 6) {
-                ForEach(filtered) { job in
-                    Button { select(job) } label: { row(job) }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(job.name), \(job.status), \(job.category), \(job.schedule)")
-                }
-                            }
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 14) {
+                        schedulePanel.frame(minWidth: 270, maxWidth: 340)
+                        if let selected {
+                            detail(selected).frame(minWidth: 380, maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    .frame(minWidth: 270, maxWidth: 340)
-
-                    if let selected { detail(selected) }
+                    VStack(alignment: .leading, spacing: 14) {
+                        schedulePanel.frame(maxWidth: .infinity)
+                        if let selected {
+                            detail(selected).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
                 }
             }
         }
         .task { await load() }
+    }
+
+    private var schedulePanel: some View {
+        NativeGroupPanel(title: "Schedule", subtitle: "") {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(["all", "failed", "blocked", "running", "enabled", "paused", "observable"], id: \.self) { status in
+                        statusFilter(status)
+                    }
+                }
+            }
+            if filtered.isEmpty {
+                Text("No jobs match the active filters.").font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(filtered) { job in
+                        Button { select(job) } label: { row(job) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(job.name), \(job.status), \(job.category), \(job.schedule)")
+                    }
+                }
+            }
+        }
     }
 
     private func row(_ job: DesktopCronJob) -> some View {

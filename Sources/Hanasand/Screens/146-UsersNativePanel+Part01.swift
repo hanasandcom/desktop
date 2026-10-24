@@ -87,7 +87,7 @@ extension UsersNativePanel {
                                 .buttonStyle(.plain)
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(user.active == false ? theme.green : theme.danger)
-                                Button("Delete") {
+                                Button("Schedule deletion") {
                                     pendingDeleteUser = user
                                 }
                                 .buttonStyle(.plain)
@@ -133,21 +133,21 @@ extension UsersNativePanel {
         } message: {
             Text(pendingStatusUser?.active == false ? "This will reactivate the selected account." : "This will deactivate the account and revoke its active sessions.")
         }
-        .alert("Delete user?", isPresented: Binding(
+        .alert("Schedule user deletion?", isPresented: Binding(
             get: { pendingDeleteUser != nil },
             set: { if !$0 { pendingDeleteUser = nil } }
         )) {
             Button("Cancel", role: .cancel) {
                 pendingDeleteUser = nil
             }
-            Button("Delete", role: .destructive) {
+            Button("Schedule deletion", role: .destructive) {
                 if let pendingDeleteUser {
                     Task { await model.deleteDashboardUser(pendingDeleteUser) }
                 }
                 pendingDeleteUser = nil
             }
         } message: {
-            Text("This permanently removes \(pendingDeleteUser?.displayName ?? "the selected user"). Prefer deactivate unless deletion is intentional.")
+            Text("This revokes access for \(pendingDeleteUser?.displayName ?? "the selected user") now and schedules account deletion in 30 days. The deletion must be confirmed by the server before it is reported as scheduled.")
         }
         .sheet(item: $pendingImpersonationUser, onDismiss: {
             impersonationReason = ""

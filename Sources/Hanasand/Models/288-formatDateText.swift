@@ -16,5 +16,9 @@ func formatDateText(_ value: String?, fallback: String) -> String {
     if let date = iso.date(from: value) {
         return date.formatted(date: .abbreviated, time: .shortened)
     }
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = iso.date(from: value) {
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
     return value
 }

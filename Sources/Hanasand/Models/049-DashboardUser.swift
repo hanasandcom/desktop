@@ -49,3 +49,36 @@ struct DashboardUser: Decodable, Identifiable {
         [id, name, organization, organizationIDs, highestRoleName, highestRoleID].compactMap { $0 }.joined(separator: " ").lowercased()
     }
 }
+
+struct DashboardUserDeletionReceipt: Decodable, Equatable {
+    struct User: Decodable, Equatable {
+        let id: String
+        let deletionScheduledAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case deletionScheduledAt = "deletion_scheduled_at"
+        }
+    }
+
+    let pendingDeletion: Bool
+    let user: User
+
+    enum CodingKeys: String, CodingKey {
+        case pendingDeletion = "pending_deletion"
+        case user
+    }
+
+    func confirmsDeletion(of expectedID: String) -> Bool {
+        guard pendingDeletion, user.id == expectedID,
+              let value = user.deletionScheduledAt,
+              let date = Self.parseDate(value) else { return false }
+        return date > Date()
+    }
+
+    static func parseDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}

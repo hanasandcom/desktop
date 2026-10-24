@@ -15,6 +15,7 @@ private enum PendingDeliveryAction {
 }
 
 struct ThreatDeliveryHistoryNativePanel: View {
+    var initialOrganizationID: String? = nil
     private let statusFilters: [ThreatDeliveryStatus] = [.delivered, .failed, .dryRun, .skipped]
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -185,11 +186,21 @@ struct ThreatDeliveryHistoryNativePanel: View {
         switch pendingAction { case .test: "Run dry-run test"; case .send: "Send finding"; case .retry: "Retry delivery"; case nil: "Confirm" }
     }
     private var scopeKey: String {
-        [model.settings.selectedOrganizationID, model.settings.selectedOrganizationUserID,
+        [initialOrganizationID ?? "", model.settings.selectedOrganizationID, model.settings.selectedOrganizationUserID,
          model.settings.userID, model.settings.impersonatingUserID,
          model.settings.impersonationToken.isEmpty ? "own-account" : "impersonating"].joined(separator: "|")
     }
     private func refresh() async {
+        if let initialOrganizationID, !initialOrganizationID.isEmpty,
+           initialOrganizationID != model.settings.selectedOrganizationID {
+            let didSelectOrganization = await model.selectOrganizationFromDeepLink(initialOrganizationID)
+            guard !Task.isCancelled else { return }
+            guard didSelectOrganization else {
+                history = nil
+                status = model.organizationDirectoryError ?? "This delivery link belongs to an organization without a verified active membership."
+                return
+            }
+        }
         let current = UUID(); loadID = current; history = nil; findingPage = 0; historyPage = 0; isLoading = true
         let requestedSettings = model.settings
         defer { if loadID == current { isLoading = false } }

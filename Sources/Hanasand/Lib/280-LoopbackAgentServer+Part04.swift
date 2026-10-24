@@ -160,6 +160,12 @@ extension LoopbackAgentServer {
         if lowercasedRequest == "open_dashboard_host_updates" || lowercasedRequest == "host_updates" || lowercasedRequest == "host-updates" {
             return "open_dashboard_host_updates"
         }
+        if lowercasedRequest == "open_dashboard_ti_runs" || lowercasedRequest == "ti_runs" || lowercasedRequest == "ti-runs" {
+            return "open_dashboard_ti_runs"
+        }
+        if lowercasedRequest == "open_dashboard_ti_captures" || lowercasedRequest == "ti_captures" || lowercasedRequest == "ti-captures" {
+            return "open_dashboard_ti_captures"
+        }
         if lowercasedRequest == "open_dashboard_cases" || lowercasedRequest == "monitoring_cases" || lowercasedRequest == "cases" {
             return "open_dashboard_cases"
         }

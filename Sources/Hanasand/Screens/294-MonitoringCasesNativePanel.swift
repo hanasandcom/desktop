@@ -16,6 +16,7 @@ private enum MonitoringCasePanel: String, CaseIterable {
     case events = "Check runs"
     case history = "History"
     case notifications = "Notifications"
+    case development = "Development"
 }
 
 private enum PendingCaseChange {
@@ -49,12 +50,26 @@ struct MonitoringCasesNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @State private var panel: MonitoringCasePanel = .overview
     @State private var pending: PendingCaseChange?
+    @State private var confirmingCaseReview = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 SearchFieldRow(placeholder: "Search cases", text: $model.monitoringCaseSearch)
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadMonitoringCases() } }
+                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.refreshMonitoringCasesForReview() } }
+            }
+            if model.monitoringCaseMutationNeedsReview {
+                NativeNotice(message: "A previous case change could not be confirmed. Refresh the current case, review its history, then acknowledge before making another change.")
+                HStack(spacing: 8) {
+                    ActionButton(title: model.monitoringCaseMutationReviewRefreshed ? "Case records refreshed" : "Refresh for review", icon: "arrow.clockwise") {
+                        Task { await model.refreshMonitoringCasesForReview() }
+                    }
+                    .disabled(model.isLoadingNativeDashboard || model.monitoringCaseMutationReviewRefreshed)
+                    ActionButton(title: "Acknowledge review", icon: "checkmark.shield") {
+                        confirmingCaseReview = true
+                    }
+                    .disabled(!model.monitoringCaseMutationReviewRefreshed)
+                }
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -140,10 +155,24 @@ struct MonitoringCasesNativePanel: View {
             Button("Cancel", role: .cancel) { pending = nil }
             Button("Confirm", role: .destructive) { applyPendingChange() }
         } message: { Text(pending?.message ?? "") }
+        .confirmationDialog("Acknowledge this case review?", isPresented: $confirmingCaseReview, titleVisibility: .visible) {
+            Button("I reviewed the refreshed case history", role: .destructive) {
+                model.acknowledgeMonitoringCaseMutationReview()
+            }
+            Button("Keep changes locked", role: .cancel) {}
+        } message: {
+            Text("The earlier change remains unconfirmed. Check the refreshed case status and history before continuing.")
+        }
     }
 
     @ViewBuilder private func detail(_ item: MonitoringCase) -> some View {
         NativeGroupPanel(title: item.title, subtitle: "\(item.id) · Assigned owner: \(item.assignedOwner.isEmpty ? "Unassigned" : item.assignedOwner)") {
+            if let context = model.nativeCaseHandoffContext {
+                Text("Opened from \(context.route ?? "case link") · Alert \(context.alertID ?? "not specified") · Organization \(context.organizationID ?? "current")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                    .textSelection(.enabled)
+            }
             HStack(spacing: 8) {
                 ForEach(MonitoringCasePanel.allCases, id: \.self) { value in
                     FilterChip(title: value.rawValue, active: panel == value) { panel = value }
@@ -157,6 +186,7 @@ struct MonitoringCasesNativePanel: View {
                 case .events: events(item)
                 case .history: entries(item.history, empty: "No case history recorded.")
                 case .notifications: notifications(item)
+                case .development: CasesDevelopmentNativePanel(caseID: item.id, organizationID: item.organizationId)
                 }
             }
         }
@@ -168,7 +198,7 @@ struct MonitoringCasesNativePanel: View {
             .font(.system(size: 11, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
         Text("Health checks update recovery automatically. Closing a case does not mark the check as recovered.")
             .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary)
-        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty {
+        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty && !model.monitoringCaseMutationNeedsReview {
             HStack(spacing: 8) {
                 ForEach(["low", "medium", "high", "critical"], id: \.self) { value in
                     FilterChip(title: value.capitalized, active: item.severity == value) { pending = .severity(value) }
@@ -195,7 +225,7 @@ struct MonitoringCasesNativePanel: View {
             Text("This case is read-only for the current session.").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textTertiary)
         }
         if let resolution = item.resolution { evidence("Resolution", resolution) }
-        if item.needsHumanReview && item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty,
+        if item.needsHumanReview && item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty && !model.monitoringCaseMutationNeedsReview,
            let resolutionID = MonitoringCase.stringValue(item.resolution, key: "id") {
             ActionButton(title: "Confirm resolution", icon: "checkmark.shield") { pending = .confirmResolution(resolutionID) }
         }
@@ -206,7 +236,7 @@ struct MonitoringCasesNativePanel: View {
 
     @ViewBuilder private func comments(_ item: MonitoringCase) -> some View {
         entries(item.comments, empty: "No comments yet.")
-        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty {
+        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty && !model.monitoringCaseMutationNeedsReview {
             TextField("Add a comment", text: $model.monitoringCaseComment, axis: .vertical).lineLimit(2...5).textFieldStyle(.roundedBorder)
             ActionButton(title: "Add comment", icon: "text.bubble") { pending = .comment(model.monitoringCaseComment) }
                 .disabled(model.monitoringCaseComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -227,7 +257,7 @@ struct MonitoringCasesNativePanel: View {
     }
 
     @ViewBuilder private func notifications(_ item: MonitoringCase) -> some View {
-        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty {
+        if item.canManage && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty && !model.monitoringCaseMutationNeedsReview {
             ActionButton(title: item.notificationsEnabled ? "Disable notifications" : "Enable notifications", icon: "bell") { pending = .notifications(!item.notificationsEnabled) }
         }
         entries(item.notifications, empty: "No notifications recorded.")

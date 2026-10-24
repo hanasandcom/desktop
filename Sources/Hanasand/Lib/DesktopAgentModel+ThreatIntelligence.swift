@@ -73,7 +73,7 @@ extension DesktopAgentModel {
 
     func openThreatEvidence(_ url: URL?) {
         guard let url, url.scheme?.lowercased() == "https", url.host != nil, url.user == nil, url.password == nil else { return }
-        NSWorkspace.shared.open(url)
+        openURL(url.absoluteString, label: "Threat evidence")
     }
 
     private func tiBackendURL(path: String) -> URL {

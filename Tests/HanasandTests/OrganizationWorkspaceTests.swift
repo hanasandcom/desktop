@@ -131,4 +131,27 @@ final class OrganizationWorkspaceTests: XCTestCase {
         XCTAssertTrue(OrganizationWorkspacePolicy.valid(.init(name: "Example Org", slug: "example-org", defaultWebhookPolicy: "active_destinations", alertVisibilityPolicy: "members", lifecycleStatus: "active", retentionDays: 365)))
         XCTAssertFalse(OrganizationWorkspacePolicy.valid(.init(name: "x", slug: "../other", defaultWebhookPolicy: "*", alertVisibilityPolicy: "public", lifecycleStatus: "deleted", retentionDays: 0)))
     }
+
+    func testOverviewSummarizesEventsCasesAndLatestActivity() {
+        let events = [
+            OrganizationWorkspaceRecord(id: "event-1", title: "Older event", status: "new", severity: "low",
+                updatedAt: "2026-10-20T10:00:00Z", createdAt: "", organizationId: "org/a"),
+            OrganizationWorkspaceRecord(id: "event-2", title: "Latest event", status: "new", severity: "high",
+                updatedAt: "2026-10-23T10:00:00Z", createdAt: "", organizationId: "org/a"),
+        ]
+        let cases = [
+            OrganizationWorkspaceRecord(id: "case-open", title: "Open", status: "investigating", severity: "high",
+                updatedAt: "2026-10-22T10:00:00Z", createdAt: "", organizationId: "org/a"),
+            OrganizationWorkspaceRecord(id: "case-closed", title: "Closed", status: "resolved", severity: "low",
+                updatedAt: "2026-10-21T10:00:00Z", createdAt: "", organizationId: "org/a"),
+        ]
+
+        let overview = OrganizationWorkspaceOverview(events: events, cases: cases)
+
+        XCTAssertEqual(overview.eventCount, 2)
+        XCTAssertEqual(overview.caseCount, 2)
+        XCTAssertEqual(overview.openCaseCount, 1)
+        XCTAssertEqual(overview.latestActivity, "2026-10-23T10:00:00Z")
+        XCTAssertNil(OrganizationWorkspaceOverview(events: [], cases: []).latestActivity)
+    }
 }

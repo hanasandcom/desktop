@@ -35,6 +35,15 @@ private enum MonitoringCaseMutationError: LocalizedError {
     var errorDescription: String? { "The case change could not be confirmed. Refresh and review before trying again." }
 }
 
+enum MonitoringCaseMutationOutcome {
+    static func needsReview(for error: Error, requestDispatched: Bool) -> Bool {
+        guard requestDispatched else { return false }
+        if error is DecodingError || error is URLError || error is MonitoringCaseMutationError { return true }
+        if case DashboardRequestError.httpStatus(let status) = error { return status == 408 || status >= 500 }
+        return false
+    }
+}
+
 extension DesktopAgentModel {
     var filteredMonitoringCases: [MonitoringCase] {
         monitoringCases.filter { item in
@@ -53,12 +62,28 @@ extension DesktopAgentModel {
         }
     }
 
-    func loadMonitoringCases() async {
+    @discardableResult
+    func loadMonitoringCases() async -> Bool {
+        if let requestedOrganizationID = nativeCaseHandoffContext?.organizationID,
+           !requestedOrganizationID.isEmpty,
+           requestedOrganizationID != settings.selectedOrganizationID {
+            guard await selectOrganizationFromDeepLink(requestedOrganizationID) else {
+                nativeDashboardStatus = organizationDirectoryError ?? "This case link belongs to a different organization, and its membership could not be verified."
+                selectedMonitoringCase = nil
+                return false
+            }
+        }
+        if !selectedNativeDashboardDetailID.isEmpty,
+           !isValidMonitoringCaseID(selectedNativeDashboardDetailID) {
+            nativeDashboardStatus = "This case link has an invalid case ID."
+            selectedMonitoringCase = nil
+            return false
+        }
         guard hasHanasandAuth else {
             monitoringCases = []
             selectedMonitoringCase = nil
             nativeDashboardStatus = "Sign in to view monitoring cases."
-            return
+            return false
         }
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading monitoring cases"
@@ -73,14 +98,47 @@ extension DesktopAgentModel {
                 selectedMonitoringCase = nil
             }
             nativeDashboardStatus = response.items.isEmpty ? "No monitoring cases" : "Loaded \(response.items.count) monitoring cases"
-            if let selectedMonitoringCase { await loadMonitoringCaseDetail(id: selectedMonitoringCase.id) }
+            if !selectedNativeDashboardDetailID.isEmpty {
+                await loadMonitoringCaseDetail(id: selectedNativeDashboardDetailID)
+            } else if let selectedMonitoringCase {
+                await loadMonitoringCaseDetail(id: selectedMonitoringCase.id)
+            }
+            return nativeDashboardStatus.hasPrefix("Loaded") || nativeDashboardStatus == "No monitoring cases"
         } catch {
             nativeDashboardStatus = "Could not load monitoring cases: \(error.localizedDescription)"
+            return false
         }
     }
 
+    func refreshMonitoringCasesForReview() async {
+        guard monitoringCaseMutationNeedsReview else {
+            _ = await loadMonitoringCases()
+            return
+        }
+        monitoringCaseMutationReviewRefreshed = false
+        guard await loadMonitoringCases() else { return }
+        monitoringCaseMutationReviewRefreshed = true
+        nativeDashboardStatus = "Current case records are refreshed. Review the case history before acknowledging the earlier change."
+    }
+
+    func acknowledgeMonitoringCaseMutationReview() {
+        guard monitoringCaseMutationNeedsReview, monitoringCaseMutationReviewRefreshed else { return }
+        monitoringCaseMutationNeedsReview = false
+        monitoringCaseMutationReviewRefreshed = false
+        nativeDashboardStatus = "Review acknowledged. The earlier case change remains unconfirmed."
+    }
+
     func loadMonitoringCaseDetail(id: String) async {
-        guard hasHanasandAuth, id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil else { return }
+        guard isValidMonitoringCaseID(id) else {
+            nativeDashboardStatus = "This case link has an invalid case ID."
+            selectedMonitoringCase = nil
+            return
+        }
+        guard hasHanasandAuth else {
+            nativeDashboardStatus = "Sign in to view monitoring cases."
+            selectedMonitoringCase = nil
+            return
+        }
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading case details"
         defer { isLoadingNativeDashboard = false }
@@ -95,6 +153,10 @@ extension DesktopAgentModel {
         } catch {
             nativeDashboardStatus = "Could not load case details: \(error.localizedDescription)"
         }
+    }
+
+    private func isValidMonitoringCaseID(_ id: String) -> Bool {
+        id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil
     }
 
     func loadMonitoringCaseEventPage(page: Int) async {
@@ -121,6 +183,10 @@ extension DesktopAgentModel {
     }
 
     func updateMonitoringCase(status: String? = nil, severity: String? = nil, notificationsEnabled: Bool? = nil, comment: String? = nil, confirmResolutionId: String? = nil) async {
+        guard !monitoringCaseMutationNeedsReview else {
+            nativeDashboardStatus = "Refresh case records and review the previous change before making another change."
+            return
+        }
         guard hasHanasandAuth, settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty,
               let item = selectedMonitoringCase, item.canManage,
               status.map({ ["open", "in_progress", "resolved", "closed"].contains($0) }) ?? true,
@@ -132,6 +198,7 @@ extension DesktopAgentModel {
             return
         }
         let payload = MonitoringCaseUpdate(status: status, severity: severity, notificationsEnabled: notificationsEnabled, comment: comment?.trimmingCharacters(in: .whitespacesAndNewlines), confirmResolutionId: confirmResolutionId)
+        var mutationDispatched = false
         do {
             isLoadingNativeDashboard = true
             nativeDashboardStatus = "Verifying current case access"
@@ -150,12 +217,17 @@ extension DesktopAgentModel {
             nativeDashboardStatus = "Saving case change"
             let body = try JSONEncoder().encode(payload)
             let url = monitoringCaseURL(path: "cases/monitoring/\(item.id)", query: [])
+            mutationDispatched = true
             let receipt: MonitoringCaseReceipt = try await requestJSON(url, method: "PATCH", body: body, authenticated: true)
             guard receipt.ok else { throw MonitoringCaseMutationError.unconfirmed }
             nativeDashboardStatus = "Saved case change"
             monitoringCaseComment = ""
             await loadMonitoringCases()
         } catch {
+            if MonitoringCaseMutationOutcome.needsReview(for: error, requestDispatched: mutationDispatched) {
+                monitoringCaseMutationNeedsReview = true
+                monitoringCaseMutationReviewRefreshed = false
+            }
             nativeDashboardStatus = "\(error.localizedDescription)"
         }
         isLoadingNativeDashboard = false

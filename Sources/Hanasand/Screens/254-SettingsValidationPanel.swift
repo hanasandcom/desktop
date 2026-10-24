@@ -33,14 +33,16 @@ struct SettingsValidationPanel: View {
             }
 
             if settings.endpointValidationMessages.isEmpty {
-                Text("Desktop, API, AI, CDN, and server URLs all include valid schemes and hosts.")
+                Text("Site, API, internal API, AI, CDN, Desktop, and server URLs all include valid schemes and hosts.")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(settings.endpointValidationMessages, id: \.self) { message in
                     Label(message, systemImage: "xmark.circle")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

@@ -19,6 +19,40 @@ struct PublicStatusPayload: Decodable, Equatable {
         case historyGeneratedAt = "history_generated_at"
     }
 
+    init(
+        overall: String, monitoring: String?, generatedAt: String?, lastVerifiedAt: String?,
+        historyAvailable: Bool?, historyGeneratedAt: String?, checks: [PublicStatusCheck],
+        incidents: [PublicStatusIncident], history: [PublicStatusDay]
+    ) {
+        self.overall = overall
+        self.monitoring = monitoring
+        self.generatedAt = generatedAt
+        self.lastVerifiedAt = lastVerifiedAt
+        self.historyAvailable = historyAvailable
+        self.historyGeneratedAt = historyGeneratedAt
+        self.checks = checks
+        self.incidents = incidents
+        self.history = history
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        _ = try container.decodeIfPresent(String.self, forKey: .overall)
+        monitoring = try container.decodeIfPresent(String.self, forKey: .monitoring)
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
+        lastVerifiedAt = try container.decodeIfPresent(String.self, forKey: .lastVerifiedAt)
+        historyAvailable = try container.decodeIfPresent(Bool.self, forKey: .historyAvailable)
+        historyGeneratedAt = try container.decodeIfPresent(String.self, forKey: .historyGeneratedAt)
+
+        let receivedChecks = try container.decodeIfPresent([PublicStatusCheck].self, forKey: .checks) ?? []
+        let receivedIncidents = try container.decodeIfPresent([PublicStatusIncident].self, forKey: .incidents) ?? []
+        let receivedHistory = try container.decodeIfPresent([PublicStatusDay].self, forKey: .history) ?? []
+        checks = receivedChecks.filter(PublicStatusSuite.allows(check:))
+        incidents = receivedIncidents.filter(PublicStatusSuite.allows(incident:))
+        history = receivedHistory.filter(PublicStatusSuite.allows(history:))
+        overall = PublicStatusSuite.overall(checks: checks, monitoring: monitoring)
+    }
+
     static let empty = PublicStatusPayload(
         overall: "unknown", monitoring: "unavailable", generatedAt: "", lastVerifiedAt: nil,
         historyAvailable: false, historyGeneratedAt: nil, checks: [], incidents: [], history: []
@@ -27,13 +61,15 @@ struct PublicStatusPayload: Decodable, Equatable {
 
 struct PublicStatusCheck: Decodable, Equatable, Identifiable {
     var id: String { "\(service)|\(checkName)" }
+    var displayService: String { PublicStatusSuite.displayName(service) }
     let service: String
     let checkName: String
     let status: String
-    let latencyMilliseconds: Int?
+    let latencyMilliseconds: Double?
     let message: String?
     let checkedAt: String?
     let uptime30Days: String?
+    let uptime90Days: String?
 
     enum CodingKeys: String, CodingKey {
         case service, status, message
@@ -41,10 +77,92 @@ struct PublicStatusCheck: Decodable, Equatable, Identifiable {
         case latencyMilliseconds = "latency_ms"
         case checkedAt = "checked_at"
         case uptime30Days = "uptime_30d"
+        case uptime90Days = "uptime_90d"
+    }
+}
+
+private enum PublicStatusSuite {
+    // Keep the public status surface bounded to the established service groups.
+    // The upstream feed can contain dynamically named worker checks; those are
+    // not part of the user-facing status suite.
+    private static let services: Set<String> = [
+        "core", "ai", "website", "threat-intelligence", "content", "shares", "projects", "docker",
+        "infrastructure", "api", "authentication", "auth", "database", "production-monitor", "workspace",
+    ]
+    private static let checkNames: Set<String> = [
+        "api", "api health", "ai", "website", "public website", "ti", "content", "shares", "projects",
+        "authentication", "support api", "mail", "browser api", "browser web", "browsers", "discord bot", "ti web",
+        "availability", "geoip", "onion", "monitoring", "public search", "processing backlog",
+        "source collection", "monitoring workspace", "latest activity",
+    ]
+    private static let idLikeText = try! NSRegularExpression(pattern: #"(?i)(?:\b[0-9a-f]{7,}\b|\b[0-9a-f]{8}-[0-9a-f-]{27,}\b)"#)
+
+    static func allows(service: String, checkName: String) -> Bool {
+        let normalizedService = service.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard services.contains(normalizedService), !containsIdentifier(service), !containsIdentifier(checkName) else {
+            return false
+        }
+        return checkNames.contains(checkName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    static func allows(check: PublicStatusCheck) -> Bool {
+        allows(service: check.service, checkName: check.checkName)
+            && [check.message, check.checkedAt, check.uptime30Days, check.uptime90Days]
+                .compactMap { $0 }
+                .allSatisfy { !containsIdentifier($0) }
+    }
+
+    static func allows(incident: PublicStatusIncident) -> Bool {
+        guard allows(service: incident.service, checkName: incident.checkName) else { return false }
+        let visibleText = [incident.title, incident.impact, incident.status, incident.startedAt, incident.resolvedAt,
+                           incident.summary, incident.cause]
+            .compactMap { $0 } + incident.updates.flatMap { [$0.at, $0.status, $0.message, $0.evidence].compactMap { $0 } }
+        return visibleText.allSatisfy { !containsIdentifier($0) }
+    }
+
+    static func allows(history: PublicStatusDay) -> Bool {
+        allows(service: history.service, checkName: history.checkName)
+            && [history.date, history.status].allSatisfy { !containsIdentifier($0) }
+    }
+
+    static func displayName(_ service: String) -> String {
+        switch service.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "core", "api": return "Core platform"
+        case "ai": return "AI"
+        case "website": return "Website"
+        case "threat-intelligence": return "Threat intelligence"
+        case "content": return "Content"
+        case "shares": return "Sharing"
+        case "projects": return "Projects"
+        case "docker", "infrastructure": return "Infrastructure"
+        case "authentication", "auth": return "Authentication"
+        case "database": return "Database"
+        case "production-monitor": return "Monitoring"
+        case "workspace": return "Workspace"
+        default: return service
+        }
+    }
+
+    static func overall(checks: [PublicStatusCheck], monitoring: String?) -> String {
+        guard monitoring != "unavailable", !checks.isEmpty else { return "unknown" }
+        if checks.contains(where: { ["degraded", "down"].contains($0.status.lowercased()) }) {
+            let api = checks.first { ["api", "api health"].contains($0.checkName.lowercased()) }?.status
+            let website = checks.first { ["website", "public website"].contains($0.checkName.lowercased()) }?.status
+            let authentication = checks.first { ["authentication", "identity"].contains($0.checkName.lowercased()) }?.status
+            if api == "down", website == "down", authentication == "down" { return "down" }
+            return "degraded"
+        }
+        if checks.contains(where: { $0.status.lowercased() == "up" }) { return "up" }
+        return "unknown"
+    }
+
+    private static func containsIdentifier(_ value: String) -> Bool {
+        idLikeText.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
     }
 }
 
 struct PublicStatusIncident: Decodable, Equatable, Identifiable {
+    var displayService: String { PublicStatusSuite.displayName(service) }
     var id: String
     var aliases: [String]?
     var service: String
@@ -76,6 +194,7 @@ struct PublicStatusIncidentUpdate: Decodable, Equatable, Identifiable {
 
 struct PublicStatusDay: Decodable, Equatable, Identifiable {
     var id: String { "\(service)|\(checkName)|\(date)" }
+    var displayService: String { PublicStatusSuite.displayName(service) }
     let service: String
     let checkName: String
     let date: String
