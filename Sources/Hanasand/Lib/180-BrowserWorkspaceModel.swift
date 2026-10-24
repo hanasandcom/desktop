@@ -243,8 +243,9 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/thoughts": "/content/thoughts",
             "/user": "/users",
         ]
-        let websiteGalleryAlbumsRoute = host == "hanasand.com" && path == "/gallery/albums"
-        let websiteGalleryRoute = host == "hanasand.com" && (path == "/gallery" || websiteGalleryAlbumsRoute)
+        let websiteHost = host == "hanasand.com" || host == "www.hanasand.com"
+        let websiteGalleryAlbumsRoute = websiteHost && path == "/gallery/albums"
+        let websiteGalleryRoute = websiteHost && (path == "/gallery" || websiteGalleryAlbumsRoute)
         path = websiteAliases[path] ?? path
         if websiteGalleryRoute {
             // Preserve the website Gallery's all-media behavior through the

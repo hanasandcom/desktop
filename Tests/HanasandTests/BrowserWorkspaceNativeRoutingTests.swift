@@ -208,6 +208,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         }
         XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/images/library")?.section)
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/gallery")?.section, "gallery")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://www.hanasand.com/gallery")?.section, "gallery")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/gallery/albums")?.section, "galleryAlbums")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/upload")?.path, "/upload")
 
