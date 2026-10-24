@@ -58,6 +58,7 @@ extension DesktopAgentModel {
             .route("Monitoring cases", "Review health checks and cases.", "tray.full", "/cases"),
             .route("Service status", "View public service checks, incidents, and daily history.", "heart.text.square", "/status"),
             .route("Threat intelligence", "Search actors and vulnerabilities.", "magnifyingglass", "/ti"),
+            .route("Latest Activity", "Review recent threat intelligence activity.", "clock.arrow.circlepath", "/ti/activity"),
             .route("Actor Profiles", "Browse source-backed threat actor records.", "person.text.rectangle", "/ti/profiles"),
             .route("Intelligence Sources", "Browse the public intelligence source catalogue.", "dot.radiowaves.left.and.right", "/ti/sources"),
             .route("Collection Runs", "Review global intelligence collection runs.", "clock.arrow.circlepath", "/ti/runs"),
