@@ -17,6 +17,7 @@ struct ArticlesNativePanel: View {
     @State private var search = ""
     @State private var sortByTitle = false
     @State private var page = 0
+    @State private var previewArticle: DashboardArticle?
 
     private var filteredArticles: [DashboardArticle] {
         PublishingList.articles(model.articles, matching: search, order: sortByTitle ? .title : .newest)
@@ -62,6 +63,11 @@ struct ArticlesNativePanel: View {
             }
         } message: {
             Text(deletingArticle?.title ?? "This article will be removed.")
+        }
+        .sheet(item: $previewArticle) { article in
+            NativeArticlePreviewSheet(article: article)
+                .environmentObject(model)
+                .frame(minWidth: 520, minHeight: 420)
         }
     }
 
@@ -183,7 +189,7 @@ struct ArticlesNativePanel: View {
                             .lineLimit(1)
                             HStack(spacing: 8) {
                                 Button("Open") {
-                                    model.openArticle(article)
+                                    previewArticle = article
                                 }
                                 .buttonStyle(.plain)
                                 .font(.system(size: 12, weight: .bold))
@@ -230,6 +236,79 @@ struct ArticlesNativePanel: View {
                         .disabled(currentPage >= pageCount - 1)
                 }
             }
+        }
+    }
+}
+
+private struct NativeArticlePreviewSheet: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    let article: DashboardArticle
+    @State private var content: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(article.title)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(theme.text)
+                        .textSelection(.enabled)
+                    Text("\(article.readingLabel) · Updated \(article.publishedLabel)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .keyboardShortcut(.escape)
+            }
+
+            if let error {
+                NativeNotice(message: error, title: "Article unavailable")
+            } else if let content {
+                ScrollView {
+                    Text((try? AttributedString(markdown: content)) ?? AttributedString(content))
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                }
+                .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                ProgressView("Loading article…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(20)
+        .task(id: article.id) { await load() }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+
+    @MainActor private func load() async {
+        if let content = article.content {
+            self.content = content
+            return
+        }
+        guard NativeRouteSelection.resolve(article.id, among: [article.id]) != nil,
+              let id = article.id.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) else {
+            error = "The article identifier is invalid."
+            return
+        }
+        do {
+            let loaded: DashboardArticle = try await model.requestJSON(
+                model.settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("article/\(id)"),
+                authenticated: false
+            )
+            guard loaded.id == article.id, let content = loaded.content else {
+                error = "The article did not include readable content."
+                return
+            }
+            self.content = content
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
