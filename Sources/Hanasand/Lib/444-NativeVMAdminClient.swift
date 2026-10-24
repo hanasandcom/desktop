@@ -81,6 +81,20 @@ struct NativeVMAdminClient {
                                           access: NativeVMAdminAccess(allowed: allowed, canEdit: allowed && canEdit))
     }
 
+    /// Reads platform-level VM administration access without requiring a selected VM.
+    func loadPlatformAuthorization() async throws -> NativeVMPlatformAdminAuthorization {
+        let response = try await request(base: identityBaseURL, path: "management/organizations?internalPages=1", method: "GET")
+        guard let object = try Self.object(response.data),
+              let allowed = object["allowed"] as? Bool, let canEdit = object["canEdit"] as? Bool else {
+            throw NativeVMAdminError.invalidResponse
+        }
+        return NativeVMPlatformAdminAuthorization(
+            scope: scope,
+            capturedAt: now(),
+            access: NativeVMAdminAccess(allowed: allowed, canEdit: allowed && canEdit)
+        )
+    }
+
     func assignOrganization(_ authorization: NativeVMAdminAuthorization, organizationID rawOrganizationID: String) async throws -> NativeVMAdminOrganizationReceipt {
         let vm = try authorize(authorization)
         let organization = try Self.validatedIdentifier(rawOrganizationID)
@@ -119,6 +133,16 @@ struct NativeVMAdminClient {
     /// The supported stop-all mutation is POST /vms/stop. Never issue the legacy GET form.
     func stopAll(_ authorization: NativeVMAdminAuthorization) async throws -> NativeVMAdminStopReceipt {
         _ = try authorizePlatform(authorization)
+        return try await stopAllAuthorized()
+    }
+
+    /// The supported stop-all mutation is POST /vms/stop. This platform-scope form does not require a VM row.
+    func stopAll(_ authorization: NativeVMPlatformAdminAuthorization) async throws -> NativeVMAdminStopReceipt {
+        try authorizePlatform(authorization)
+        return try await stopAllAuthorized()
+    }
+
+    private func stopAllAuthorized() async throws -> NativeVMAdminStopReceipt {
         let response = try await request(base: apiBaseURL, path: "vms/stop", method: "POST", mutation: true)
         guard response.status == 200, let object = try Self.object(response.data),
               object["success"] as? Bool == true,
@@ -144,6 +168,14 @@ struct NativeVMAdminClient {
         let vm = try authorize(authorization)
         guard authorization.access.allowed, authorization.access.canEdit else { throw NativeVMAdminError.accessDenied }
         return vm
+    }
+
+    private func authorizePlatform(_ authorization: NativeVMPlatformAdminAuthorization) throws {
+        let age = now().timeIntervalSince(authorization.capturedAt)
+        guard authorization.scope == scope, age >= -5, age <= Self.authorizationMaximumAge else {
+            throw NativeVMAdminError.staleAuthorization
+        }
+        guard authorization.access.allowed, authorization.access.canEdit else { throw NativeVMAdminError.accessDenied }
     }
 
     private func validateOrganizationScope(_ vm: NativeVMAdminRecord) throws {

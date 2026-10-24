@@ -1,5 +1,128 @@
 import SwiftUI
 
+struct VMPlatformAdministrationControls: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+
+    @State private var authorization: NativeVMPlatformAdminAuthorization?
+    @State private var status = ""
+    @State private var isLoading = false
+    @State private var isMutating = false
+    @State private var pendingStopAll = false
+
+    private var scopeKey: String {
+        [model.settings.apiBaseURL, model.userIDForRequests, model.authTokenForRequests.hashValue.description,
+         model.selectedOrganizationID].joined(separator: "|")
+    }
+
+    var body: some View {
+        NativeGroupPanel(title: "Platform administration", subtitle: "Global actions are not limited by inventory filters.") {
+            if model.isProfileIdentityImpersonating {
+                Text("Return to your own account before managing virtual machines.")
+                    .font(.caption).foregroundStyle(theme.textSecondary)
+            } else if !model.hasHanasandAuth {
+                Text("Sign in to review platform-wide VM actions.")
+                    .font(.caption).foregroundStyle(theme.textSecondary)
+            } else if isLoading && authorization == nil {
+                ProgressView("Checking platform permissions…")
+            } else if authorization?.access.allowed == true, authorization?.access.canEdit == true {
+                ActionButton(title: isMutating ? "Scheduling shutdowns…" : "Review stop all VMs", icon: "stop.circle", tone: .danger) {
+                    pendingStopAll = true
+                }.disabled(isMutating || isLoading)
+            } else {
+                Text(status.isEmpty ? "Platform-wide VM actions require current platform edit access." : status)
+                    .font(.caption).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+                ActionButton(title: isLoading ? "Refreshing permissions…" : "Refresh platform permissions", icon: "arrow.clockwise") {
+                    Task { await refreshAuthorization() }
+                }.disabled(isLoading || isMutating)
+            }
+            if !status.isEmpty, authorization?.access.canEdit == true {
+                Text(status).font(.caption).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+            }
+        }
+        .confirmationDialog("Stop all virtual machines?", isPresented: $pendingStopAll, titleVisibility: .visible) {
+            Button("Stop all VMs", role: .destructive) { Task { await stopAll() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This queues shutdowns for every VM on the platform. Inventory filters and the selected organization do not limit this action.")
+        }
+        .task(id: scopeKey) { await refreshAuthorization() }
+        .onChange(of: model.selectedOrganizationID) { _, _ in
+            authorization = nil
+            status = ""
+            pendingStopAll = false
+        }
+    }
+
+    private func makeClient() throws -> NativeVMAdminClient {
+        try NativeVMAdminClient(
+            apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+            userID: model.userIDForRequests,
+            token: model.authTokenForRequests,
+            organizationID: model.selectedOrganizationID,
+            impersonationToken: model.settings.impersonationToken,
+            impersonatingUserID: model.settings.impersonatingUserID
+        )
+    }
+
+    @MainActor private func refreshAuthorization() async {
+        authorization = nil
+        guard model.hasHanasandAuth, !model.isProfileIdentityImpersonating else { return }
+        let capturedScope = scopeKey
+        let userID = model.userIDForRequests
+        let token = model.authTokenForRequests
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let fresh = try await makeClient().loadPlatformAuthorization()
+            guard capturedScope == scopeKey, userID == model.userIDForRequests, token == model.authTokenForRequests,
+                  !model.isProfileIdentityImpersonating else { return }
+            authorization = fresh
+            status = ""
+        } catch {
+            guard capturedScope == scopeKey else { return }
+            status = error.localizedDescription
+        }
+    }
+
+    @MainActor private func stopAll() async {
+        pendingStopAll = false
+        guard !isMutating, model.hasHanasandAuth, !model.isProfileIdentityImpersonating,
+              authorization?.access.allowed == true, authorization?.access.canEdit == true else { return }
+        let capturedScope = scopeKey
+        let userID = model.userIDForRequests
+        let token = model.authTokenForRequests
+        isMutating = true
+        defer { isMutating = false }
+        do {
+            let client = try makeClient()
+            let fresh = try await client.loadPlatformAuthorization()
+            guard capturedScope == scopeKey, userID == model.userIDForRequests, token == model.authTokenForRequests,
+                  !model.isProfileIdentityImpersonating else {
+                authorization = nil
+                status = "Account or organization changed. Refresh platform permissions before retrying."
+                return
+            }
+            let receipt = try await client.stopAll(fresh)
+            guard capturedScope == scopeKey else {
+                authorization = nil
+                status = "Shutdowns were queued, but the workspace changed. Refresh the current state."
+                return
+            }
+            status = "\(receipt.message) \(receipt.vmNames.count) VM(s) included."
+            let refreshed = try? await client.loadPlatformAuthorization()
+            guard capturedScope == scopeKey else {
+                authorization = nil
+                return
+            }
+            authorization = refreshed
+        } catch {
+            status = error.localizedDescription
+            authorization = nil
+        }
+    }
+}
+
 struct VMAdministrationControls: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme

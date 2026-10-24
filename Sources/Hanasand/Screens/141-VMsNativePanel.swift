@@ -56,6 +56,7 @@ struct VMsNativePanel: View {
                 }
                 .disabled(isRefreshingInventory || !model.hasHanasandAuth)
             }
+            VMPlatformAdministrationControls()
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 8) {
                 FilterChip(title: "Any power state", active: inventoryFilter.status == "all") { inventoryFilter.status = "all" }
                 FilterChip(title: "Running", active: inventoryFilter.status == "running") { inventoryFilter.status = "running" }

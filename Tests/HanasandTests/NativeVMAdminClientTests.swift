@@ -82,6 +82,34 @@ final class NativeVMAdminClientTests: XCTestCase {
         XCTAssertEqual(requests.filter { $0.url?.path == "/api/vms/stop" }.map(\.httpMethod), ["POST"])
     }
 
+    func testPlatformStopAllDoesNotRequireASelectedVM() async throws {
+        mutationBody = ["success": true, "message": "Queued shutdowns.", "vms": ["fixture-vm"]]
+        let authorization = try await client.loadPlatformAuthorization()
+
+        XCTAssertEqual(authorization.access, NativeVMAdminAccess(allowed: true, canEdit: true))
+        XCTAssertEqual(requests.map(\.url?.path), ["/api/management/organizations"])
+        let receipt = try await client.stopAll(authorization)
+
+        XCTAssertEqual(receipt.vmNames, ["fixture-vm"])
+        XCTAssertFalse(requests.contains { $0.url?.path == "/api/vm/fixture-vm" })
+        XCTAssertEqual(requests.filter { $0.url?.path == "/api/vms/stop" }.map(\.httpMethod), ["POST"])
+    }
+
+    func testPlatformStopAllRequiresFreshPlatformEditAuthorization() async throws {
+        access = ["allowed": true, "canEdit": false]
+        let readOnly = try await client.loadPlatformAuthorization()
+        do { _ = try await client.stopAll(readOnly); XCTFail("Expected platform edit denial") }
+        catch { XCTAssertEqual(error as? NativeVMAdminError, .accessDenied) }
+
+        access = ["allowed": true, "canEdit": true]
+        let fresh = try await client.loadPlatformAuthorization()
+        now.addTimeInterval(31)
+        do { _ = try await client.stopAll(fresh); XCTFail("Expected stale platform authorization") }
+        catch { XCTAssertEqual(error as? NativeVMAdminError, .staleAuthorization) }
+
+        XCTAssertFalse(requests.contains { $0.url?.path == "/api/vms/stop" })
+    }
+
     func testNoPlatformEditStaleSnapshotWrongAccountScopeOrImpersonationCanMutate() async throws {
         access = ["allowed": true, "canEdit": false]
         let readOnly = try await client.loadAuthorization(for: "fixture-vm")

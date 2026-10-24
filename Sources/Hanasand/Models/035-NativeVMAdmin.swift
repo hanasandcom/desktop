@@ -21,6 +21,13 @@ struct NativeVMAdminAuthorization: Equatable {
     let access: NativeVMAdminAccess
 }
 
+/// A short-lived platform permission read for actions that are global to the VM service.
+struct NativeVMPlatformAdminAuthorization: Equatable {
+    let scope: String
+    let capturedAt: Date
+    let access: NativeVMAdminAccess
+}
+
 struct NativeVMAdminOrganizationReceipt: Equatable {
     let id: String
     let name: String
