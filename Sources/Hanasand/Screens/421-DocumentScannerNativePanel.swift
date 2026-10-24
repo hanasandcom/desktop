@@ -10,33 +10,31 @@ struct DocumentScannerNativePanel: View {
     @State private var showingClearConfirmation = false
     @State private var pagePendingDeletion: DocumentScanPage.ID?
     @State private var exportedPDFURL: URL?
+    @State private var exportedPDFRevision: Int?
     @State private var exportError: String?
 
     var body: some View {
         FeatureWorkspace(title: "Document Scanner", subtitle: camera.status.message) {
-            HStack(spacing: 10) {
-                ActionButton(title: "Start camera", icon: "camera") { camera.start() }
-                    .disabled(camera.isRunning || camera.isRequestingPermission)
-                ActionButton(title: camera.isCapturing ? "Capturing…" : "Capture page", icon: "viewfinder") { camera.capture() }
-                    .disabled(!camera.isRunning || camera.isCapturing)
-                ActionButton(title: "Cancel camera", icon: "xmark.circle") { camera.cancel() }
-                    .disabled(!camera.isRunning && !camera.isRequestingPermission)
-                ActionButton(title: "Export PDF", icon: "doc.richtext") { exportPDF() }
-                    .disabled(scans.isEmpty)
-                if let exportedPDFURL {
-                    ShareLink(item: exportedPDFURL, preview: SharePreview(exportedPDFURL.lastPathComponent)) {
-                        Label("Share PDF", systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(.bordered)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    startCameraButton
+                    capturePageButton
+                    cancelCameraButton
+                    exportPDFButton
+                    sharePDFButton
+                    clearPagesButton
                 }
-                ActionButton(title: "Clear pages", icon: "trash", tone: .danger) { showingClearConfirmation = true }
-                    .disabled(scans.isEmpty)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) { startCameraButton; capturePageButton }
+                    HStack(spacing: 8) { cancelCameraButton; exportPDFButton }
+                    HStack(spacing: 8) { sharePDFButton; clearPagesButton }
+                }
             }
 
             HStack(spacing: 12) {
                 FeatureCard(title: "Pages", value: "\(scans.pageCount)", icon: "doc.on.doc")
                 FeatureCard(title: "Camera", value: camera.status.shortTitle, icon: "camera")
-                FeatureCard(title: "PDF", value: exportedPDFURL?.lastPathComponent ?? "Not exported", icon: "doc.richtext")
+                FeatureCard(title: "PDF", value: currentPDFLabel, icon: "doc.richtext")
             }
 
             if camera.isRunning {
@@ -112,6 +110,7 @@ struct DocumentScannerNativePanel: View {
             Button("Clear", role: .destructive) {
                 scans.clear()
                 exportedPDFURL = nil
+                exportedPDFRevision = nil
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -132,6 +131,47 @@ struct DocumentScannerNativePanel: View {
         }
     }
 
+    private var currentPDFLabel: String {
+        guard let exportedPDFURL, exportedPDFRevision == scans.revision else {
+            return exportedPDFURL == nil ? "Not exported" : "Changes need export"
+        }
+        return exportedPDFURL.lastPathComponent
+    }
+
+    private var startCameraButton: some View {
+        ActionButton(title: "Start camera", icon: "camera") { camera.start() }
+            .disabled(camera.isRunning || camera.isRequestingPermission)
+    }
+
+    private var capturePageButton: some View {
+        ActionButton(title: camera.isCapturing ? "Capturing…" : "Capture page", icon: "viewfinder") { camera.capture() }
+            .disabled(!camera.isRunning || camera.isCapturing)
+    }
+
+    private var cancelCameraButton: some View {
+        ActionButton(title: "Cancel camera", icon: "xmark.circle") { camera.cancel() }
+            .disabled(!camera.isRunning && !camera.isRequestingPermission)
+    }
+
+    private var exportPDFButton: some View {
+        ActionButton(title: "Export PDF", icon: "doc.richtext") { exportPDF() }
+            .disabled(scans.isEmpty)
+    }
+
+    @ViewBuilder private var sharePDFButton: some View {
+        if let exportedPDFURL, exportedPDFRevision == scans.revision {
+            ShareLink(item: exportedPDFURL, preview: SharePreview(exportedPDFURL.lastPathComponent)) {
+                Label("Share PDF", systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var clearPagesButton: some View {
+        ActionButton(title: "Clear pages", icon: "trash", tone: .danger) { showingClearConfirmation = true }
+            .disabled(scans.isEmpty)
+    }
+
     private func exportPDF() {
         guard let data = DocumentScannerPDF.data(for: scans.pages) else {
             exportError = "The scanned pages could not be assembled into a PDF."
@@ -148,6 +188,7 @@ struct DocumentScannerNativePanel: View {
         do {
             try data.write(to: url, options: .atomic)
             exportedPDFURL = url
+            exportedPDFRevision = scans.revision
             exportError = nil
         } catch {
             exportError = "Could not save the PDF: \(error.localizedDescription)"

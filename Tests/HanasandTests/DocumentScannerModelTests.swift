@@ -43,6 +43,35 @@ final class DocumentScannerModelTests: XCTestCase {
         XCTAssertTrue(session.isEmpty)
     }
 
+    func testRevisionTracksOnlySuccessfulPageContentOrOrderChanges() {
+        var session = DocumentScanSession()
+        let first = page(red: 1)
+        let second = page(red: 2)
+
+        XCTAssertEqual(session.revision, 0)
+        session.remove(first.id)
+        session.move(first.id, by: 1)
+        session.clear()
+        XCTAssertEqual(session.revision, 0)
+
+        session.append(first)
+        XCTAssertEqual(session.revision, 1)
+        session.append(second)
+        XCTAssertEqual(session.revision, 2)
+        session.move(second.id, by: -1)
+        XCTAssertEqual(session.revision, 3)
+        session.move(second.id, by: -1)
+        XCTAssertEqual(session.revision, 3)
+        session.remove(UUID())
+        XCTAssertEqual(session.revision, 3)
+        session.remove(first.id)
+        XCTAssertEqual(session.revision, 4)
+        session.clear()
+        XCTAssertEqual(session.revision, 5)
+        session.clear()
+        XCTAssertEqual(session.revision, 5)
+    }
+
     func testPDFAssemblyPreservesPageCountAndOrder() throws {
         let pages = [page(red: 1), page(red: 2), page(red: 3)]
 
