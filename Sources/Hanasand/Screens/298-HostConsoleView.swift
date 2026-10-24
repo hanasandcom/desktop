@@ -15,24 +15,19 @@ struct HostConsoleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(title) console")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(theme.text)
-                    Text(session.status)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(session.isConnected ? theme.green : theme.textSecondary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    headerTitle
+                    Spacer(minLength: 8)
+                    consoleHeaderActions
                 }
-                Spacer()
-                Button("Reconnect", systemImage: "arrow.clockwise") {
-                    session.disconnect()
-                    session.connect()
+                VStack(alignment: .leading, spacing: 8) {
+                    headerTitle
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        consoleHeaderActions
+                    }
                 }
-                .disabled(session.isConnected)
-                Button("Close", systemImage: "xmark") { dismiss() }
             }
 
             ScrollViewReader { proxy in
@@ -41,6 +36,7 @@ struct HostConsoleView: View {
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
                         .foregroundStyle(theme.text)
                         .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                         .id("host-console-end")
@@ -50,22 +46,24 @@ struct HostConsoleView: View {
             }
             .frame(minHeight: 300)
 
-            HStack(spacing: 10) {
-                TextField("Enter a command", text: $command)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 13, design: .monospaced))
-                    .onSubmit { sendCommand() }
-                Button("Send") { sendCommand() }
-                    .disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Ctrl-C") { session.sendControlC() }
-                    .disabled(!session.isConnected)
+            ViewThatFits(in: .horizontal) {
+                commandInputRow
+                VStack(alignment: .leading, spacing: 8) {
+                    commandField
+                    HStack(spacing: 8) {
+                        Button("Send") { sendCommand() }
+                            .disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("Ctrl-C") { session.sendControlC() }
+                            .disabled(!session.isConnected)
+                    }
+                }
             }
             Text("Connected to the server through Hanasand. Your commands run on \(title).")
                 .font(.system(size: 11))
                 .foregroundStyle(theme.textSecondary)
         }
         .padding(18)
-        .frame(minWidth: 720, minHeight: 520)
+        .frame(minWidth: 0, idealWidth: 720, maxWidth: .infinity, minHeight: 420, maxHeight: .infinity)
         .background(theme.background)
         .onAppear { session.connect() }
         .onDisappear { session.disconnect() }
@@ -76,5 +74,48 @@ struct HostConsoleView: View {
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         session.sendLine(value)
         command = ""
+    }
+
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(title) console")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(session.status)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(session.isConnected ? theme.green : theme.textSecondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var consoleHeaderActions: some View {
+        Group {
+            Button("Reconnect", systemImage: "arrow.clockwise") {
+                session.disconnect()
+                session.connect()
+            }
+            .disabled(session.isConnected)
+            Button("Close", systemImage: "xmark") { dismiss() }
+        }
+    }
+
+    private var commandField: some View {
+        TextField("Enter a command", text: $command)
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 13, design: .monospaced))
+            .frame(minWidth: 0)
+            .onSubmit { sendCommand() }
+    }
+
+    private var commandInputRow: some View {
+        HStack(spacing: 10) {
+            commandField
+            Button("Send") { sendCommand() }
+                .disabled(!session.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Ctrl-C") { session.sendControlC() }
+                .disabled(!session.isConnected)
+        }
     }
 }
