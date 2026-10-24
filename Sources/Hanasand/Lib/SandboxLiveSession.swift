@@ -225,7 +225,50 @@ struct SandboxLiveConfiguration {
     var locale = "en-US"
     var timezoneId = "UTC"
     var platform = "Linux x86_64"
+    var isMobile = false
+    var hasTouch = false
     var profileTools = SandboxBrowserProfile.defaults[0].tools
+}
+
+struct SandboxBrowserFingerprint: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let userAgent: String
+    let width: Int
+    let height: Int
+    let locale: String
+    let timezoneId: String
+    let platform: String
+    var isMobile = false
+    var hasTouch = false
+
+    static let presets = [
+        SandboxBrowserFingerprint(id: "windows-11-chrome", name: "Windows 11 Chrome",
+            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+            width: 1920, height: 1080, locale: "en-US", timezoneId: "America/New_York", platform: "Win32"),
+        SandboxBrowserFingerprint(id: "iphone-safari", name: "iPhone Safari",
+            userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+            width: 393, height: 852, locale: "en-US", timezoneId: "America/New_York", platform: "iPhone", isMobile: true, hasTouch: true),
+        SandboxBrowserFingerprint(id: "macbook-safari", name: "MacBook Safari",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+            width: 1512, height: 982, locale: "en-US", timezoneId: "America/Los_Angeles", platform: "MacIntel"),
+        SandboxBrowserFingerprint(id: "ubuntu-firefox", name: "Ubuntu Firefox",
+            userAgent: "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0",
+            width: 1920, height: 1080, locale: "en-US", timezoneId: "UTC", platform: "Linux x86_64"),
+        SandboxBrowserFingerprint(id: "powershell", name: "PowerShell",
+            userAgent: "Mozilla/5.0 (Windows NT; Windows NT 10.0; en-US) WindowsPowerShell/7.5.0",
+            width: 1280, height: 720, locale: "en-US", timezoneId: "UTC", platform: "Win32"),
+        SandboxBrowserFingerprint(id: "curl-macos", name: "macOS curl",
+            userAgent: "curl/8.7.1", width: 1280, height: 720, locale: "en-US", timezoneId: "UTC", platform: "MacIntel"),
+    ]
+
+    static func streamViewport(width: Int, height: Int) -> (width: Int, height: Int) {
+        let requestedWidth = min(2_400, max(320, width))
+        let requestedHeight = min(2_160, max(320, height))
+        let scale = min(1, sqrt(Double(1_280 * 720) / Double(requestedWidth * requestedHeight)))
+        return (max(320, Int(Double(requestedWidth) * scale / 2) * 2),
+                max(320, Int(Double(requestedHeight) * scale / 2) * 2))
+    }
 }
 
 @MainActor
@@ -365,7 +408,8 @@ enum SandboxLiveProtocol {
             "profileTools": configuration.profileTools.map { ["id": $0.id, "name": $0.name, "url": $0.url] }, "userAgent": configuration.userAgent,
             "width": configuration.width, "height": configuration.height,
             "locale": configuration.locale, "timezoneId": configuration.timezoneId,
-            "platform": configuration.platform, "clientId": clientID,
+            "platform": configuration.platform, "isMobile": configuration.isMobile,
+            "hasTouch": configuration.hasTouch, "clientId": clientID,
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         guard let text = String(data: data, encoding: .utf8) else { throw SandboxLiveSessionError.invalidResponse }

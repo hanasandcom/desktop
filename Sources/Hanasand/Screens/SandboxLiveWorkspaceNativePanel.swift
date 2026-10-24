@@ -10,6 +10,15 @@ struct SandboxLiveWorkspaceNativePanel: View {
     @State private var selectedProfileID = SandboxBrowserProfile.defaults[0].id
     @State private var profileSyncMessage = ""
     @State private var isLoadingProfiles = false
+    @State private var selectedFingerprintID = SandboxBrowserFingerprint.presets[0].id
+    @State private var viewportWidth = String(SandboxBrowserFingerprint.presets[0].width)
+    @State private var viewportHeight = String(SandboxBrowserFingerprint.presets[0].height)
+    @State private var userAgent = SandboxBrowserFingerprint.presets[0].userAgent
+    @State private var locale = SandboxBrowserFingerprint.presets[0].locale
+    @State private var timezoneId = SandboxBrowserFingerprint.presets[0].timezoneId
+    @State private var platform = SandboxBrowserFingerprint.presets[0].platform
+    @State private var isMobile = SandboxBrowserFingerprint.presets[0].isMobile
+    @State private var hasTouch = SandboxBrowserFingerprint.presets[0].hasTouch
 
     private var selectedProfile: SandboxBrowserProfile {
         profiles.first(where: { $0.id == selectedProfileID }) ?? SandboxBrowserProfile.defaults[0]
@@ -64,6 +73,55 @@ struct SandboxLiveWorkspaceNativePanel: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("sandbox-profile-status")
                     }
+
+                    DisclosureGroup("Browser fingerprint and viewport") {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Picker("Preset", selection: $selectedFingerprintID) {
+                                ForEach(SandboxBrowserFingerprint.presets) { preset in
+                                    Text(preset.name).tag(preset.id)
+                                }
+                            }
+                            .onChange(of: selectedFingerprintID) { _, id in applyFingerprint(id) }
+
+                            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                                GridRow {
+                                    metadataField("Width", value: $viewportWidth, accessibility: "Sandbox viewport width")
+                                    metadataField("Height", value: $viewportHeight, accessibility: "Sandbox viewport height")
+                                }
+                                GridRow {
+                                    metadataField("Locale", value: $locale, accessibility: "Sandbox locale")
+                                    metadataField("Timezone", value: $timezoneId, accessibility: "Sandbox timezone")
+                                }
+                            }
+                            metadataField("Platform", value: $platform, accessibility: "Sandbox platform")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("User agent").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textSecondary)
+                                TextField("User agent", text: $userAgent, axis: .vertical)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .lineLimit(2...4)
+                                    .textFieldStyle(.roundedBorder)
+                                    .accessibilityLabel("Sandbox user agent")
+                            }
+                            Toggle("Mobile emulation", isOn: $isMobile)
+                                .font(.system(size: 11, weight: .medium))
+                                .accessibilityIdentifier("sandbox-mobile-emulation")
+                            Toggle("Touch input", isOn: $hasTouch)
+                                .font(.system(size: 11, weight: .medium))
+                                .accessibilityIdentifier("sandbox-touch-input")
+                            let dimensions = SandboxBrowserFingerprint.streamViewport(
+                                width: Int(viewportWidth) ?? 1_280,
+                                height: Int(viewportHeight) ?? 720
+                            )
+                            Text("Stream size is limited to 921,600 pixels. This session will use \(dimensions.width) × \(dimensions.height) pixels.")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(theme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 7)
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .disabled(session.isActive)
+                    .accessibilityIdentifier("sandbox-fingerprint-controls")
 
                     HStack(spacing: 8) {
                         TextField("https://example.com", text: $target)
@@ -151,7 +209,41 @@ struct SandboxLiveWorkspaceNativePanel: View {
         )
         var selectedConfiguration = configuration
         selectedConfiguration.profileTools = selectedProfile.tools
+        let viewport = SandboxBrowserFingerprint.streamViewport(
+            width: Int(viewportWidth) ?? 1_280,
+            height: Int(viewportHeight) ?? 720
+        )
+        selectedConfiguration.width = viewport.width
+        selectedConfiguration.height = viewport.height
+        selectedConfiguration.userAgent = userAgent
+        selectedConfiguration.locale = locale
+        selectedConfiguration.timezoneId = timezoneId
+        selectedConfiguration.platform = platform
+        selectedConfiguration.isMobile = isMobile
+        selectedConfiguration.hasTouch = hasTouch
         Task { await session.start(selectedConfiguration) }
+    }
+
+    private func metadataField(_ title: String, value: Binding<String>, accessibility: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textSecondary)
+            TextField(title, text: value)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel(accessibility)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func applyFingerprint(_ id: String) {
+        guard let preset = SandboxBrowserFingerprint.presets.first(where: { $0.id == id }) else { return }
+        userAgent = preset.userAgent
+        viewportWidth = String(preset.width)
+        viewportHeight = String(preset.height)
+        locale = preset.locale
+        timezoneId = preset.timezoneId
+        platform = preset.platform
+        isMobile = preset.isMobile
+        hasTouch = preset.hasTouch
     }
 
     @MainActor

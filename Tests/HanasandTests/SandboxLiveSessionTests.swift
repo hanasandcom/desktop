@@ -50,6 +50,48 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertEqual(tools.map { $0["id"] }, ["virustotal", "urlquery", "webcrack"])
     }
 
+    func testStartMessageCarriesWebsiteBrowserFingerprintConfiguration() throws {
+        let mobile = try XCTUnwrap(SandboxBrowserFingerprint.presets.first { $0.id == "iphone-safari" })
+        var configuration = SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        )
+        configuration.width = mobile.width
+        configuration.height = mobile.height
+        configuration.userAgent = mobile.userAgent
+        configuration.locale = mobile.locale
+        configuration.timezoneId = mobile.timezoneId
+        configuration.platform = mobile.platform
+        configuration.isMobile = mobile.isMobile
+        configuration.hasTouch = mobile.hasTouch
+
+        let message = try SandboxLiveProtocol.startMessage(
+            configuration: configuration,
+            sessionID: "regular-123e4567-e89b-12d3-a456-426614174000",
+            resumeToken: "resume-token",
+            clientID: "desktop-client"
+        )
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(message.utf8)) as? [String: Any])
+        XCTAssertEqual(payload["width"] as? Int, 393)
+        XCTAssertEqual(payload["height"] as? Int, 852)
+        XCTAssertEqual(payload["userAgent"] as? String, mobile.userAgent)
+        XCTAssertEqual(payload["locale"] as? String, "en-US")
+        XCTAssertEqual(payload["timezoneId"] as? String, "America/New_York")
+        XCTAssertEqual(payload["platform"] as? String, "iPhone")
+        XCTAssertEqual(payload["isMobile"] as? Bool, true)
+        XCTAssertEqual(payload["hasTouch"] as? Bool, true)
+    }
+
+    func testStreamViewportMatchesWebsitePixelBudget() {
+        XCTAssertEqual(SandboxBrowserFingerprint.streamViewport(width: 1_280, height: 720).width, 1_280)
+        XCTAssertEqual(SandboxBrowserFingerprint.streamViewport(width: 1_280, height: 720).height, 720)
+        let desktop = SandboxBrowserFingerprint.streamViewport(width: 1_920, height: 1_080)
+        XCTAssertLessThanOrEqual(desktop.width * desktop.height, 1_280 * 720)
+        XCTAssertEqual(desktop.width % 2, 0)
+        XCTAssertEqual(desktop.height % 2, 0)
+        let clamped = SandboxBrowserFingerprint.streamViewport(width: 50_000, height: 50_000)
+        XCTAssertLessThanOrEqual(clamped.width * clamped.height, 1_280 * 720)
+    }
+
     func testSavedProfilesUseOwnerBearerContractAndPreserveBuiltIns() async throws {
         let client = try SandboxBrowserProfileClient(
             apiBaseURL: api, userID: "owner.test", token: "session-token",
