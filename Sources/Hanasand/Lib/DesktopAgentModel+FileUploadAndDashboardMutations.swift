@@ -41,6 +41,11 @@ extension DesktopAgentModel {
     }
 
     func checkUploadPath() async {
+        guard hasHanasandAuth else {
+            uploadPathAvailable = nil
+            uploadStatus = "Sign in to choose or check a custom public path. Guest uploads get a generated link."
+            return
+        }
         let safePath = uploadPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !safePath.isEmpty else {
             uploadPathAvailable = nil
@@ -70,7 +75,11 @@ extension DesktopAgentModel {
             return
         }
 
-        if uploadPathAvailable == false {
+        let userID = userIDForRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = authTokenForRequests.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isGuestUpload = userID.isEmpty && token.isEmpty
+
+        if uploadPathAvailable == false && !isGuestUpload {
             uploadStatus = "Choose an available path before uploading."
             return
         }
@@ -83,9 +92,7 @@ extension DesktopAgentModel {
             uploadStatus = NativePublicMediaImportError.tooLarge.localizedDescription
             return
         }
-        guard let uploadAuthHeaders = NativePublicMediaImportClient.cdnUploadAuthenticationHeaders(
-            userID: userIDForRequests, token: authTokenForRequests
-        ) else {
+        if isGuestUpload && (!settings.impersonationToken.isEmpty || !settings.impersonatingUserID.isEmpty) {
             uploadStatus = NativePublicMediaImportError.signInRequired.localizedDescription
             return
         }
@@ -94,26 +101,28 @@ extension DesktopAgentModel {
         defer { isUploadingFile = false }
 
         do {
-            let boundary = "Boundary-\(UUID().uuidString)"
-            let body = try multipartUploadBody(fileURL: fileURL, boundary: boundary)
-            var request = URLRequest(url: settings.cdnBaseURL.normalizedBaseURL.appendingPathComponent("files"))
-            request.httpMethod = "POST"
-            request.timeoutInterval = 90
-            request.httpBody = body
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            for (name, value) in uploadAuthHeaders { request.setValue(value, forHTTPHeaderField: name) }
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { throw NativePublicMediaImportError.invalidResponse }
-            guard (200..<300).contains(http.statusCode) else {
-                throw NativePublicMediaImportError.uploadRecovery(status: http.statusCode)
-            }
-            let uploaded = try JSONDecoder().decode(UploadedFileResponse.self, from: data)
-            let destination = uploadedURL(for: uploaded)
+            let effectiveName = uploadName.isEmpty ? fileURL.lastPathComponent : uploadName
+            let customPath = uploadPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : safeUploadPathWithExtension()
+            let client = try NativeCDNUploadClient(
+                cdnBaseURL: settings.cdnBaseURL.normalizedBaseURL,
+                userID: isGuestUpload ? "" : userID,
+                token: isGuestUpload ? "" : token
+            )
+            let uploaded = try await client.upload(
+                fileURL: fileURL,
+                name: effectiveName,
+                description: uploadDescription,
+                path: customPath,
+                type: uploadType.isEmpty ? "application/octet-stream" : uploadType
+            )
+            guard let destination = NativeCDNUploadClient.publicURL(
+                cdnBaseURL: settings.cdnBaseURL.normalizedBaseURL,
+                uploaded: uploaded,
+                preferCustomPath: !isGuestUpload && !uploadPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ) else { throw NativePublicMediaImportError.invalidResponse }
             uploadedFileURL = destination
             uploadedFileID = uploaded.id
-            uploadStatus = "Uploaded \(uploadName) successfully."
+            uploadStatus = "Uploaded \(effectiveName) successfully."
             append(meta: "Upload", body: destination, kind: .change)
         } catch {
             uploadStatus = error.localizedDescription
@@ -126,41 +135,6 @@ extension DesktopAgentModel {
         let ext = uploadFileURL?.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !ext.isEmpty, !safePath.lowercased().hasSuffix(".\(ext.lowercased())") else { return safePath }
         return "\(safePath).\(ext.lowercased())"
-    }
-
-    func uploadedURL(for uploaded: UploadedFileResponse) -> String {
-        let base = settings.cdnBaseURL.normalizedBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if !uploadPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "\(base)/files/path/\(uploadPath.slugifiedPath)"
-        }
-        return "\(base)/files/\(uploaded.id)"
-    }
-
-    func multipartUploadBody(fileURL: URL, boundary: String) throws -> Data {
-        var body = Data()
-        let fileData = try Data(contentsOf: fileURL)
-        guard !fileData.isEmpty else { throw NativePublicMediaImportError.emptyMedia }
-        guard fileData.count <= NativePublicMediaImportLimits.maxBytes else { throw NativePublicMediaImportError.tooLarge }
-        let fields: [(String, String)] = [
-            ("name", uploadName.isEmpty ? fileURL.lastPathComponent : uploadName),
-            ("description", uploadDescription),
-            ("path", uploadPath.isEmpty ? "" : uploadPath.slugifiedPath),
-            ("type", uploadType.isEmpty ? "application/octet-stream" : uploadType),
-        ].filter { !$0.1.isEmpty }
-
-        for (name, value) in fields {
-            body.appendMultipartBoundary(boundary)
-            body.appendUTF8("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
-            body.appendUTF8("\(value)\r\n")
-        }
-
-        body.appendMultipartBoundary(boundary)
-        body.appendUTF8("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n")
-        body.appendUTF8("Content-Type: \(uploadType.isEmpty ? "application/octet-stream" : uploadType)\r\n\r\n")
-        body.append(fileData)
-        body.appendUTF8("\r\n")
-        body.appendUTF8("--\(boundary)--\r\n")
-        return body
     }
 
     func runNativeDashboardMutation(_ mutation: NativeDashboardMutation) async {

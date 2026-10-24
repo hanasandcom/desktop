@@ -135,6 +135,11 @@ extension HanasandLoginGate {
             }
             .frame(maxWidth: .infinity)
 
+            ActionButton(title: "Upload public media", icon: "arrow.up.doc") {
+                model.openNativeDashboard(path: "/upload", label: "Upload public media", loadData: false)
+            }
+            .frame(maxWidth: .infinity)
+
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }

@@ -47,7 +47,7 @@ struct UploadNativePanel: View {
                 ActionButton(title: "Check path", icon: "checkmark.seal") {
                     Task { await model.checkUploadPath() }
                 }
-                .disabled(model.uploadPath.isEmpty || model.isCheckingUploadPath)
+                .disabled(!model.hasHanasandAuth || model.uploadPath.isEmpty || model.isCheckingUploadPath)
                 ActionButton(title: model.isUploadingFile ? "Uploading" : "Upload", icon: "arrow.up.doc") {
                     Task { await model.uploadSelectedFile() }
                 }
@@ -84,7 +84,13 @@ struct UploadNativePanel: View {
                         ActionButton(title: isImportingRemoteMedia ? "Importing" : "Import", icon: "arrow.down.doc") {
                             Task { await importRemoteMedia() }
                         }
-                        .disabled(remoteMediaURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isImportingRemoteMedia)
+                        .disabled(!model.hasHanasandAuth || remoteMediaURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isImportingRemoteMedia)
+                    }
+                    if !model.hasHanasandAuth {
+                        Text("Remote media import and custom paths require sign-in. Guest uploads receive a generated public link.")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if isImportingRemoteMedia { ProgressView("Fetching through Hanasand media proxy…") }
                     if let fileURL = model.uploadFileURL {
@@ -95,10 +101,12 @@ struct UploadNativePanel: View {
                         localPreview(fileURL)
                     }
                     field("Name", text: $model.uploadName, placeholder: "Filename shown on the CDN")
-                    field("Path", text: $model.uploadPath, placeholder: "optional-short-path")
-                        .onChange(of: model.uploadPath) { _, _ in
-                            model.uploadPathAvailable = nil
-                        }
+                    if model.hasHanasandAuth {
+                        field("Path", text: $model.uploadPath, placeholder: "optional-short-path")
+                            .onChange(of: model.uploadPath) { _, _ in
+                                model.uploadPathAvailable = nil
+                            }
+                    }
                     field("MIME type", text: $model.uploadType, placeholder: "image/png")
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Description")
@@ -285,6 +293,9 @@ struct UploadNativePanel: View {
     }
 
     var uploadPathStatus: String {
+        if !model.hasHanasandAuth {
+            return "Generated public link"
+        }
         if model.uploadPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "Generated"
         }

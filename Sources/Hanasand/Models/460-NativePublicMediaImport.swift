@@ -32,6 +32,8 @@ enum NativePublicMediaImportError: LocalizedError, Equatable {
     case invalidBaseURL
     case signInRequired
     case invalidCredentials
+    case invalidUploadMetadata
+    case invalidUploadType
     case invalidURL
     case urlTooLong
     case invalidResponse
@@ -52,6 +54,8 @@ enum NativePublicMediaImportError: LocalizedError, Equatable {
         case .invalidBaseURL: "Public media import requires a valid first-party HTTPS website URL."
         case .signInRequired, .uploadUnauthorized: "Sign in to upload files."
         case .invalidCredentials: "The current account credentials cannot be used for this upload."
+        case .invalidUploadMetadata: "Enter a valid file name, description, and path."
+        case .invalidUploadType: "Enter a valid MIME type for this file."
         case .invalidURL: "Use a public HTTP or HTTPS image or video URL."
         case .urlTooLong: "The media URL is too long."
         case .invalidResponse: "The media service returned an invalid response."

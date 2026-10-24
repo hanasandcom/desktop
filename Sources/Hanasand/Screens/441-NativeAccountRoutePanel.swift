@@ -70,6 +70,7 @@ private enum NativeAccountRouteKind: Equatable {
     case resetPasswordAgain
     case pendingDeletion
     case loadTest(String?)
+    case upload
 
     init?(path: String) {
         switch path {
@@ -81,6 +82,7 @@ private enum NativeAccountRouteKind: Equatable {
         case "/reset-password": self = .resetPassword
         case "/reset-password-again": self = .resetPasswordAgain
         case "/account-pending-deletion": self = .pendingDeletion
+        case "/upload": self = .upload
         case "/test": self = .loadTest(nil)
         default:
             guard let route = LoadTestingPublicRoute(path: path) else { return nil }
@@ -98,6 +100,7 @@ private enum NativeAccountRouteKind: Equatable {
         case .resetPassword, .resetPasswordAgain: "Reset your password"
         case .pendingDeletion: "Restore your account"
         case .loadTest: "Check a service"
+        case .upload: "Upload public media"
         }
     }
 }
@@ -211,6 +214,7 @@ struct NativeAccountRoutePanel: View {
         case .resetPassword, .resetPasswordAgain: "Use the secure reset link to set a new password."
         case .pendingDeletion: "Restore an account scheduled for deletion."
         case .loadTest: "Run a permission-reviewed service check or open a shared result."
+        case .upload: "Review a file and publish it to the public CDN."
         case nil: "Account route is unavailable."
         }
     }
@@ -231,6 +235,13 @@ struct NativeAccountRoutePanel: View {
                     model.closeNativeDashboardPage()
                 }
                 RecentTestsNativePanel(initialTestID: routeTestID ?? (model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID))
+            }
+        case .upload:
+            VStack(alignment: .leading, spacing: 12) {
+                ActionButton(title: model.hasHanasandAuth ? "Back to dashboard" : "Back to sign in", icon: "arrow.left") {
+                    model.closeNativeDashboardPage()
+                }
+                UploadNativePanel()
             }
         case nil: NativeEmptyState(title: "Account route unavailable", message: "Return to the dashboard and open a supported account page.")
         }
@@ -546,6 +557,8 @@ struct NativeAccountRoutePanel: View {
         case .switchAccount:
             await loadProfiles()
         case .loadTest:
+            break
+        case .upload:
             break
         case nil:
             break
