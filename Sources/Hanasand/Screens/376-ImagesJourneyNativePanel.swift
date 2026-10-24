@@ -4,10 +4,17 @@ import UniformTypeIdentifiers
 
 struct ImagesJourneyNativePanel: View {
     @State private var section: Section = .library
+    private let libraryMode: ImagesJourneyLibraryMode
 
     init(initialSection: String? = nil) {
-        let requested = Section(rawValue: initialSection ?? "") ?? .library
+        let requested: Section
+        switch initialSection {
+        case "galleryAlbums": requested = .albums
+        case "gallery": requested = .library
+        default: requested = Section(rawValue: initialSection ?? "") ?? .library
+        }
         _section = State(initialValue: requested)
+        self.libraryMode = ImagesJourneyLibraryMode(nativeSection: initialSection)
     }
 
     var body: some View {
@@ -20,7 +27,7 @@ struct ImagesJourneyNativePanel: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 20)
             switch section {
-            case .library: GalleryLibraryNativePanel()
+            case .library: GalleryLibraryNativePanel(imagesOnly: libraryMode.mediaFilterIsImageOnly)
             case .albums: GalleryAlbumsNativePanel()
             case .upload: GalleryPhotoUploadNativePanel(onLibrary: { section = .library })
             case .deviceReview: DevicePhotoReviewNativePanel()
@@ -40,6 +47,17 @@ struct ImagesJourneyNativePanel: View {
             }
         }
     }
+}
+
+enum ImagesJourneyLibraryMode: Equatable {
+    case images
+    case allMedia
+
+    init(nativeSection: String?) {
+        self = ["gallery", "galleryAlbums"].contains(nativeSection ?? "") ? .allMedia : .images
+    }
+
+    var mediaFilterIsImageOnly: Bool { self == .images }
 }
 
 private struct GalleryPhotoUploadNativePanel: View {

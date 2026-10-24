@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 struct GalleryLibraryNativePanel: View {
+    let imagesOnly: Bool
+
+    init(imagesOnly: Bool = true) {
+        self.imagesOnly = imagesOnly
+    }
+
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var search = ""
@@ -254,7 +260,7 @@ struct GalleryLibraryNativePanel: View {
             if let selectedAlbumID {
                 page = try await client.listAlbumLibraryPage(albumId: selectedAlbumID, offset: requestedOffset, search: search)
             } else {
-                page = try await client.listLibraryPage(offset: requestedOffset, search: search, favorites: favoritesOnly)
+                page = try await client.listLibraryPage(offset: requestedOffset, search: search, favorites: favoritesOnly, imagesOnly: imagesOnly)
             }
             guard request == activeRequest else { return }
             if reset { files = page.items }

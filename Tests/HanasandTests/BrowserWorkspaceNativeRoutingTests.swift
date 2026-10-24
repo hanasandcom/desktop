@@ -197,6 +197,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
             ("https://hanasand.com/management/users", "/users"),
             ("https://hanasand.com/management/service-accounts", "/dashboard/management/service-accounts"),
             ("https://hanasand.com/system/virtual-machines", "/vms"),
+            ("https://hanasand.com/images/library", "/images/library"),
             ("https://hanasand.com/gallery", "/images/library"),
             ("https://hanasand.com/gallery/albums", "/images/library"),
                         ("https://cdn.hanasand.com/", "/images/library"),
@@ -205,7 +206,9 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         for (url, expectedPath) in routes {
             XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: url)?.path, expectedPath, url)
         }
-        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/gallery/albums")?.section, "albums")
+        XCTAssertNil(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/images/library")?.section)
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/gallery")?.section, "gallery")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/gallery/albums")?.section, "galleryAlbums")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/upload")?.path, "/upload")
 
         let selfProfile = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/profile/user-123")

@@ -243,8 +243,15 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/thoughts": "/content/thoughts",
             "/user": "/users",
         ]
+        let websiteGalleryAlbumsRoute = host == "hanasand.com" && path == "/gallery/albums"
+        let websiteGalleryRoute = host == "hanasand.com" && (path == "/gallery" || websiteGalleryAlbumsRoute)
         path = websiteAliases[path] ?? path
-        if url.path == "/gallery/albums" { section = "albums" }
+        if websiteGalleryRoute {
+            // Preserve the website Gallery's all-media behavior through the
+            // shared native Images route. The section value is consumed by its
+            // native panel and is not sent to the CDN as a filter.
+            section = websiteGalleryAlbumsRoute ? "galleryAlbums" : "gallery"
+        }
 
         let parts = path.split(separator: "/").map(String.init)
         let urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)

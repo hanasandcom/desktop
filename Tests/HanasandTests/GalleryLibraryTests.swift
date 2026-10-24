@@ -41,6 +41,27 @@ final class GalleryLibraryTests: XCTestCase {
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
     }
 
+    func testImagesJourneyFiltersToImagesWhileWebsiteGalleryKeepsAllMedia() async throws {
+        let modes: [(ImagesJourneyLibraryMode, String?)] = [
+            (ImagesJourneyLibraryMode(nativeSection: nil), "images"),
+            (ImagesJourneyLibraryMode(nativeSection: "gallery"), nil),
+        ]
+
+        for (mode, expectedMedia) in modes {
+            var request: URLRequest?
+            let client = try GalleryAlbumClient(settings: settings) { next in
+                request = next
+                return self.response(next, "[]")
+            }
+
+            _ = try await client.listLibraryPage(imagesOnly: mode.mediaFilterIsImageOnly)
+
+            let media = URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "media" })?.value
+            XCTAssertEqual(media, expectedMedia)
+        }
+    }
+
     func testLibraryDecodesVideoAndOptionalUploadMetadata() async throws {
         let client = try GalleryAlbumClient(settings: settings) { request in
             self.response(request, #"[{"id":"video-1","name":"Clip.mp4","type":"video/mp4","uploaded_at":"2026-10-20T12:00:00Z","size_bytes":"2048"}]"#)
