@@ -12,6 +12,18 @@ enum TrafficRecentClient {
         try endpoint(apiBaseURL: apiBaseURL, path: "traffic/domains")
     }
 
+    static func metricsURL(apiBaseURL: URL, domain: String) throws -> URL {
+        guard domain.count <= 253,
+              !domain.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) || $0.value == 127 }),
+              !domain.contains(where: { "/?#\\".contains($0) }) else {
+            throw TrafficRecentError.invalidResponse
+        }
+        var components = URLComponents(url: try endpoint(apiBaseURL: apiBaseURL, path: "traffic/metrics"), resolvingAgainstBaseURL: false)
+        if !domain.isEmpty { components?.queryItems = [URLQueryItem(name: "domain", value: domain)] }
+        guard let url = components?.url else { throw TrafficRecentError.invalidResponse }
+        return url
+    }
+
     static func recordsURL(apiBaseURL: URL, domain: String, page: Int, limit: Int = pageSize) throws -> URL {
         guard (1...200).contains(limit), page > 0, page <= Int.max / limit,
               domain.count <= 253,
@@ -26,14 +38,14 @@ enum TrafficRecentClient {
         return url
     }
 
-    static func request(url: URL, userID: String, authToken: String, impersonationToken: String = "") throws -> URLRequest {
+    static func request(url: URL, userID: String, authToken: String, impersonationToken: String = "", timeoutInterval: TimeInterval = 30) throws -> URLRequest {
         let user = userID.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !user.isEmpty, !token.isEmpty else { throw TrafficRecentError.signIn }
-        guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil else {
+        guard url.scheme?.lowercased() == "https", url.host != nil, url.user == nil, url.password == nil else {
             throw TrafficRecentError.insecureEndpoint
         }
-        var request = URLRequest(url: url, timeoutInterval: 30)
+        var request = URLRequest(url: url, timeoutInterval: timeoutInterval)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(user, forHTTPHeaderField: "id")
@@ -84,19 +96,33 @@ enum TrafficRecentClient {
         configuration.httpCookieAcceptPolicy = .never
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        let session = URLSession(configuration: configuration)
+        let session = URLSession(configuration: configuration, delegate: TrafficRecentRedirectBlocker(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw TrafficRecentError.invalidResponse }
+        guard let http = response as? HTTPURLResponse,
+              request.url?.scheme?.lowercased() == "https",
+              response.url?.scheme?.lowercased() == "https",
+              response.url?.host == request.url?.host else { throw TrafficRecentError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw TrafficRecentError.httpStatus(http.statusCode) }
         return data
     }
 
     private static func endpoint(apiBaseURL: URL, path: String) throws -> URL {
-        guard apiBaseURL.scheme?.lowercased() == "https", apiBaseURL.user == nil,
+        guard apiBaseURL.scheme?.lowercased() == "https", apiBaseURL.host != nil, apiBaseURL.user == nil,
               apiBaseURL.password == nil, apiBaseURL.query == nil, apiBaseURL.fragment == nil else {
             throw TrafficRecentError.insecureEndpoint
         }
         return apiBaseURL.appendingAPIPath(path)
+    }
+}
+
+private final class TrafficRecentRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }

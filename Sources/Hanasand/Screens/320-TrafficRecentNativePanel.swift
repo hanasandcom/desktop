@@ -89,6 +89,11 @@ struct TrafficRecentNativePanel: View {
             await load()
             await refreshWhileVisible()
         }
+        .onAppear {
+            if selectedDomain.isEmpty, let initial = model.selectedNativeDashboardQuery["domain"], !initial.isEmpty {
+                selectedDomain = initial
+            }
+        }
         .onDisappear { requestGeneration = UUID() }
     }
 
@@ -218,19 +223,25 @@ struct TrafficRecentNativePanel: View {
         requestGeneration = generation
         isLoading = true
         defer { if requestGeneration == generation { isLoading = false } }
-        do {
-            async let loadedDomains = fetchDomains()
-            async let loadedPage = fetchRecords(page: page)
-            let (newDomains, newPage) = try await (loadedDomains, loadedPage)
-            guard requestGeneration == generation else { return }
-            domains = newDomains
-            records = newPage.result
-            total = newPage.total
+        async let loadedDomains = capture { try await fetchDomains() }
+        async let loadedPage = capture { try await fetchRecords(page: page) }
+        let (domainResult, pageResult) = await (loadedDomains, loadedPage)
+        guard !Task.isCancelled, requestGeneration == generation else { return }
+
+        var failures: [String] = []
+        if case let .success(value) = domainResult { domains = value }
+        else if case let .failure(error) = domainResult { failures.append("Domains: \(error.localizedDescription)") }
+        if case let .success(value) = pageResult {
+            records = value.result
+            total = value.total
+        } else if case let .failure(error) = pageResult {
+            failures.append("Requests: \(error.localizedDescription)")
+        }
+        if failures.isEmpty {
             lastUpdatedAt = .now
             status = "Loaded \(records.count) recent requests."
-        } catch {
-            guard requestGeneration == generation else { return }
-            status = "Could not load recent traffic: \(error.localizedDescription)"
+        } else {
+            status = "Could not refresh recent traffic: " + failures.joined(separator: " · ")
         }
     }
 
@@ -263,6 +274,11 @@ struct TrafficRecentNativePanel: View {
         let url = try TrafficRecentClient.recordsURL(apiBaseURL: apiBaseURL, domain: selectedDomain, page: page)
         let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
         return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request))
+    }
+
+    private func capture<T>(_ operation: () async throws -> T) async -> Result<T, Error> {
+        do { return .success(try await operation()) }
+        catch { return .failure(error) }
     }
 
     private var apiBaseURL: URL {

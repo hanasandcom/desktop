@@ -19,12 +19,18 @@ final class TrafficRecentClientTests: XCTestCase {
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "limit" })?.value, "50")
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "page" })?.value, "2")
         XCTAssertEqual(components.queryItems?.first(where: { $0.name == "domain" })?.value, "example.test:443")
+
+        let metrics = try TrafficRecentClient.metricsURL(apiBaseURL: base, domain: "example.test")
+        let metricsComponents = URLComponents(url: metrics, resolvingAgainstBaseURL: false)!
+        XCTAssertEqual(metricsComponents.path, "/api/traffic/metrics")
+        XCTAssertEqual(metricsComponents.queryItems?.first?.value, "example.test")
     }
 
     func testRejectsInvalidPaginationAndUnsafeEndpoints() throws {
         let base = URL(string: "https://api.hanasand.com/api")!
         XCTAssertThrowsError(try TrafficRecentClient.recordsURL(apiBaseURL: base, domain: "example.test/path", page: 1))
         XCTAssertThrowsError(try TrafficRecentClient.recordsURL(apiBaseURL: base, domain: "", page: 0))
+        XCTAssertThrowsError(try TrafficRecentClient.metricsURL(apiBaseURL: base, domain: "example.test/path"))
         XCTAssertThrowsError(try TrafficRecentClient.recordsURL(apiBaseURL: URL(string: "http://api.hanasand.com/api")!, domain: "", page: 1))
     }
 
@@ -55,5 +61,49 @@ final class TrafficRecentClientTests: XCTestCase {
         let domains = #"{"domains":["example.test","example.test","hanasand.com"]}"#.data(using: .utf8)!
         XCTAssertEqual(try TrafficRecentClient.decodeDomains(domains), ["example.test", "hanasand.com"])
         XCTAssertThrowsError(try TrafficRecentClient.decodeDomains(#"{"domains":["bad/path"]}"#.data(using: .utf8)!))
+    }
+
+    func testDecodesCompleteTrafficMetricContract() throws {
+        let data = Data("""
+        {
+          "sampled_at":"2026-10-23T10:05:00Z",
+          "total_requests":1200,
+          "avg_request_time":42.5,
+          "error_rate":0.025,
+          "top_methods":[{"key":"GET","count":1100}],
+          "top_status_codes":[{"key":"200","count":1170}],
+          "top_domains":[{"key":"example.test","count":900}],
+          "top_os":[{"key":"macOS","count":300}],
+          "top_browsers":[{"key":"Safari","count":200}],
+          "requests_over_time":[{"key":"2026-10-23T10:00:00Z","count":12}],
+          "top_error_paths":[{"key":"/api/health","count":8}],
+          "top_slow_paths":[{"key":"/api/report","avg_time":52.1}],
+          "top_paths":[{"key":"/api/status","count":240}]
+        }
+        """.utf8)
+
+        let metrics = try TrafficMetricSnapshot.decode(data)
+
+        XCTAssertEqual(metrics.totalRequests, 1200)
+        XCTAssertEqual(metrics.topOperatingSystems.first?.key, "macOS")
+        XCTAssertEqual(metrics.requestsOverTime.first?.count, 12)
+        XCTAssertEqual(metrics.topSlowPaths.first?.averageTime, 52.1)
+        XCTAssertEqual(metrics.topErrorPaths.first?.key, "/api/health")
+    }
+
+    func testRejectsInvalidTrafficMetricValuesAndTimestamps() {
+        let data = Data("""
+        {
+          "sampled_at":"not a timestamp",
+          "total_requests":10,
+          "avg_request_time":-1,
+          "error_rate":1.5,
+          "top_methods":[],"top_status_codes":[],"top_domains":[],
+          "top_os":[],"top_browsers":[],"requests_over_time":[],
+          "top_error_paths":[],"top_slow_paths":[],"top_paths":[]
+        }
+        """.utf8)
+
+        XCTAssertThrowsError(try TrafficMetricSnapshot.decode(data))
     }
 }

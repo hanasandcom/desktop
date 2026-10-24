@@ -35,6 +35,9 @@ final class TrafficMapModelTests: XCTestCase {
         XCTAssertEqual(point?.x ?? .nan, 527.7777777777778, accuracy: 1e-9)
         XCTAssertEqual(point?.y ?? .nan, 77.77777777777777, accuracy: 1e-9)
         XCTAssertNil(TrafficMapGeography.point(iso: "X1", size: CGSize(width: 1000, height: 500)))
+        XCTAssertEqual(TrafficMapGeography.capitalNames["NO"], "Oslo")
+        XCTAssertEqual(TrafficMapGeography.distanceFromNorwayKilometers(iso: "NO"), 0)
+        XCTAssertNil(TrafficMapGeography.distanceFromNorwayKilometers(iso: "X1"))
     }
 
     func testBuildsSecureAuthenticatedLiveTrafficRequest() throws {
@@ -87,34 +90,56 @@ final class TrafficMapModelTests: XCTestCase {
     }
 
     func testDecodesRetainedTrafficMetricsAndTopActivity() throws {
-        let data = Data("""
+        let expandedData = Data("""
         {
           "sampled_at":"2026-10-23T10:05:00Z",
-          "total_requests":1200,
-          "avg_request_time":42.5,
-          "error_rate":0.025,
+          "total_requests":1200,"avg_request_time":42.5,"error_rate":0.025,
           "top_methods":[{"key":"GET","count":1100}],
           "top_status_codes":[{"key":"200","count":1170}],
+          "top_domains":[],"top_os":[],"top_browsers":[],
+          "requests_over_time":[],"top_error_paths":[],"top_slow_paths":[],
           "top_paths":[{"key":"/api/status","count":240}]
         }
         """.utf8)
 
-        let metrics = try TrafficMapMetrics.decode(data)
+        let metrics = try TrafficMetricSnapshot.decode(expandedData)
 
         XCTAssertEqual(metrics.totalRequests, 1200)
         XCTAssertEqual(metrics.averageRequestTime, 42.5)
         XCTAssertEqual(metrics.errorRate, 0.025)
-        XCTAssertEqual(metrics.topMethods.first, TrafficMapMetric(key: "GET", count: 1100))
-        XCTAssertEqual(metrics.topPaths.first, TrafficMapMetric(key: "/api/status", count: 240))
+        XCTAssertEqual(metrics.topMethods.first?.key, "GET")
+        XCTAssertEqual(metrics.topMethods.first?.count, 1100)
+        XCTAssertEqual(metrics.topPaths.first?.key, "/api/status")
+        XCTAssertEqual(metrics.topPaths.first?.count, 240)
         XCTAssertEqual(metrics.sampledAt, "2026-10-23T10:05:00Z")
     }
 
     func testRejectsInvalidRetainedTrafficMetrics() {
-        let data = Data("""
-        {"total_requests":10,"avg_request_time":-1,"error_rate":1.5,"top_methods":[],"top_status_codes":[],"top_paths":[]}
+        let expandedData = Data("""
+        {
+          "sampled_at":"2026-10-23T10:05:00Z",
+          "total_requests":10,"avg_request_time":-1,"error_rate":1.5,
+          "top_methods":[],"top_status_codes":[],"top_domains":[],"top_os":[],
+          "top_browsers":[],"requests_over_time":[],"top_error_paths":[],
+          "top_slow_paths":[],"top_paths":[]
+        }
         """.utf8)
+        XCTAssertThrowsError(try TrafficMetricSnapshot.decode(expandedData))
+    }
 
-        XCTAssertThrowsError(try TrafficMapMetrics.decode(data))
+    func testLiveCountryTotalsIncludeBatchesAndExpireStaleDeltas() throws {
+        let receivedAt = ISO8601DateFormatter().date(from: "2026-10-23T10:00:00Z")!
+        let batch = TrafficMapLiveBatch(iso: "NO", count: 7, maxID: "100", timestamp: "2026-10-23T10:00:00Z")
+        let initial = TrafficMapLiveAggregation.applying([batch], to: [:], receivedAt: receivedAt)
+        XCTAssertEqual(initial["NO"]?.requestCount, 7)
+
+        let records = try [record(id: 1, iso: "NO", timestamp: "2026-10-23T09:59:00Z")]
+        let countries = TrafficMapCountry.summarize(records, liveDeltas: initial)
+        XCTAssertEqual(countries.first?.requestCount, 8)
+        XCTAssertEqual(countries.first?.lastSeen, receivedAt)
+
+        let expired = TrafficMapLiveAggregation.applying([], to: initial, receivedAt: receivedAt.addingTimeInterval(TrafficMapLiveAggregation.expiry))
+        XCTAssertTrue(expired.isEmpty)
     }
 
     private func record(id: Int, iso: String?, timestamp: String) throws -> TrafficRecentRecord {

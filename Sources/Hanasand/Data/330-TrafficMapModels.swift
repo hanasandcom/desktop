@@ -6,6 +6,13 @@ struct TrafficMapCoordinate: Equatable {
 }
 
 enum TrafficMapGeography {
+    static let capitalNames: [String: String] = [
+        "NO": "Oslo", "GB": "London", "FR": "Paris", "DE": "Berlin", "ES": "Madrid",
+        "IT": "Rome", "US": "Washington", "CA": "Ottawa", "BR": "Brasilia",
+        "AR": "Buenos Aires", "JP": "Tokyo", "CN": "Beijing", "IN": "New Delhi",
+        "AU": "Canberra", "ZA": "Cape Town",
+    ]
+
     static let centroids: [String: TrafficMapCoordinate] = [
         "AD": TrafficMapCoordinate(latitude: 42.5, longitude: 1.5),
         "AE": TrafficMapCoordinate(latitude: 24.0, longitude: 54.0),
@@ -263,6 +270,17 @@ enum TrafficMapGeography {
         guard let coordinate = centroids[iso] else { return nil }
         return CGPoint(x: (coordinate.longitude + 180) / 360 * size.width, y: (90 - coordinate.latitude) / 180 * size.height)
     }
+
+    static func distanceFromNorwayKilometers(iso: String) -> Int? {
+        guard let coordinate = centroids[iso], let norway = centroids["NO"] else { return nil }
+        let radians = Double.pi / 180
+        let latitudeDelta = (coordinate.latitude - norway.latitude) * radians
+        let longitudeDelta = (coordinate.longitude - norway.longitude) * radians
+        let a = sin(latitudeDelta / 2) * sin(latitudeDelta / 2)
+            + cos(norway.latitude * radians) * cos(coordinate.latitude * radians)
+            * sin(longitudeDelta / 2) * sin(longitudeDelta / 2)
+        return Int((6_371 * 2 * atan2(sqrt(a), sqrt(1 - a))).rounded())
+    }
 }
 
 struct TrafficMapLivePing: Identifiable, Equatable {
@@ -270,6 +288,29 @@ struct TrafficMapLivePing: Identifiable, Equatable {
     let iso: String
     let count: Int
     let receivedAt: Date
+}
+
+struct TrafficMapCountryLiveDelta: Equatable {
+    var requestCount: Int
+    var lastSeen: Date
+}
+
+enum TrafficMapLiveAggregation {
+    static let expiry: TimeInterval = 5 * 60
+
+    static func applying(
+        _ batches: [TrafficMapLiveBatch],
+        to current: [String: TrafficMapCountryLiveDelta],
+        receivedAt: Date
+    ) -> [String: TrafficMapCountryLiveDelta] {
+        var next = current.filter { receivedAt.timeIntervalSince($0.value.lastSeen) < expiry }
+        for batch in batches where TrafficMapGeography.centroids[batch.iso] != nil {
+            let existing = next[batch.iso]?.requestCount ?? 0
+            let (sum, overflow) = existing.addingReportingOverflow(batch.count)
+            next[batch.iso] = TrafficMapCountryLiveDelta(requestCount: overflow ? Int.max : sum, lastSeen: receivedAt)
+        }
+        return next
+    }
 }
 
 struct TrafficMapLiveBatch: Decodable, Equatable, Identifiable {
@@ -324,47 +365,6 @@ enum TrafficMapLiveError: LocalizedError, Equatable {
     }
 }
 
-struct TrafficMapMetric: Decodable, Equatable, Identifiable {
-    let key: String
-    let count: Int
-
-    var id: String { key }
-}
-
-struct TrafficMapMetrics: Decodable, Equatable {
-    let totalRequests: Int
-    let averageRequestTime: Double
-    let errorRate: Double
-    let topMethods: [TrafficMapMetric]
-    let topStatusCodes: [TrafficMapMetric]
-    let topPaths: [TrafficMapMetric]
-    let sampledAt: String?
-
-    enum CodingKeys: String, CodingKey {
-        case totalRequests = "total_requests"
-        case averageRequestTime = "avg_request_time"
-        case errorRate = "error_rate"
-        case topMethods = "top_methods"
-        case topStatusCodes = "top_status_codes"
-        case topPaths = "top_paths"
-        case sampledAt = "sampled_at"
-    }
-
-    static func decode(_ data: Data) throws -> TrafficMapMetrics {
-        let value = try JSONDecoder().decode(TrafficMapMetrics.self, from: data)
-        guard value.totalRequests >= 0,
-              value.averageRequestTime.isFinite, value.averageRequestTime >= 0,
-              value.errorRate.isFinite, (0...1).contains(value.errorRate),
-              [value.topMethods, value.topStatusCodes, value.topPaths].allSatisfy({ metrics in
-                  metrics.count <= 10 && metrics.allSatisfy { !$0.key.isEmpty && $0.key.count <= 2048 && $0.count >= 0 }
-              }),
-              value.sampledAt.map({ $0.count <= 64 }) ?? true else {
-            throw TrafficRecentError.invalidResponse
-        }
-        return value
-    }
-}
-
 struct TrafficMapCountry: Identifiable, Equatable {
     let iso: String
     let requestCount: Int
@@ -379,7 +379,10 @@ struct TrafficMapCountry: Identifiable, Equatable {
         self.lastSeen = lastSeen
     }
 
-    static func summarize(_ records: [TrafficRecentRecord]) -> [TrafficMapCountry] {
+    static func summarize(
+        _ records: [TrafficRecentRecord],
+        liveDeltas: [String: TrafficMapCountryLiveDelta] = [:]
+    ) -> [TrafficMapCountry] {
         var counts: [String: Int] = [:]
         var latest: [String: Date] = [:]
 
@@ -391,6 +394,12 @@ struct TrafficMapCountry: Identifiable, Equatable {
             if latest[iso].map({ record.timestamp > $0 }) ?? true {
                 latest[iso] = record.timestamp
             }
+        }
+
+        for (iso, delta) in liveDeltas where TrafficMapGeography.centroids[iso] != nil && delta.requestCount > 0 {
+            let (sum, overflow) = (counts[iso] ?? 0).addingReportingOverflow(delta.requestCount)
+            counts[iso] = overflow ? Int.max : sum
+            if latest[iso].map({ delta.lastSeen > $0 }) ?? true { latest[iso] = delta.lastSeen }
         }
 
         return counts.compactMap { iso, count in

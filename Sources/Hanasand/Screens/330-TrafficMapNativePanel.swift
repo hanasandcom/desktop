@@ -6,8 +6,9 @@ struct TrafficMapNativePanel: View {
     @State private var domains: [String] = []
     @State private var selectedDomain = ""
     @State private var records: [TrafficRecentRecord] = []
-    @State private var metrics: TrafficMapMetrics?
-    @State private var selectedCountry = ""
+    @State private var metrics: TrafficMetricSnapshot?
+    @State private var liveCountryDeltas: [String: TrafficMapCountryLiveDelta] = [:]
+    @State private var selectedCountry = "NO"
     @State private var status = "Traffic map has not been loaded."
     @State private var isLoading = false
     @State private var requestGeneration = UUID()
@@ -18,12 +19,17 @@ struct TrafficMapNativePanel: View {
     @State private var livePings: [TrafficMapLivePing] = []
     @State private var lastBatchCount: Int?
     @State private var nextPingID = 0
+    @State private var liveClock = Date()
     @State private var mapSize = CGSize.zero
     @State private var mapZoom: CGFloat = 1
     @State private var mapOffset = CGSize.zero
     @State private var dragOrigin = CGSize.zero
 
-    private var countries: [TrafficMapCountry] { TrafficMapCountry.summarize(records) }
+    private var countries: [TrafficMapCountry] {
+        let snapshot = TrafficMapCountry.summarize(records, liveDeltas: liveCountryDeltas)
+        guard liveStatus == "Live" else { return snapshot }
+        return snapshot.filter { liveClock.timeIntervalSince($0.lastSeen) < TrafficMapLiveAggregation.expiry }
+    }
     private var locatedRequestCount: Int { countries.reduce(0) { $0 + $1.requestCount } }
     private var sampledMetricsDescription: String? {
         guard let value = metrics?.sampledAt else { return nil }
@@ -43,7 +49,7 @@ struct TrafficMapNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], alignment: .leading, spacing: 12) {
-                FeatureCard(title: "Located requests", value: countries.reduce(0) { $0 + $1.requestCount }.formatted(), icon: "mappin.and.ellipse")
+                FeatureCard(title: "Located sample + live", value: countries.reduce(0) { $0 + $1.requestCount }.formatted(), icon: "mappin.and.ellipse")
                 FeatureCard(title: "Countries", value: countries.count.formatted(), icon: "globe")
                 FeatureCard(title: "Retained requests", value: metrics?.totalRequests.formatted() ?? "—", icon: "arrow.left.arrow.right")
             }
@@ -108,6 +114,19 @@ struct TrafficMapNativePanel: View {
             trafficActivity
         }
         .task(id: "\(selectedDomain):\(refreshGeneration.uuidString)") { await monitorTraffic() }
+        .task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(15)) }
+                catch { return }
+                liveClock = .now
+                liveCountryDeltas = liveCountryDeltas.filter { liveClock.timeIntervalSince($0.value.lastSeen) < TrafficMapLiveAggregation.expiry }
+            }
+        }
+        .onAppear {
+            if selectedDomain.isEmpty, let initial = model.selectedNativeDashboardQuery["domain"], !initial.isEmpty {
+                selectedDomain = initial
+            }
+        }
         .onDisappear { requestGeneration = UUID() }
     }
 
@@ -278,7 +297,10 @@ struct TrafficMapNativePanel: View {
             return "Recent requests in the loaded snapshot"
         }
         let share = locatedRequestCount == 0 ? 0 : Double(country.requestCount) / Double(locatedRequestCount) * 100
-        return "\(country.requestCount.formatted()) requests · \(String(format: "%.1f%%", share)) of located · last seen \(country.lastSeen.formatted(date: .abbreviated, time: .shortened))"
+        let rank = (countries.firstIndex(where: { $0.iso == country.iso }) ?? 0) + 1
+        let capital = TrafficMapGeography.capitalNames[country.iso] ?? "Capital unavailable"
+        let distance = TrafficMapGeography.distanceFromNorwayKilometers(iso: country.iso).map { " · \($0.formatted()) km from Norway" } ?? ""
+        return "\(country.requestCount.formatted()) requests · \(String(format: "%.1f%%", share)) of located · hotspot #\(rank) · \(capital)\(distance) · last seen \(country.lastSeen.formatted(date: .abbreviated, time: .shortened))"
     }
 
     private var trafficActivity: some View {
@@ -309,7 +331,7 @@ struct TrafficMapNativePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func metricList(_ title: String, values: [TrafficMapMetric]) -> some View {
+    private func metricList(_ title: String, values: [TrafficMetricSnapshot.Metric]) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
             if values.isEmpty {
@@ -331,7 +353,9 @@ struct TrafficMapNativePanel: View {
     }
 
     private var selectedCountryName: String {
-        countries.first(where: { $0.iso == selectedCountry })?.name ?? "Country focus"
+        countries.first(where: { $0.iso == selectedCountry })?.name
+            ?? Locale.current.localizedString(forRegionCode: selectedCountry)
+            ?? "Country focus"
     }
 
     private func markerDiameter(for country: TrafficMapCountry) -> CGFloat {
@@ -419,6 +443,7 @@ struct TrafficMapNativePanel: View {
                     onBatch: { batches in
                         let receivedAt = Date()
                         lastBatchCount = batches.reduce(0) { $0 + $1.count }
+                        liveCountryDeltas = TrafficMapLiveAggregation.applying(batches, to: liveCountryDeltas, receivedAt: receivedAt)
                         let known = batches.filter { TrafficMapGeography.centroids[$0.iso] != nil }
                         for batch in known {
                             nextPingID += 1
@@ -472,27 +497,49 @@ struct TrafficMapNativePanel: View {
         isLoading = true
         defer { if requestGeneration == generation { isLoading = false } }
 
-        do {
-            async let loadedDomains = fetchDomains()
-            async let loadedPage = fetchRecords()
-            async let loadedMetrics: TrafficMapMetrics? = try? await fetchMetrics()
-            let (newDomains, page, newMetrics) = try await (loadedDomains, loadedPage, loadedMetrics)
-            guard requestGeneration == generation else { return }
-            domains = newDomains
-            records = page.result
-            metrics = newMetrics
-            if let cursor = page.result.compactMap({ UInt64($0.id) }).max() {
+        async let domainsResult = fetchDomainsResult()
+        async let recordsResult = fetchRecordsResult()
+        async let metricsResult = fetchMetricsResult()
+        let (newDomains, page, newMetrics) = await (domainsResult, recordsResult, metricsResult)
+        guard requestGeneration == generation else { return }
+
+        if case let .success(value) = newDomains { domains = value }
+        if case let .success(value) = page {
+            records = value.result
+            liveCountryDeltas = [:]
+            if let cursor = value.result.compactMap({ UInt64($0.id) }).max() {
                 streamCursor = String(max(UInt64(streamCursor) ?? 0, cursor))
             }
-            if !countries.contains(where: { $0.iso == selectedCountry }) {
-                if let first = countries.first { select(first) }
-                else { selectedCountry = "" }
-            }
-            status = "Loaded \(records.count) recent requests · \(page.total.formatted()) retained in this domain filter. Country counts describe the loaded sample."
-        } catch {
-            guard requestGeneration == generation else { return }
-            status = "Could not load traffic map: \(error.localizedDescription)"
         }
+        if case let .success(value) = newMetrics { metrics = value }
+
+        let failures = [
+            newDomains.failureDescription("domains"),
+            page.failureDescription("recent requests"),
+            newMetrics.failureDescription("traffic metrics"),
+        ].compactMap { $0 }
+        if failures.isEmpty {
+            status = "Loaded \(records.count) recent requests · \((page.successValue?.total ?? records.count).formatted()) retained in this domain filter. Country counts describe the loaded sample."
+        } else if page.isSuccess || newDomains.isSuccess || newMetrics.isSuccess {
+            status = "Some traffic map data could not be refreshed: \(failures.joined(separator: "; ")). Showing the latest available data."
+        } else {
+            status = "Could not load traffic map: \(failures.joined(separator: "; "))"
+        }
+    }
+
+    private func fetchDomainsResult() async -> Result<[String], Error> {
+        do { return .success(try await fetchDomains()) }
+        catch { return .failure(error) }
+    }
+
+    private func fetchRecordsResult() async -> Result<TrafficRecentPage, Error> {
+        do { return .success(try await fetchRecords()) }
+        catch { return .failure(error) }
+    }
+
+    private func fetchMetricsResult() async -> Result<TrafficMetricSnapshot, Error> {
+        do { return .success(try await fetchMetrics()) }
+        catch { return .failure(error) }
     }
 
     private func fetchDomains() async throws -> [String] {
@@ -507,15 +554,27 @@ struct TrafficMapNativePanel: View {
         return try TrafficRecentClient.decodePage(await TrafficRecentClient.fetch(request))
     }
 
-    private func fetchMetrics() async throws -> TrafficMapMetrics {
-        var components = URLComponents(url: apiBaseURL.appendingAPIPath("traffic/metrics"), resolvingAgainstBaseURL: false)
-        if !selectedDomain.isEmpty {
-            components?.queryItems = [URLQueryItem(name: "domain", value: selectedDomain)]
-        }
-        guard let url = components?.url else { throw TrafficRecentError.invalidResponse }
+    private func fetchMetrics() async throws -> TrafficMetricSnapshot {
+        let url = try TrafficRecentClient.metricsURL(apiBaseURL: apiBaseURL, domain: selectedDomain)
         let request = try TrafficRecentClient.request(url: url, userID: model.userIDForRequests, authToken: model.authTokenForRequests, impersonationToken: model.settings.impersonationToken)
-        return try TrafficMapMetrics.decode(await TrafficRecentClient.fetch(request))
+        return try TrafficMetricSnapshot.decode(await TrafficRecentClient.fetch(request))
     }
 
     private var apiBaseURL: URL { model.settings.apiBaseURL.normalizedBaseURL }
+}
+
+private extension Result where Failure == Error {
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
+
+    var successValue: Success? {
+        try? get()
+    }
+
+    func failureDescription(_ endpoint: String) -> String? {
+        guard case let .failure(error) = self else { return nil }
+        return "\(endpoint): \(error.localizedDescription)"
+    }
 }
