@@ -1,10 +1,44 @@
 import Foundation
 
 enum SecurityScannerEngineID: String, Codable, CaseIterable, Identifiable {
-    case nmap, tenableVM = "tenable-vm", gvm, zap
+    case nmap, naabu, tenableVM = "tenable-vm", gvm, zap, testssl, nuclei, nikto, sslyze, wapiti, whatweb, httpx, tlsx, katana, wafw00f
     var id: String { rawValue }
     var title: String {
-        switch self { case .nmap: "Nmap"; case .tenableVM: "Tenable VM"; case .gvm: "Greenbone"; case .zap: "OWASP ZAP" }
+        switch self {
+        case .nmap: "Nmap"
+        case .naabu: "Naabu"
+        case .tenableVM: "Tenable VM"
+        case .gvm: "Greenbone"
+        case .zap: "OWASP ZAP"
+        case .testssl: "testssl.sh"
+        case .nuclei: "Nuclei"
+        case .nikto: "Nikto"
+        case .sslyze: "SSLyze"
+        case .wapiti: "Wapiti"
+        case .whatweb: "WhatWeb"
+        case .httpx: "httpx"
+        case .tlsx: "tlsx"
+        case .katana: "Katana"
+        case .wafw00f: "WAFW00F"
+        }
+    }
+
+    var defaultProfile: String? {
+        switch self {
+        case .nmap, .tenableVM, .gvm: nil
+        case .naabu: "naabu-top-100"
+        case .zap: "bounded-web-dast-v1"
+        case .testssl: "tls-default-v1"
+        case .nuclei: "safe-http-v1"
+        case .nikto: "nikto-safe-web-v1"
+        case .sslyze: "sslyze-tls-safe-v1"
+        case .wapiti: "wapiti-passive-web-v1"
+        case .whatweb: "whatweb-stealthy-host-v1"
+        case .httpx: "httpx-root-probe-v1"
+        case .tlsx: "tlsx-certificate-metadata-v1"
+        case .katana: "katana-same-origin-crawl-v1"
+        case .wafw00f: "wafw00f-exact-origin-detection-v1"
+        }
     }
 }
 

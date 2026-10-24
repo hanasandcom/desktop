@@ -95,7 +95,9 @@ struct SecurityScannerClient {
             guard let tenableScanID, validID(tenableScanID) else { throw SecurityScannerClientError.invalidInput("Choose an enabled Tenable scan configuration.") }
             path = "v1/uvm/assets/\(segment(asset.id))/tenable-scans"; body["scanId"] = tenableScanID
         case .gvm: path = "v1/uvm/integrations/gvm/runs"; body["organizationId"] = organizationID; body["assetId"] = asset.id
-        case .zap: path = "v1/uvm/assets/\(segment(asset.id))/zap-scans"
+        default:
+            path = "v1/uvm/assets/\(segment(asset.id))/\(engine.rawValue)-scans"
+            if let profile = engine.defaultProfile { body["profile"] = profile }
         }
         let receipt: RunReceipt = try await request(path, method: "POST", body: body)
         guard receipt.run.assetId == asset.id, receipt.run.engine == engine.rawValue else { throw SecurityScannerClientError.unconfirmedMutation }
@@ -106,7 +108,9 @@ struct SecurityScannerClient {
                      engines: [SecurityScannerEngineSelection]) async throws -> SecurityScannerAsset {
         try requireCurrent(asset)
         guard authorized else { throw SecurityScannerClientError.authorizationRequired }
+        let engineIDs = engines.map(\.engine)
         guard (15...43_200).contains(intervalMinutes), !engines.isEmpty,
+              engines.count <= SecurityScannerEngineID.allCases.count, Set(engineIDs).count == engineIDs.count,
               engines.allSatisfy({ SecurityScannerEngineID(rawValue: $0.engine) != nil }) else {
             throw SecurityScannerClientError.invalidInput("Choose a valid interval and at least one configured scanner.")
         }
@@ -173,7 +177,9 @@ struct SecurityScannerClient {
         let unique = Array(Set(assetIDs))
         guard authorized else { throw SecurityScannerClientError.authorizationRequired }
         guard !unique.isEmpty, unique.count <= 100, unique.allSatisfy(assets.contains), !engines.isEmpty,
-              engines.count <= 4, engines.allSatisfy({ SecurityScannerEngineID(rawValue: $0.engine) != nil }) else {
+              engines.count <= SecurityScannerEngineID.allCases.count,
+              Set(engines.map(\.engine)).count == engines.count,
+              engines.allSatisfy({ SecurityScannerEngineID(rawValue: $0.engine) != nil }) else {
             throw SecurityScannerClientError.invalidInput("Choose verified assets and available engines.")
         }
         try await requireEditorMembership()

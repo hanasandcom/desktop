@@ -14,7 +14,7 @@ struct SecurityScannerNativePanel: View {
     @State private var scheduleIntervals: [String: String] = [:]
     @State private var tenableScanIDs: [String: String] = [:]
     @State private var scheduleEnabled: [String: Bool] = [:]
-    @State private var scheduleEngines: [String: Set<String>] = [:]
+    @State private var scheduleEngines: [String: [String]] = [:]
     @State private var zapDefinitionPaths: [String: String] = [:]
     @State private var findingQuery = ""
     @State private var findingEngine = "all"
@@ -31,7 +31,7 @@ struct SecurityScannerNativePanel: View {
     @State private var findingStates: [String: String] = [:]
     @State private var findingNotes: [String: String] = [:]
     @State private var selectedAssets: Set<String> = []
-    @State private var selectedEngines: Set<String> = ["nmap"]
+    @State private var selectedEngines: [String] = ["nmap"]
     @State private var assessmentNmapProfile: SecurityScannerNmapProfile = .top1000
     @State private var assessmentScanID = ""
     @State private var runCursor: String?
@@ -193,7 +193,7 @@ struct SecurityScannerNativePanel: View {
                     Toggle("I am authorized to scan", isOn: Binding(get: { authorization.contains(asset.id) }, set: { enabled in if enabled { authorization.insert(asset.id) } else { authorization.remove(asset.id) } }))
                         .toggleStyle(.checkbox)
                 }
-                HStack(spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)], alignment: .leading, spacing: 8) {
                     ForEach(SecurityScannerEngineID.allCases) { engine in
                         ActionButton(title: busy == "\(asset.id):\(engine.rawValue)" ? "Queueing…" : engine.title, icon: "play.fill") {
                             Task { await run(asset, engine: engine) }
@@ -221,12 +221,13 @@ struct SecurityScannerNativePanel: View {
                         .disabled(writeDisabled || !authorization.contains(asset.id))
                 }
                 let initialPlan = asset.schedulePlan?.isEmpty == false ? asset.schedulePlan!.map(\.engine) : [asset.scheduleEngine ?? "nmap"]
-                let chosenEngines = scheduleEngines[asset.id] ?? Set(initialPlan)
-                HStack(spacing: 10) {
+                let chosenEngines = scheduleEngines[asset.id] ?? initialPlan
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 8) {
                     ForEach(SecurityScannerEngineID.allCases) { engine in
                         Toggle(engine.title, isOn: Binding(get: { chosenEngines.contains(engine.rawValue) }, set: { enabled in
                             var values = chosenEngines
-                            if enabled { values.insert(engine.rawValue) } else { values.remove(engine.rawValue) }
+                            if enabled, !values.contains(engine.rawValue) { values.append(engine.rawValue) }
+                            if !enabled { values.removeAll { $0 == engine.rawValue } }
                             scheduleEngines[asset.id] = values
                         })).toggleStyle(.checkbox).disabled(!engineAvailable(engine))
                     }
@@ -256,7 +257,10 @@ struct SecurityScannerNativePanel: View {
                 }
                 Divider()
                 ForEach(SecurityScannerEngineID.allCases) { engine in
-                    Toggle("\(engine.title) · \(engineAvailable(engine) ? "Available" : "Unavailable")", isOn: Binding(get: { selectedEngines.contains(engine.rawValue) }, set: { checked in if checked { selectedEngines.insert(engine.rawValue) } else { selectedEngines.remove(engine.rawValue) } })).toggleStyle(.checkbox).disabled(!engineAvailable(engine))
+                    Toggle("\(engine.title) · \(engineAvailable(engine) ? "Available" : "Unavailable")", isOn: Binding(get: { selectedEngines.contains(engine.rawValue) }, set: { checked in
+                        if checked, !selectedEngines.contains(engine.rawValue) { selectedEngines.append(engine.rawValue) }
+                        if !checked { selectedEngines.removeAll { $0 == engine.rawValue } }
+                    })).toggleStyle(.checkbox).disabled(!engineAvailable(engine))
                 }
                 if selectedEngines.contains(SecurityScannerEngineID.nmap.rawValue) {
                     Picker("Nmap coverage", selection: $assessmentNmapProfile) { ForEach(SecurityScannerNmapProfile.allCases) { Text($0.title).tag($0) } }.frame(maxWidth: 330)
@@ -574,7 +578,8 @@ struct SecurityScannerNativePanel: View {
         defer { if !quiet { loading = false } }
         do {
             dashboard = try await client.dashboard()
-            if dashboard?.engines.contains(where: { $0.id == "nmap" && $0.status == "available" }) == true { selectedEngines.insert("nmap") }
+            if dashboard?.engines.contains(where: { $0.id == "nmap" && $0.status == "available" }) == true,
+               !selectedEngines.contains("nmap") { selectedEngines.append("nmap") }
             runCursor = dashboard?.runsNextCursor
             assessmentCursor = dashboard?.assessmentsNextCursor
             findingCursor = dashboard?.findingsNextCursor
@@ -602,12 +607,12 @@ struct SecurityScannerNativePanel: View {
         await perform("\(asset.id):schedule", success: "Scan schedule saved.") { client in
             let interval = Int(scheduleIntervals[asset.id] ?? String(asset.intervalMinutes)) ?? 0
             let plan = asset.schedulePlan?.isEmpty == false ? asset.schedulePlan! : [SecurityScannerEngineSelection(engine: "nmap", scanId: nil, profile: (nmapProfiles[asset.id] ?? .top1000).rawValue)]
-            let selected = scheduleEngines[asset.id] ?? Set(plan.map(\.engine))
-            let configuredPlan = selected.sorted().compactMap { raw -> SecurityScannerEngineSelection? in
+            let selected = scheduleEngines[asset.id] ?? plan.map(\.engine)
+            let configuredPlan = selected.compactMap { raw -> SecurityScannerEngineSelection? in
                 guard let engine = SecurityScannerEngineID(rawValue: raw), engineAvailable(engine) else { return nil }
                 if engine == .nmap { return .init(engine: raw, scanId: nil, profile: (nmapProfiles["schedule:\(asset.id)"] ?? .top1000).rawValue) }
                 if engine == .tenableVM { return .init(engine: raw, scanId: tenableScanIDs["schedule:\(asset.id)"] ?? snapshot.tenableScans.first(where: \.enabled)?.id, profile: nil) }
-                return .init(engine: raw, scanId: nil, profile: nil)
+                return .init(engine: raw, scanId: nil, profile: engine.defaultProfile)
             }
             guard !configuredPlan.isEmpty else { error = "Choose at least one available scanner for the schedule."; return }
             let updated = try await client.setSchedule(asset: asset, enabled: scheduleEnabled[asset.id] ?? asset.scheduleEnabled, intervalMinutes: interval, authorized: authorization.contains(asset.id), engines: configuredPlan)
@@ -626,7 +631,7 @@ struct SecurityScannerNativePanel: View {
                 guard let engine = SecurityScannerEngineID(rawValue: raw), engineAvailable(engine) else { return nil }
                 if engine == .nmap { return .init(engine: raw, scanId: nil, profile: assessmentNmapProfile.rawValue) }
                 if engine == .tenableVM { return .init(engine: raw, scanId: assessmentScanID, profile: nil) }
-                return .init(engine: raw, scanId: nil, profile: nil)
+                return .init(engine: raw, scanId: nil, profile: engine.defaultProfile)
             }
             _ = try await client.startAssessment(assetIDs: Array(selectedAssets), engines: engines, authorized: selectedAssets.isSubset(of: authorization))
             selectedAssets.removeAll()

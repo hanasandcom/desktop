@@ -104,6 +104,79 @@ final class SecurityScannerClientTests: XCTestCase {
         catch { XCTAssertEqual((error as? SecurityScannerClientError)?.localizedDescription, SecurityScannerClientError.authorizationRequired.localizedDescription) }
     }
 
+    func testEngineCatalogIncludesEverySupportedWebAndNetworkEngine() {
+        XCTAssertEqual(SecurityScannerEngineID.allCases.map(\.rawValue), [
+            "nmap", "naabu", "tenable-vm", "gvm", "zap", "testssl", "nuclei", "nikto", "sslyze",
+            "wapiti", "whatweb", "httpx", "tlsx", "katana", "wafw00f",
+        ])
+        XCTAssertEqual(SecurityScannerEngineID.testssl.defaultProfile, "tls-default-v1")
+        XCTAssertEqual(SecurityScannerEngineID.naabu.defaultProfile, "naabu-top-100")
+        XCTAssertNil(SecurityScannerEngineID.nmap.defaultProfile)
+    }
+
+    func testRunScanUsesNativeEndpointForEachSupportedEngine() async throws {
+        let asset = scannerAsset()
+        for engine in SecurityScannerEngineID.allCases {
+            var capturedPath: String?
+            var capturedBody: [String: Any]?
+            let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+                if request.url?.host == "identity.hanasand.com" {
+                    return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
+                }
+                capturedPath = request.url?.path
+                capturedBody = try request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                let receipt = ["run": ["id": "run-1", "scannerRunId": NSNull(), "requestId": "request-1", "assetId": asset.id,
+                                        "target": asset.hostname, "engine": engine.rawValue, "profile": engine.defaultProfile ?? "tcp-top-1000",
+                                        "status": "queued", "createdAt": "2026-10-23T10:00:00Z"] as [String: Any]]
+                return (try JSONSerialization.data(withJSONObject: receipt), self.response(request, 202))
+            })
+
+            let run = try await client.runScan(asset: asset, engine: engine, authorized: true, tenableScanID: "scan-1")
+            XCTAssertEqual(run.engine, engine.rawValue)
+            let expectedPath: String
+            switch engine {
+            case .nmap: expectedPath = "/api/v1/uvm/assets/asset-1/scans"
+            case .tenableVM: expectedPath = "/api/v1/uvm/assets/asset-1/tenable-scans"
+            case .gvm: expectedPath = "/api/v1/uvm/integrations/gvm/runs"
+            default: expectedPath = "/api/v1/uvm/assets/asset-1/\(engine.rawValue)-scans"
+            }
+            XCTAssertEqual(capturedPath, expectedPath, "wrong route for \(engine.rawValue)")
+            XCTAssertEqual(capturedBody?["authorized"] as? Bool, true)
+            XCTAssertNotNil(capturedBody?["requestId"] as? String)
+            if let profile = engine.defaultProfile { XCTAssertEqual(capturedBody?["profile"] as? String, profile) }
+            if engine == .gvm { XCTAssertEqual(capturedBody?["organizationId"] as? String, "org-1") }
+            if engine == .tenableVM { XCTAssertEqual(capturedBody?["scanId"] as? String, "scan-1") }
+        }
+    }
+
+    func testSchedulePreservesEngineOrderAndIncludesSafeDefaultProfiles() async throws {
+        let asset = scannerAsset()
+        let client = try SecurityScannerClient(settings: scannerSettings(), send: { request in
+            if request.url?.host == "identity.hanasand.com" {
+                return (Data(#"{"organizations":[{"id":"org-1","name":"Hanasand","role":"editor","lifecycleStatus":"active"}]}"#.utf8), self.response(request, 200))
+            }
+            let body = try XCTUnwrap(request.httpBody)
+            let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let engines = try XCTUnwrap(decoded["engines"] as? [[String: String]])
+            XCTAssertEqual(engines.map { $0["engine"] }, ["katana", "nmap", "testssl"])
+            XCTAssertEqual(engines[0]["profile"], "katana-same-origin-crawl-v1")
+            XCTAssertEqual(engines[2]["profile"], "tls-default-v1")
+            let receipt = ["asset": ["id": asset.id, "hostname": asset.hostname, "verificationStatus": "verified",
+                                      "verificationRecordName": "", "verificationRecordValue": "", "verificationMethod": "dns_txt",
+                                      "verifiedAt": NSNull(), "scanAuthorizedAt": NSNull(), "authorizedAddresses": ["203.0.113.1"],
+                                      "scheduleEnabled": true, "schedulePlan": [], "scheduleEngine": "katana", "scheduleScanId": NSNull(),
+                                      "scheduleProfile": "katana-same-origin-crawl-v1", "zapApiDefinitionPath": NSNull(), "intervalMinutes": 60,
+                                      "nextRunAt": NSNull(), "createdAt": "2026-10-23T10:00:00Z"] as [String: Any]]
+            return (try JSONSerialization.data(withJSONObject: receipt), self.response(request, 200))
+        })
+        let selections = ["katana", "nmap", "testssl"].compactMap { raw -> SecurityScannerEngineSelection? in
+            guard let engine = SecurityScannerEngineID(rawValue: raw) else { return nil }
+            return SecurityScannerEngineSelection(engine: raw, scanId: nil, profile: engine == .nmap ? "tcp-top-1000" : engine.defaultProfile)
+        }
+        let updated = try await client.setSchedule(asset: asset, enabled: true, intervalMinutes: 60, authorized: true, engines: selections)
+        XCTAssertTrue(updated.scheduleEnabled)
+    }
+
     private func scannerSettings() -> HanasandDesktopSettings {
         var settings = HanasandDesktopSettings()
         settings.userID = "eirik"
@@ -119,6 +192,14 @@ final class SecurityScannerClientTests: XCTestCase {
             title: id, severity: severity, cvssScore: nil, cveIds: [], description: nil, solution: nil, evidence: nil,
             status: status, triageNote: nil, firstSeen: firstSeen, lastSeen: nil, updatedAt: "2026-03-02T00:00:00Z"
         )
+    }
+
+    private func scannerAsset() -> SecurityScannerAsset {
+        SecurityScannerAsset(id: "asset-1", hostname: "example.com", verificationStatus: "verified", verificationRecordName: "",
+                             verificationRecordValue: "", verificationMethod: "dns_txt", verifiedAt: nil, scanAuthorizedAt: nil,
+                             authorizedAddresses: ["203.0.113.1"], scheduleEnabled: false, schedulePlan: [], scheduleEngine: "nmap",
+                             scheduleScanId: nil, scheduleProfile: nil, zapApiDefinitionPath: nil, intervalMinutes: 60,
+                             nextRunAt: nil, createdAt: "2026-10-23T10:00:00Z")
     }
 
     private func response(_ request: URLRequest, _ status: Int) -> HTTPURLResponse {
