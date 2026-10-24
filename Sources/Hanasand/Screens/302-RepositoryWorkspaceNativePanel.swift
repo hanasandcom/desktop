@@ -8,6 +8,7 @@ struct RepositoryWorkspaceNativePanel: View {
     @State private var selectedAlias = ""
     @State private var selectedFileID = ""
     @State private var detail: RepositoryWorkspaceProjectDetail?
+    @State private var projectPendingDeletion: RepositoryWorkspaceProject?
     @State private var search = ""
     @State private var error = ""
     @State private var isLoading = false
@@ -27,18 +28,20 @@ struct RepositoryWorkspaceNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: "Repositories", subtitle: "Browse repositories and the files in your workspace") {
-                HStack(spacing: 10) {
-                    TextField("Filter repositories and files", text: $search)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: .infinity)
-                    ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") {
-                        Task { await refresh() }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        searchField
+                        refreshButton
+                        openSharesButton
                     }
-                    .disabled(isLoading || !model.hasHanasandAuth)
-                    ActionButton(title: "Open shares", icon: "arrow.up.right") {
-                        model.openNativeDashboard(path: "/s", label: "Shares")
+                    VStack(alignment: .leading, spacing: 8) {
+                        searchField
+                        HStack {
+                            Spacer(minLength: 0)
+                            refreshButton
+                            openSharesButton
+                        }
                     }
-                    .disabled(!model.hasHanasandAuth)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], alignment: .leading, spacing: 10) {
@@ -97,30 +100,93 @@ struct RepositoryWorkspaceNativePanel: View {
             }
         }
         .task { await refresh() }
+        .confirmationDialog(
+            "Delete repository?",
+            isPresented: Binding(
+                get: { projectPendingDeletion != nil },
+                set: { if !$0 { projectPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete repository", role: .destructive) {
+                guard let project = projectPendingDeletion else { return }
+                projectPendingDeletion = nil
+                Task { await deleteProject(project) }
+            }
+            Button("Cancel", role: .cancel) { projectPendingDeletion = nil }
+        } message: {
+            if let project = projectPendingDeletion {
+                Text("Permanently delete \(project.alias) and all files in its repository tree? This cannot be undone.")
+            }
+        }
+    }
+
+    private var searchField: some View {
+        TextField("Filter repositories and files", text: $search)
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var refreshButton: some View {
+        ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") {
+            Task { await refresh() }
+        }
+        .disabled(isLoading || !model.hasHanasandAuth)
+    }
+
+    private var openSharesButton: some View {
+        ActionButton(title: "Open shares", icon: "arrow.up.right") {
+            model.openNativeDashboard(path: "/s", label: "Shares")
+        }
+        .disabled(!model.hasHanasandAuth)
     }
 
     private func projectRow(_ project: RepositoryWorkspaceProject) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "folder.fill")
-                .foregroundStyle(theme.accent)
-                .frame(width: 28, height: 28)
-                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            VStack(alignment: .leading, spacing: 4) {
-                Text(project.alias).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
-                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                Text("\(project.fileCount) files · \(Self.byteCount(project.totalSize)) · \(project.lastUpdated.isEmpty ? "No update time" : project.lastUpdated)")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 4)
-            ActionButton(title: isLoading && selectedAlias == project.alias ? "Loading…" : "Open", icon: "arrow.up.right") {
-                Task { await open(project) }
-            }
-            .disabled(isLoading)
+        ViewThatFits(in: .horizontal) {
+            projectRowContent(project, stacked: false)
+            projectRowContent(project, stacked: true)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func projectRowContent(_ project: RepositoryWorkspaceProject, stacked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 28, height: 28)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(project.alias).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
+                        .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    Text("\(project.fileCount) files · \(Self.byteCount(project.totalSize)) · \(project.lastUpdated.isEmpty ? "No update time" : project.lastUpdated)")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if !stacked { Spacer(minLength: 4) }
+            }
+
+            HStack(spacing: 8) {
+                if stacked { Spacer(minLength: 0) }
+                ActionButton(title: isLoading && selectedAlias == project.alias ? "Loading…" : "Open", icon: "arrow.up.right") {
+                    Task { await open(project) }
+                }
+                .disabled(isLoading)
+                Button(role: .destructive) { projectPendingDeletion = project } label: {
+                    Label("Delete", systemImage: "trash")
+                        .labelStyle(.iconOnly)
+                        .frame(minWidth: 34, minHeight: 34)
+                }
+                .buttonStyle(.bordered)
+                .tint(theme.danger)
+                .disabled(isLoading || !model.hasHanasandAuth)
+                .accessibilityLabel("Delete repository \(project.alias)")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func projectDetail(_ detail: RepositoryWorkspaceProjectDetail) -> some View {
@@ -249,6 +315,29 @@ struct RepositoryWorkspaceNativePanel: View {
             detail = try await client.loadProject(alias: project.alias)
             error = ""
         } catch let issue { detail = nil; error = issue.localizedDescription }
+    }
+
+    @MainActor
+    private func deleteProject(_ project: RepositoryWorkspaceProject) async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let client = try RepositoryWorkspaceClient(
+                apiBaseURL: model.settings.apiBaseURL.normalizedBaseURL,
+                userID: model.settings.userID,
+                token: model.settings.authToken,
+                organizationID: model.selectedOrganizationID,
+                impersonationToken: model.settings.impersonationToken,
+                impersonatingUserID: model.settings.impersonatingUserID
+            )
+            try await client.deleteProject(alias: project.alias)
+            projects.removeAll { $0.alias == project.alias }
+            if selectedAlias == project.alias { selectedAlias = ""; detail = nil }
+            error = "Deleted repository \(project.alias)."
+        } catch {
+            self.error = "Could not confirm deletion. Refresh the repository list before trying again. \(error.localizedDescription)"
+        }
     }
 
     private static func byteCount(_ count: Int64) -> String {

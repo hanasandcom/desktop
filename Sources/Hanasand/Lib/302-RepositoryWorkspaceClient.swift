@@ -91,6 +91,38 @@ struct RepositoryWorkspaceClient {
         return detail
     }
 
+    func deleteProject(alias: String) async throws {
+        guard alias.range(of: "^[a-z0-9._-]{1,120}$", options: .regularExpression) != nil else {
+            throw RepositoryWorkspaceError.invalidResponse
+        }
+        let url = baseURL.appendingAPIPath("project/\(alias)")
+        guard url.scheme?.lowercased() == "https", url.host == baseURL.host,
+              url.user == nil, url.password == nil else {
+            throw RepositoryWorkspaceError.invalidBaseURL
+        }
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "DELETE"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == url.host,
+              (response.url?.port ?? 443) == (url.port ?? 443), response.url?.path == url.path else {
+            throw RepositoryWorkspaceError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else { throw RepositoryWorkspaceError.requestFailed(http.statusCode) }
+        guard data.count <= RepositoryWorkspaceLimits.responseBytes,
+              let receipt = try? JSONDecoder().decode(RepositoryWorkspaceDeleteReceipt.self, from: data),
+              receipt.deleted == alias else {
+            throw RepositoryWorkspaceError.invalidResponse
+        }
+    }
+
     private func request<T: Decodable>(_ path: String) async throws -> T {
         guard !path.hasPrefix("/"), !path.split(separator: "/").contains("..") else {
             throw RepositoryWorkspaceError.invalidResponse
@@ -123,4 +155,8 @@ struct RepositoryWorkspaceClient {
     private func segment(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? ""
     }
+}
+
+private struct RepositoryWorkspaceDeleteReceipt: Decodable {
+    let deleted: String
 }

@@ -65,6 +65,67 @@ final class RepositoryWorkspaceTests: XCTestCase {
         XCTAssertEqual(detail.tree.first?.children?.first?.name, "main.swift")
     }
 
+    func testDeletesRepositoryWithWebsiteAuthenticatedRequestAndValidatesReceipt() async throws {
+        let recorder = RequestRecorder()
+        let client = try RepositoryWorkspaceClient(
+            apiBaseURL: base, userID: "user-1", token: "opaque-token", organizationID: "org-1"
+        ) { request in
+            recorder.append(request)
+            return (Data(#"{"deleted":"repo-a"}"#.utf8), self.response(for: request))
+        }
+
+        try await client.deleteProject(alias: "repo-a")
+
+        let request = try XCTUnwrap(recorder.requests.first)
+        XCTAssertEqual(request.url?.path, "/api/project/repo-a")
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer opaque-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "user-1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertNil(request.value(forHTTPHeaderField: "x-organization-id"), "Website delete relies on the API's server-side content authorization.")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertNil(request.httpBody)
+    }
+
+    func testDeleteRejectsInvalidAliasesAndMismatchedReceipts() async throws {
+        let recorder = RequestRecorder()
+        let client = try RepositoryWorkspaceClient(apiBaseURL: base, userID: "user-1", token: "token") { request in
+            recorder.append(request)
+            return (Data(#"{"deleted":"another-repo"}"#.utf8), self.response(for: request))
+        }
+        for alias in ["", "../repo", "repo/name", String(repeating: "a", count: 121)] {
+            do {
+                try await client.deleteProject(alias: alias)
+                XCTFail("Expected alias \(alias) to be rejected")
+            } catch {
+                XCTAssertEqual(error as? RepositoryWorkspaceError, .invalidResponse)
+            }
+        }
+        XCTAssertTrue(recorder.requests.isEmpty, "Invalid aliases must be rejected before sending a destructive request.")
+
+        do {
+            try await client.deleteProject(alias: "repo-a")
+            XCTFail("Expected mismatched deletion receipt to be rejected")
+        } catch {
+            XCTAssertEqual(error as? RepositoryWorkspaceError, .invalidResponse)
+        }
+    }
+
+    func testDeleteSurfacesAuthorizationAndMissingRepositoryStatuses() async throws {
+        for status in [401, 403, 404] {
+            let client = try RepositoryWorkspaceClient(apiBaseURL: base, userID: "user-1", token: "token") { request in
+                (Data(#"{"error":"not available"}"#.utf8), self.response(for: request, status: status))
+            }
+            do {
+                try await client.deleteProject(alias: "repo-a")
+                XCTFail("Expected HTTP \(status) to fail")
+            } catch {
+                XCTAssertEqual(error as? RepositoryWorkspaceError, .requestFailed(status))
+            }
+        }
+    }
+
     func testRejectsInsecureAndImpersonatedContexts() {
         XCTAssertThrowsError(try RepositoryWorkspaceClient(apiBaseURL: URL(string: "http://api.example.test/api")!, userID: "user-1", token: "token")) {
             XCTAssertEqual($0 as? RepositoryWorkspaceError, .invalidBaseURL)
@@ -103,7 +164,7 @@ final class RepositoryWorkspaceTests: XCTestCase {
         XCTAssertThrowsError(try detail.validate()) { XCTAssertEqual($0 as? RepositoryWorkspaceError, .invalidResponse) }
     }
 
-    private func response(for request: URLRequest) -> URLResponse {
-        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+    private func response(for request: URLRequest, status: Int = 200) -> URLResponse {
+        HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
     }
 }
