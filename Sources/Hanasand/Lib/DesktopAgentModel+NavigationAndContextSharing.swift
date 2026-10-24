@@ -12,7 +12,7 @@ import WebKit
 
 extension DesktopAgentModel {
 
-    func openNativeDashboard(path: String, label: String, detailID: String? = nil, query: [String: String] = [:]) {
+    func openNativeDashboard(path: String, label: String, detailID: String? = nil, query: [String: String] = [:], loadData: Bool = true) {
         selectedDashboardPath = path
         selectedDashboardTitle = label
         selectedNativeDashboardDetailID = detailID ?? ""
@@ -21,7 +21,7 @@ extension DesktopAgentModel {
         selectedSection = .dashboard
         append(meta: "Dashboard", body: "Opened native \(label)", kind: .command)
         recordRun(title: label, detail: path, kind: .command)
-        Task { await loadNativeDashboardData() }
+        if loadData { Task { await loadNativeDashboardData() } }
     }
 
     func closeNativeDashboardPage() {
@@ -41,7 +41,7 @@ extension DesktopAgentModel {
     }
 
     @discardableResult
-    func openNativeHanasandRoute(_ route: BrowserNativeRoute) -> Bool {
+    func openNativeHanasandRoute(_ route: BrowserNativeRoute, loadData: Bool = true) -> Bool {
         let hasNativeDestination = BrowserWorkspaceModel.hasNativeDestination(for: route.path)
         var query = route.query
         if let section = route.section { query["section"] = section }
@@ -77,12 +77,23 @@ extension DesktopAgentModel {
             openNativeDashboard(path: "/ai/workspace", label: route.label, detailID: route.detailID, query: query)
         } else if route.path == "/profile" {
             if let requestedUserID = route.detailID, requestedUserID != userIDForRequests {
-                openNativeDashboard(path: "/public-profile", label: route.label, detailID: requestedUserID)
+                openNativeDashboard(path: "/public-profile", label: route.label, detailID: requestedUserID, query: query, loadData: loadData)
             } else {
-                openNativeDashboard(path: "/profile", label: route.label, detailID: route.section, query: query)
+                // Keep the signed-in account identity separate from the requested
+                // subsection. ProfileNativePanel uses the detail ID to distinguish
+                // the account from a public profile, while the query selects the
+                // subsection and initial scroll target.
+                let accountID = route.detailID ?? userIDForRequests
+                openNativeDashboard(
+                    path: "/profile",
+                    label: route.label,
+                    detailID: accountID.isEmpty ? nil : accountID,
+                    query: query,
+                    loadData: loadData
+                )
             }
         } else {
-            openNativeDashboard(path: route.path, label: route.label, detailID: route.detailID, query: query)
+            openNativeDashboard(path: route.path, label: route.label, detailID: route.detailID, query: query, loadData: loadData)
             if route.path == "/g", route.detailID != nil {
                 Task {
                     guard let link = await lookupShortcutLink(),

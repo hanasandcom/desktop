@@ -91,6 +91,59 @@ final class WebsiteNativeRouteBehaviorTests: XCTestCase {
             XCTAssertEqual(workspace.selectedTab?.statusText, "Opened in native Desktop", section)
         }
     }
+
+    @MainActor
+    func testProfileSubrouteHandoffKeepsAccountIdentitySeparateFromSection() {
+        let model = DesktopAgentModel()
+        let originalSettings = model.settings
+        var testSettings = originalSettings
+        testSettings.userID = "user-23"
+        testSettings.authToken = ""
+        model.settings = testSettings
+        defer { model.settings = originalSettings }
+
+        let routes: [(url: String, expectedSection: String)] = [
+            ("https://hanasand.com/profile/user-23/sessions?source=route-test", "sessions"),
+            ("https://hanasand.com/profile/user-23/security?source=route-test", "security"),
+            ("https://hanasand.com/profile/user-23/ssh-keys?source=route-test", "ssh-keys"),
+            ("https://hanasand.com/dashboard/system/ssh-keys?source=route-test", "ssh-keys"),
+        ]
+
+        for item in routes {
+            guard let route = BrowserWorkspaceModel.nativeRoute(for: item.url) else {
+                XCTFail("Expected native route for \(item.url)")
+                continue
+            }
+
+            XCTAssertTrue(model.openNativeHanasandRoute(route, loadData: false), item.url)
+            XCTAssertEqual(model.selectedDashboardPath, "/profile", item.url)
+            XCTAssertEqual(model.selectedNativeDashboardDetailID, "user-23", item.url)
+            XCTAssertEqual(model.selectedNativeDashboardQuery["section"], item.expectedSection, item.url)
+            XCTAssertEqual(model.selectedNativeDashboardQuery["source"], "route-test", item.url)
+        }
+    }
+
+    @MainActor
+    func testNonSelfProfileSubrouteHandoffKeepsPublicUserIdentityAndQuery() {
+        let model = DesktopAgentModel()
+        let originalSettings = model.settings
+        var testSettings = originalSettings
+        testSettings.userID = "user-23"
+        testSettings.authToken = ""
+        model.settings = testSettings
+        defer { model.settings = originalSettings }
+
+        let url = "https://hanasand.com/profile/user-99/sessions?source=route-test"
+        guard let route = BrowserWorkspaceModel.nativeRoute(for: url) else {
+            XCTFail("Expected native route for \(url)")
+            return
+        }
+
+        XCTAssertTrue(model.openNativeHanasandRoute(route, loadData: false), url)
+        XCTAssertEqual(model.selectedDashboardPath, "/public-profile", url)
+        XCTAssertEqual(model.selectedNativeDashboardDetailID, "user-99", url)
+        XCTAssertEqual(model.selectedNativeDashboardQuery["source"], "route-test", url)
+    }
 }
 
 private struct HandoffCase {

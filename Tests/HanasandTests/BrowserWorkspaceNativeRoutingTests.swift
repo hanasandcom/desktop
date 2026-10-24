@@ -238,6 +238,12 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/profile/user-123/ssh-keys")?.section, "ssh-keys")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/profile/user-123/certificates")?.section, "ssh-keys")
 
+        let systemSSHKeys = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/system/ssh-keys?source=route-test")
+        XCTAssertEqual(systemSSHKeys?.path, "/profile")
+        XCTAssertNil(systemSSHKeys?.detailID)
+        XCTAssertEqual(systemSSHKeys?.section, "ssh-keys")
+        XCTAssertEqual(systemSSHKeys?.query["source"], "route-test")
+
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/profile/user-123/support")?.path, "/support")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/ti/sources/source-42")?.detailID, "source-42")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/sandbox/123e4567-e89b-12d3-a456-426614174000")?.detailID, "123e4567-e89b-12d3-a456-426614174000")
