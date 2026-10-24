@@ -289,6 +289,11 @@ struct NativeAccountRoutePanel: View {
             } else {
                 TextField("Full name", text: $signupName).textFieldStyle(.roundedBorder)
                 TextField("Username", text: $signupUsername).textFieldStyle(.roundedBorder).autocorrectionDisabled()
+                if signupUsernameIsReserved {
+                    Text("This username is reserved.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.danger)
+                }
                 TextField("Email address", text: $signupEmail).textFieldStyle(.roundedBorder).textContentType(.emailAddress).autocorrectionDisabled()
                 SecureField("Password", text: $signupPassword).textFieldStyle(.roundedBorder)
                 Text("Use at least 16 characters with an uppercase letter, lowercase letter, number, and symbol.")
@@ -447,12 +452,17 @@ struct NativeAccountRoutePanel: View {
 
     private var canSubmitSignup: Bool {
         let name = signupName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let username = signupUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let username = ReservedUsernamePolicy.normalizedSignupUsername(signupUsername)
         let email = signupEmail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, username.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil,
+              !ReservedUsernamePolicy.usernames.contains(username),
               email.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil,
               AccountSignupClient.passwordMeetsRequirements(signupPassword) else { return false }
         return !signupWaitingForCode || (signupChallengeID != nil && signupCode.count == 6)
+    }
+
+    private var signupUsernameIsReserved: Bool {
+        ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername(signupUsername))
     }
 
     @ViewBuilder private func signupActionButtons(vertical: Bool) -> some View {

@@ -61,6 +61,7 @@ enum AccountSignupError: LocalizedError {
     case invalidBaseURL
     case invalidName
     case invalidUsername
+    case reservedUsername
     case invalidEmail
     case weakPassword
     case invalidVerification
@@ -72,6 +73,7 @@ enum AccountSignupError: LocalizedError {
         case .invalidBaseURL: "Account creation requires a valid secure API address."
         case .invalidName: "Enter your name (up to 100 characters)."
         case .invalidUsername: "Use 3–40 letters, numbers, dots, underscores or hyphens for your username."
+        case .reservedUsername: "This username is reserved."
         case .invalidEmail: "Enter a valid email address."
         case .weakPassword: "Use at least 16 characters, including one uppercase letter, one lowercase letter, one number, and one special character."
         case .invalidVerification: "Enter the six-digit code sent to your email."
@@ -107,6 +109,9 @@ struct AccountSignupClient {
         guard !cleanName.isEmpty, cleanName.count <= 100 else { throw AccountSignupError.invalidName }
         guard cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil else {
             throw AccountSignupError.invalidUsername
+        }
+        guard !ReservedUsernamePolicy.usernames.contains(cleanUsername) else {
+            throw AccountSignupError.reservedUsername
         }
         guard cleanEmail.count <= 254, cleanEmail.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil else {
             throw AccountSignupError.invalidEmail

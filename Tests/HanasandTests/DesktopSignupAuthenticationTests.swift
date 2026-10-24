@@ -121,6 +121,25 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
         XCTAssertFalse(sent)
     }
 
+    func testSignupRejectsTrimmedCaseInsensitiveReservedNamesBeforeSending() async throws {
+        var sent = false
+        let client = try AccountSignupClient(baseURL: baseURL) { request in
+            sent = true
+            return self.response("{}", request: request, status: 400)
+        }
+
+        for username in [" admin ", "GoOgLe", " SUPPORT\n"] {
+            do {
+                _ = try await client.submit(name: "Ada", username: username, email: "ada@example.test", password: password)
+                XCTFail("Expected reserved username rejection for \(username)")
+            } catch AccountSignupError.reservedUsername {}
+        }
+        XCTAssertFalse(sent, "reserved names must be rejected before the signup request")
+        XCTAssertEqual(ReservedUsernamePolicy.normalizedSignupUsername("  AdMiN  "), "admin")
+        XCTAssertTrue(ReservedUsernamePolicy.usernames.contains("admin"))
+        XCTAssertFalse(ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername(" Ada ")))
+    }
+
     func testSignupReturnsServerValidationErrorsWithoutExposingRequestSecrets() async throws {
         let client = try AccountSignupClient(baseURL: baseURL) { request in
             self.response(#"{"error":"This username or email is already registered."}"#, request: request, status: 409)
