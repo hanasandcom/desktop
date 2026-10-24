@@ -15,6 +15,7 @@ struct OrganizationPrivacyNativePanel: View {
     @State private var deletionName = ""
     @State private var currentPassword = ""
     @State private var resultMessage = ""
+    @State private var actionFailure = ""
 
     private enum Tab: String, CaseIterable, Identifiable {
         case summary = "Summary"
@@ -74,6 +75,7 @@ struct OrganizationPrivacyNativePanel: View {
                 }
                 privacyActions(snapshot)
                 if !resultMessage.isEmpty { NativeNotice(message: resultMessage, tone: .info) }
+                if !actionFailure.isEmpty { NativeNotice(message: actionFailure, title: "Privacy export failed", tone: .error) }
             } else {
                 NativeEmptyState(title: "Privacy history unavailable", message: error.isEmpty ? "Refresh to load the selected organization’s privacy state." : error)
             }
@@ -85,6 +87,7 @@ struct OrganizationPrivacyNativePanel: View {
             currentPassword = ""
             deletionName = ""
             pendingIntent = nil
+            actionFailure = ""
             selectedTab = .summary
             guard membershipVerified, !isImpersonating else { return }
             await refresh(offset: 0)
@@ -285,7 +288,7 @@ struct OrganizationPrivacyNativePanel: View {
     @MainActor
     private func perform(_ action: OrganizationPrivacyAction) async {
         guard let before = snapshot, membershipVerified, !isImpersonating, !busy, pendingIntent == nil else { return }
-        busy = true; error = ""; resultMessage = ""
+        busy = true; error = ""; resultMessage = ""; actionFailure = ""
         defer { busy = false; currentPassword = ""; deletionName = "" }
         let intent = OrganizationPrivacyIntent(action: action, requestID: UUID().uuidString.lowercased())
         do {
@@ -299,6 +302,10 @@ struct OrganizationPrivacyNativePanel: View {
                 panel.allowedContentTypes = [.json]; panel.canCreateDirectories = true
                 if panel.runModal() == .OK, let url = panel.url { try data.write(to: url, options: .atomic); resultMessage = "Verified export saved to \(url.lastPathComponent). SHA-256: \(receipt.checksum ?? "")" }
                 else { resultMessage = "Export completed, but the save dialog was canceled. The archive is no longer available from request history." }
+            } else if action == .export && receipt.status == "failed" {
+                actionFailure = "The service recorded this export request as failed. Review its status in Requests before trying again."
+                selectedTab = .requests
+                await refresh(offset: 0)
             } else {
                 resultMessage = "\(action.title) request status: \(receipt.status). Refreshing privacy history."
                 if let state = receipt.state { snapshot = state }

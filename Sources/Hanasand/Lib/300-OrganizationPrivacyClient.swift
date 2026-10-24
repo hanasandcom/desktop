@@ -111,11 +111,19 @@ struct OrganizationPrivacyClient {
             if (200..<300).contains(http.statusCode) || http.statusCode == 502 {
                 let receipt = try decodeReceipt(data, action: action, requestID: requestID, httpStatus: http.statusCode)
                 if action == .export {
-                    guard let serverRecordID = receipt.serverRecordID,
-                          let record = try await load().requests.first(where: { $0.id == serverRecordID && $0.requestID == requestID && $0.requestType == "export" && $0.status == "completed" }) else {
+                    guard let serverRecordID = receipt.serverRecordID else {
                         throw OrganizationPrivacyError.unconfirmedOutcome
                     }
-                    _ = record
+                    let history: OrganizationPrivacySnapshot
+                    do { history = try await load() }
+                    catch { throw OrganizationPrivacyError.unconfirmedOutcome }
+                    guard history.requests.contains(where: {
+                        $0.id == serverRecordID
+                            && $0.organizationID == organizationID
+                            && $0.requestID == requestID
+                            && $0.requestType == "export"
+                            && $0.status == receipt.status
+                    }) else { throw OrganizationPrivacyError.unconfirmedOutcome }
                 }
                 registry.resolve(intent); updateRegistry(nil, true)
                 return receipt
@@ -148,12 +156,19 @@ struct OrganizationPrivacyClient {
     private func decodeReceipt(_ bytes: Data, action: OrganizationPrivacyAction, requestID: String, httpStatus: Int) throws -> OrganizationPrivacyActionReceipt {
         guard let root = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw OrganizationPrivacyError.unconfirmedOutcome }
         if action == .export {
+            guard let req = root["request"] as? [String: Any],
+                  let serverRecordID = req["id"] as? String,
+                  !serverRecordID.isEmpty else { throw OrganizationPrivacyError.unconfirmedOutcome }
+            if httpStatus == 502 {
+                guard req["status"] as? String == "failed" else { throw OrganizationPrivacyError.unconfirmedOutcome }
+                return OrganizationPrivacyActionReceipt(action: action, requestID: requestID, status: "failed", state: nil,
+                                                        exportFile: nil, checksum: nil, serverRecordID: serverRecordID)
+            }
             guard httpStatus == 200 else { throw OrganizationPrivacyError.unconfirmedOutcome }
             let raw = Array(bytes)
             guard let exportRange = memberRange(named: "export", in: 0..<raw.count, bytes: raw),
                   let dataRange = memberRange(named: "data", in: exportRange, bytes: raw),
                   let fileRange = try? JSONDecoder().decode(OrganizationPrivacyExport.self, from: Data(raw[exportRange])),
-                  let req = root["request"] as? [String: Any], let serverRecordID = req["id"] as? String,
                   req["status"] as? String == "completed" else { throw OrganizationPrivacyError.unconfirmedOutcome }
             let file = Data(raw[exportRange])
             let actualChecksum = SHA256.hash(data: Data(raw[dataRange])).map { String(format: "%02x", $0) }.joined()

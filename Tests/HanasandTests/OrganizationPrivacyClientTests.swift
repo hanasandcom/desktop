@@ -174,6 +174,72 @@ final class OrganizationPrivacyClientTests: XCTestCase {
         } catch OrganizationPrivacyError.unconfirmedOutcome {}
     }
 
+    func testFailedExportReceiptIsKnownOnlyWhenHistoryMatchesAndResolvesIntent() async throws {
+        let recordJSON = #"{"id":"privacy-1","organization_id":"org/a","status":"completed","request_id":"req-2","request_type":"export","requested_at":"2026-10-21T10:00:00Z"}"#
+        func history(recordID: String = "privacy-failed", requestID: String = "export-failed", type: String = "export", status: String = "failed", orgID: String = "org/a") -> String {
+            let record = #"{"id":"\#(recordID)","organization_id":"\#(orgID)","status":"\#(status)","request_id":"\#(requestID)","request_type":"\#(type)","requested_at":"2026-10-21T10:00:00Z"}"#
+            return snapshotJSON.replacingOccurrences(of: recordJSON, with: record)
+        }
+
+        let expectedIntent = OrganizationPrivacyIntent(action: .export, requestID: "export-failed")
+        let registry = OrganizationPrivacyIntentRegistry(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "owner", organizationID: "org/a")
+        var reads = 0
+        let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a", send: { request in
+            if request.httpMethod == "GET" {
+                reads += 1
+                let response = reads == 1 ? self.snapshotJSON : history()
+                return self.http(response, request: request)
+            }
+            XCTAssertEqual(request.httpMethod, "POST")
+            return self.http(#"{"error":"Private export error detail","request":{"id":"privacy-failed","status":"failed"}}"#, request: request, status: 502)
+        }, registry: registry)
+
+        let receipt = try await client.perform(.export, requestID: expectedIntent.requestID, expectedName: "Example Org")
+        XCTAssertEqual(receipt.status, "failed")
+        XCTAssertNil(receipt.exportFile)
+        XCTAssertNil(receipt.checksum)
+        XCTAssertEqual(receipt.serverRecordID, "privacy-failed")
+        XCTAssertNil(registry.unresolved())
+        XCTAssertEqual(reads, 2)
+        XCTAssertNoThrow(try registry.claim(OrganizationPrivacyIntent(action: .export, requestID: "next-export")))
+    }
+
+    func testFailedExportReceiptMustMatchPersistedRequestOrIntentStaysLocked() async throws {
+        let recordJSON = #"{"id":"privacy-1","organization_id":"org/a","status":"completed","request_id":"req-2","request_type":"export","requested_at":"2026-10-21T10:00:00Z"}"#
+        func history(recordID: String = "privacy-failed", requestID: String = "export-failed", type: String = "export", status: String = "failed", orgID: String = "org/a") -> String {
+            let record = #"{"id":"\#(recordID)","organization_id":"\#(orgID)","status":"\#(status)","request_id":"\#(requestID)","request_type":"\#(type)","requested_at":"2026-10-21T10:00:00Z"}"#
+            return snapshotJSON.replacingOccurrences(of: recordJSON, with: record)
+        }
+        let scenarios: [(String, Int, String, String)] = [
+            ("server record ID", 502, #"{"request":{"id":"other-record","status":"failed"}}"#, history()),
+            ("client request ID", 502, #"{"request":{"id":"privacy-failed","status":"failed"}}"#, history(requestID: "other-request")),
+            ("request type", 502, #"{"request":{"id":"privacy-failed","status":"failed"}}"#, history(type: "deletion")),
+            ("persisted status", 502, #"{"request":{"id":"privacy-failed","status":"failed"}}"#, history(status: "completed")),
+            ("organization scope", 502, #"{"request":{"id":"privacy-failed","status":"failed"}}"#, history(orgID: "other-org")),
+            ("receipt status", 502, #"{"request":{"id":"privacy-failed","status":"completed"}}"#, history()),
+            ("missing receipt", 502, #"{"error":"Private error detail"}"#, history()),
+            ("malformed receipt", 502, "{malformed", history()),
+            ("unreceipted server error", 503, #"{"error":"Private error detail"}"#, history()),
+        ]
+
+        for (label, status, receiptJSON, historyJSON) in scenarios {
+            let registry = OrganizationPrivacyIntentRegistry(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "owner", organizationID: "org/a")
+            var reads = 0
+            let client = try OrganizationPrivacyClient(settings: settings, organizationID: "org/a", send: { request in
+                if request.httpMethod == "GET" {
+                    reads += 1
+                    return self.http(reads == 1 ? self.snapshotJSON : historyJSON, request: request)
+                }
+                return self.http(receiptJSON, request: request, status: status)
+            }, registry: registry)
+            do {
+                _ = try await client.perform(.export, requestID: "export-failed", expectedName: "Example Org")
+                XCTFail("Expected an uncertain outcome for mismatched \(label)")
+            } catch OrganizationPrivacyError.unconfirmedOutcome {}
+            XCTAssertEqual(registry.unresolved(), OrganizationPrivacyIntent(action: .export, requestID: "export-failed"), label)
+        }
+    }
+
     func testDeletionRequiresReauthenticationAndValidatesLinkedRunReceipt() async throws {
         let ownerRead = snapshotJSON.replacingOccurrences(of: #""canRequestDeletion":false"#, with: #""canRequestDeletion":true"#)
         let deletionState = #"{"schemaVersion":"organization.privacy_state.v1","organization":{"id":"org/a","name":"Example Org","status":"active","retention_days":90},"runs":[{"id":"delete-run","organization_id":"org/a","status":"completed","request_id":"delete-ok","trigger_type":"privacy_deletion","privacy_request_id":"delete-request"}],"requests":[{"id":"delete-request","organization_id":"org/a","status":"completed","request_id":"delete-ok","request_type":"deletion"}],"items":[],"itemPage":{"offset":0,"limit":100,"nextOffset":null},"protection":{"protected_events":3,"total_retention_items":101,"access_recovery_holds":1,"immutable_system_events":2,"immutable_webhook_audit_events":4,"immutable_log_events":5,"explanation":"Protected records remain."},"worker":{"runId":"delete-run","claimed":true}}"#
