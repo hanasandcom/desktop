@@ -168,7 +168,7 @@ struct VMsNativePanel: View {
 
     func vmCard(_ vm: NativeVMInventoryItem) -> some View {
         NativeGroupPanel(title: vm.name, subtitle: vm.organizationName ?? vm.organizationID ?? "Personal") {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: NativeVMCardLayout.metricColumns, alignment: .leading, spacing: NativeVMCardLayout.metricSpacing) {
                 FeatureCard(title: "Status", value: vm.status?.capitalized ?? "Unknown", icon: (vm.status ?? "").lowercased() == "running" ? "checkmark.circle" : "circle.dashed")
                 FeatureCard(title: "CPU", value: vm.cpuLimit ?? "Unknown", icon: "cpu")
                 FeatureCard(title: "Memory", value: vm.memoryLimit ?? "Unknown", icon: "memorychip")

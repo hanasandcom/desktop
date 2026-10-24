@@ -47,4 +47,12 @@ final class NativePanelResponsiveLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(MailNativePanelLayout.quickFilterMinimumColumnWidth, 160)
         XCTAssertLessThanOrEqual(twoColumnMinimum, 326)
     }
+
+    func testVMCardMetricsAdaptToAvailableWidth() {
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 248), 1)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 348), 2)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 428), 3)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: 0), 1)
+        XCTAssertEqual(NativeVMCardLayout.metricColumnCount(contentWidth: .infinity), 1)
+    }
 }
