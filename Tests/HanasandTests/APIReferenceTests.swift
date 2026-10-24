@@ -51,6 +51,28 @@ final class APIReferenceTests: XCTestCase {
         XCTAssertEqual(APIReferenceSecurity.label(operation: nil, document: nil), "Public (no security requirement declared)")
     }
 
+    func testShowsHumanReadableAccessAndExactKeyScope() throws {
+        let document = try APIReferenceDocument.decode(Data(contract.utf8))
+        let actor = try XCTUnwrap(document.operations.first)
+        XCTAssertEqual(APIReferenceSecurity.accessLabel(operation: actor.operation.security, document: document.security), "Bearer")
+
+        let keyOrSession: [APIReferenceJSONValue] = [
+            .object(["ApiKey": .array([])]),
+            .object(["SessionBearer": .array([]), "SessionId": .array([])])
+        ]
+        XCTAssertEqual(APIReferenceSecurity.accessLabel(operation: keyOrSession, document: nil), "API key or session")
+        XCTAssertEqual(APIReferenceSecurity.apiKeyScope(method: actor.method, path: actor.path, operation: keyOrSession, document: nil, serverURL: document.servers?.first?.url), "GET /v1/actors")
+
+        let publicOperation = try XCTUnwrap(document.operations.last)
+        XCTAssertEqual(APIReferenceSecurity.accessLabel(operation: publicOperation.operation.security, document: document.security), "Anonymous")
+        XCTAssertNil(APIReferenceSecurity.apiKeyScope(method: publicOperation.method, path: publicOperation.path, operation: publicOperation.operation.security, document: document.security, serverURL: document.servers?.first?.url))
+        XCTAssertEqual(APIReferenceSecurity.accessLabel(operation: [.object([:]), .object(["ApiKey": .array([])])], document: nil), "Anonymous")
+
+        let actorWithoutExplicitSecurity = APIReferenceSecurity.apiKeyScope(method: "GET", path: "/actors", operation: nil, document: nil, serverURL: "https://api.example.test/api/v1/")
+        XCTAssertEqual(actorWithoutExplicitSecurity, "GET /api/v1/actors")
+        XCTAssertNil(APIReferenceSecurity.apiKeyScope(method: "GET", path: "/actors", operation: [], document: nil, serverURL: "https://api.example.test/api/v1"))
+    }
+
     func testResolvesNestedComponentReferencesInOperationDetails() throws {
         let document = try APIReferenceDocument.decode(Data(contract.utf8))
         let operation = try XCTUnwrap(document.operations.first?.operation)

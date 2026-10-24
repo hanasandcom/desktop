@@ -104,7 +104,7 @@ struct APIReferenceNativePanel: View {
                         .buttonStyle(.bordered)
                         .accessibilityLabel("\(reference.expandedRows.contains(row.id) ? "Hide" : "Show") details for \(row.method) \(row.path)")
                         if reference.expandedRows.contains(row.id) {
-                            operationDetails(document: document, operation: row.operation, isApplication: isApplication, example: example)
+                            operationDetails(document: document, method: row.method, path: row.path, operation: row.operation, isApplication: isApplication, example: example)
                         }
                     }
                 }
@@ -114,9 +114,18 @@ struct APIReferenceNativePanel: View {
     }
 
     @ViewBuilder
-    private func operationDetails(document: APIReferenceDocument, operation: APIReferenceDocument.Operation, isApplication: Bool, example: APIReferenceSnapshot.Example?) -> some View {
-        Text(isApplication ? "Authentication: Hanasand application authentication applies; endpoint-level rules are not included in this snapshot." : "Security: \(APIReferenceSecurity.label(operation: operation.security, document: document.security))")
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+    private func operationDetails(document: APIReferenceDocument, method: String, path: String, operation: APIReferenceDocument.Operation, isApplication: Bool, example: APIReferenceSnapshot.Example?) -> some View {
+        if isApplication {
+            Text("Authentication: Hanasand application authentication applies; endpoint-level rules are not included in this snapshot.")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+        } else {
+            let access = APIReferenceSecurity.accessLabel(operation: operation.security, document: document.security)
+            let scope = APIReferenceSecurity.apiKeyScope(method: method, path: path, operation: operation.security, document: document.security, serverURL: document.servers?.first?.url)
+            Text("Access: \(access)")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+            Text("Key scope: \(access == "Anonymous" ? "None" : (scope ?? "Not declared by the contract"))")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+        }
         if !isApplication, case .object(let schemes)? = document.components?["securitySchemes"] {
             ForEach(securitySchemeNames(document: document, operation: operation), id: \.self) { name in
                 if let scheme = schemes[name] { jsonSection("Security scheme · \(name)", scheme) }

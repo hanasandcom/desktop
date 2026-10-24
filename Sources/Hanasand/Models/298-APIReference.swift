@@ -131,6 +131,37 @@ struct APIReferenceOperationRow: Identifiable {
 }
 
 enum APIReferenceSecurity {
+    static func accessLabel(operation: [APIReferenceJSONValue]?, document: [APIReferenceJSONValue]?) -> String {
+        guard let requirements = operation ?? document else { return "Authenticated" }
+        guard !requirements.isEmpty else { return "Anonymous" }
+        if requirements.contains(where: { requirement in
+            guard case .object(let schemes) = requirement else { return false }
+            return schemes.isEmpty
+        }) { return "Anonymous" }
+        return requirements.map { requirement in
+            guard case .object(let schemes) = requirement else { return "Invalid requirement" }
+            let names = schemes.keys.sorted()
+            var labels = names.filter { $0 != "SessionBearer" && $0 != "SessionId" }.map { name in name == "ApiKey" ? "API key" : name }
+            if names.contains("SessionBearer") || names.contains("SessionId") { labels.append("session") }
+            return labels.joined(separator: " + ")
+        }.joined(separator: " or ")
+    }
+
+    static func apiKeyScope(method: String, path: String, operation: [APIReferenceJSONValue]?, document: [APIReferenceJSONValue]?, serverURL: String?) -> String? {
+        let requirements = operation ?? document
+        guard requirements?.isEmpty != true,
+              requirements?.contains(where: { requirement in
+            guard case .object(let schemes) = requirement else { return false }
+            return schemes.isEmpty
+        }) != true else { return nil }
+        guard let serverURL, let components = URLComponents(string: serverURL),
+              components.scheme != nil, components.host != nil else { return nil }
+        let serverPath = components.path
+        let prefix = serverPath == "/" ? "" : serverPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let scopedPath = prefix.isEmpty ? path : "/\(prefix)\(path)"
+        return "\(method.uppercased()) \(scopedPath)"
+    }
+
     static func label(operation: [APIReferenceJSONValue]?, document: [APIReferenceJSONValue]?) -> String {
         guard let requirements = operation ?? document else { return "Public (no security requirement declared)" }
         guard !requirements.isEmpty else { return "Public" }
