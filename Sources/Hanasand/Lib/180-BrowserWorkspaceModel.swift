@@ -183,7 +183,7 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/dashboard/traffic/recent": "/traffic/recent",
             "/dashboard/vm": "/vms",
             "/dashboard/vms": "/vms",
-            "/dashboard/vulnerabilities": "/vulnerabilities",
+            "/dashboard/vulnerabilities": "/scanner",
             "/gallery": "/images/library",
             "/gallery/albums": "/images/library",
             "/cdn": "/images/library",
@@ -253,7 +253,12 @@ final class BrowserWorkspaceModel: ObservableObject {
                 if parts.count > 3 { detailID = parts.dropFirst(3).joined(separator: "/") }
             case "organizations": path = "/organizations"
             case "service-accounts": path = "/dashboard/management/service-accounts"
-            default: path = "/management"
+            default:
+                // The website catch-all `/dashboard/management/[...id]` treats
+                // the first segment as a VM name, even when more path segments
+                // follow it.
+                path = "/vms"
+                detailID = parts[2]
             }
         } else if path == "/sandbox/_browser/browser" { path = "/sandbox" }
         if path == "/sandbox/report" || path == "/_browser/browser/report" || path == "/sandbox/_browser/browser/report" {
