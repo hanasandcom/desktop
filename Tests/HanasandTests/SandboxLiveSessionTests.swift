@@ -46,7 +46,50 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertEqual(payload["durationSeconds"] as? Int, 1_800)
         XCTAssertEqual(payload["width"] as? Int, 1_280)
         XCTAssertEqual(payload["height"] as? Int, 720)
-        XCTAssertEqual(payload["profileTools"] as? [String], [])
+        let tools = try XCTUnwrap(payload["profileTools"] as? [[String: String]])
+        XCTAssertEqual(tools.map { $0["id"] }, ["virustotal", "urlquery", "webcrack"])
+    }
+
+    func testSavedProfilesUseOwnerBearerContractAndPreserveBuiltIns() async throws {
+        let client = try SandboxBrowserProfileClient(
+            apiBaseURL: api, userID: "owner.test", token: "session-token",
+            send: { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://browser.example.test/api/browser/profiles")
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer session-token")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "owner.test")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+                XCTAssertFalse(request.httpShouldHandleCookies)
+                let data = Data(#"{"profiles":[{"id":"custom-triage","name":"Custom triage","tools":[{"id":"scanner","name":"Scanner","url":"https://scanner.example.test/search?q={url}"}]}]}"#.utf8)
+                let response = try XCTUnwrap(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil))
+                return (data, response)
+            }
+        )
+
+        let profiles = try await client.load()
+        XCTAssertEqual(profiles.map(\.id), ["custom-triage", "triage-default", "browser-only"])
+        XCTAssertEqual(profiles.first?.tools, [SandboxBrowserTool(id: "scanner", name: "Scanner", url: "https://scanner.example.test/search?q={url}")])
+    }
+
+    func testSavedProfilesRejectUnsafeToolURLsAndImpersonatedAccounts() async throws {
+        XCTAssertThrowsError(try SandboxBrowserProfileClient(
+            apiBaseURL: api, userID: "owner.test", token: "session-token", impersonationToken: "proxy"
+        )) { XCTAssertEqual($0 as? SandboxBrowserProfileError, .ownAccountRequired) }
+
+        let client = try SandboxBrowserProfileClient(
+            apiBaseURL: api, userID: "owner.test", token: "session-token",
+            send: { request in
+                let data = Data(#"{"profiles":[{"id":"bad","name":"Bad","tools":[{"id":"tool","name":"Tool","url":"https://user:password@example.test/"}]}]}"#.utf8)
+                let response = try XCTUnwrap(HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil))
+                return (data, response)
+            }
+        )
+        do {
+            _ = try await client.load()
+            XCTFail("Expected unsafe provider URL to be rejected")
+        } catch {
+            XCTAssertEqual(error as? SandboxBrowserProfileError, .invalidResponse)
+        }
     }
 
     func testRejectsImpersonationInvalidCredentialsAndInvalidTargets() throws {

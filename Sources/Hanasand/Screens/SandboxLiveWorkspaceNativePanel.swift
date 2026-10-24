@@ -6,6 +6,23 @@ struct SandboxLiveWorkspaceNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @StateObject private var session = SandboxLiveSession()
     @State private var target = ""
+    @State private var profiles = SandboxBrowserProfile.defaults
+    @State private var selectedProfileID = SandboxBrowserProfile.defaults[0].id
+    @State private var profileSyncMessage = ""
+    @State private var isLoadingProfiles = false
+
+    private var selectedProfile: SandboxBrowserProfile {
+        profiles.first(where: { $0.id == selectedProfileID }) ?? SandboxBrowserProfile.defaults[0]
+    }
+
+    private var profileCredentialKey: String {
+        var hasher = Hasher()
+        hasher.combine(model.userIDForRequests)
+        hasher.combine(model.authTokenForRequests)
+        hasher.combine(model.settings.impersonationToken)
+        hasher.combine(model.settings.impersonatingUserID)
+        return String(hasher.finalize())
+    }
 
     private var isImpersonating: Bool {
         !model.settings.impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -14,6 +31,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
 
     private var canStart: Bool {
         model.hasHanasandAuth && !isImpersonating && !session.isActive
+            && !isLoadingProfiles
             && !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -25,6 +43,27 @@ struct SandboxLiveWorkspaceNativePanel: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 10) {
+                        Text("Analysis profile")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                        Picker("Analysis profile", selection: $selectedProfileID) {
+                            ForEach(profiles) { profile in
+                                Text("\(profile.name) · \(profile.tools.count) providers").tag(profile.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .disabled(session.isActive || isLoadingProfiles)
+                        if isLoadingProfiles { ProgressView().controlSize(.small) }
+                    }
+                    if !profileSyncMessage.isEmpty {
+                        Text(profileSyncMessage)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("sandbox-profile-status")
+                    }
 
                     HStack(spacing: 8) {
                         TextField("https://example.com", text: $target)
@@ -92,6 +131,7 @@ struct SandboxLiveWorkspaceNativePanel: View {
                 }
             }
         }
+        .task(id: profileCredentialKey) { await loadProfiles() }
         .onChange(of: model.userIDForRequests) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.authTokenForRequests) { _, _ in stopIfCredentialsChanged() }
         .onChange(of: model.settings.impersonationToken) { _, _ in stopIfCredentialsChanged() }
@@ -109,7 +149,42 @@ struct SandboxLiveWorkspaceNativePanel: View {
             target: target,
             isImpersonating: isImpersonating
         )
-        Task { await session.start(configuration) }
+        var selectedConfiguration = configuration
+        selectedConfiguration.profileTools = selectedProfile.tools
+        Task { await session.start(selectedConfiguration) }
+    }
+
+    @MainActor
+    private func loadProfiles() async {
+        let requestKey = profileCredentialKey
+        guard model.hasHanasandAuth, !isImpersonating else {
+            profiles = SandboxBrowserProfile.defaults
+            selectedProfileID = SandboxBrowserProfile.defaults[0].id
+            profileSyncMessage = "Sign in to load account-saved analysis profiles."
+            return
+        }
+        isLoadingProfiles = true
+        defer { isLoadingProfiles = false }
+        do {
+            let client = try SandboxBrowserProfileClient(
+                userID: model.userIDForRequests,
+                token: model.authTokenForRequests,
+                impersonationToken: model.settings.impersonationToken,
+                impersonatingUserID: model.settings.impersonatingUserID
+            )
+            let loaded = try await client.load()
+            guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
+            profiles = loaded
+            if !loaded.contains(where: { $0.id == selectedProfileID }) {
+                selectedProfileID = SandboxBrowserProfile.defaults[0].id
+            }
+            profileSyncMessage = "Account profiles loaded. Selected providers run with the isolated browser."
+        } catch {
+            guard !Task.isCancelled, requestKey == profileCredentialKey else { return }
+            profiles = SandboxBrowserProfile.defaults
+            selectedProfileID = SandboxBrowserProfile.defaults[0].id
+            profileSyncMessage = "Saved profiles unavailable; using built-in SOC triage profile. \(error.localizedDescription)"
+        }
     }
 
     private func stopIfCredentialsChanged() {

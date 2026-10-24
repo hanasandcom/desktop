@@ -40,6 +40,178 @@ enum SandboxLiveSessionError: LocalizedError, Equatable {
     }
 }
 
+struct SandboxBrowserTool: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let url: String
+}
+
+struct SandboxBrowserProfile: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let tools: [SandboxBrowserTool]
+
+    static let defaults = [
+        SandboxBrowserProfile(id: "triage-default", name: "SOC triage", tools: [
+            SandboxBrowserTool(id: "virustotal", name: "VirusTotal", url: "https://www.virustotal.com/gui/search/{url}"),
+            SandboxBrowserTool(id: "urlquery", name: "urlquery", url: "https://urlquery.net/search?q={url}"),
+            SandboxBrowserTool(id: "webcrack", name: "WebCrack", url: "https://webcrack.netlify.app/"),
+        ]),
+        SandboxBrowserProfile(id: "browser-only", name: "Browser only", tools: []),
+    ]
+}
+
+enum SandboxBrowserProfileError: LocalizedError, Equatable {
+    case signInRequired
+    case ownAccountRequired
+    case invalidEndpoint
+    case invalidCredentials
+    case invalidResponse
+    case responseTooLarge
+    case requestFailed(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .signInRequired: "Sign in to load saved Sandbox profiles."
+        case .ownAccountRequired: "Return to your own account to load saved Sandbox profiles."
+        case .invalidEndpoint: "Saved Sandbox profiles require a valid HTTPS browser service address."
+        case .invalidCredentials: "The current account credentials are invalid. Sign in again."
+        case .invalidResponse: "The Sandbox profile service returned invalid profile data."
+        case .responseTooLarge: "The Sandbox profile response exceeded its size limit."
+        case .requestFailed(401): "Sign in again to load saved Sandbox profiles."
+        case .requestFailed(403): "Your account cannot load these Sandbox profiles."
+        case .requestFailed: "Saved Sandbox profiles are unavailable. Try again."
+        }
+    }
+}
+
+private final class SandboxBrowserProfileRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+struct SandboxBrowserProfileClient {
+    typealias Sender = (URLRequest) async throws -> (Data, URLResponse)
+    static let defaultAPIBaseURL = URL(string: "https://browsers.hanasand.com/api")!
+    static let responseByteLimit = 256 * 1_024
+    private let url: URL
+    private let userID: String
+    private let token: String
+    private let send: Sender
+
+    init(apiBaseURL: URL = defaultAPIBaseURL, userID: String, token: String,
+         impersonationToken: String = "", impersonatingUserID: String = "", send: Sender? = nil) throws {
+        guard impersonationToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SandboxBrowserProfileError.ownAccountRequired
+        }
+        guard apiBaseURL.scheme?.lowercased() == "https", apiBaseURL.host != nil,
+              apiBaseURL.user == nil, apiBaseURL.password == nil, apiBaseURL.query == nil, apiBaseURL.fragment == nil else {
+            throw SandboxBrowserProfileError.invalidEndpoint
+        }
+        let user = userID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let credential = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !user.isEmpty, !credential.isEmpty else { throw SandboxBrowserProfileError.signInRequired }
+        guard user.range(of: "^[A-Za-z0-9._-]{1,128}$", options: .regularExpression) != nil,
+              credential.range(of: "^[A-Za-z0-9._~-]{1,4096}$", options: .regularExpression) != nil else {
+            throw SandboxBrowserProfileError.invalidCredentials
+        }
+        self.url = apiBaseURL.appendingAPIPath("browser/profiles")
+        self.userID = user
+        self.token = credential
+        self.send = send ?? Self.sendBoundedRequest
+    }
+
+    func load() async throws -> [SandboxBrowserProfile] {
+        var request = URLRequest(url: url, timeoutInterval: 20)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == url.host else {
+            throw SandboxBrowserProfileError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else { throw SandboxBrowserProfileError.requestFailed(http.statusCode) }
+        if let length = http.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init), length > Self.responseByteLimit {
+            throw SandboxBrowserProfileError.responseTooLarge
+        }
+        guard data.count <= Self.responseByteLimit else { throw SandboxBrowserProfileError.responseTooLarge }
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawProfiles = root["profiles"] as? [Any], rawProfiles.count <= 16 else {
+            throw SandboxBrowserProfileError.invalidResponse
+        }
+
+        let profiles = try rawProfiles.map(Self.decodeProfile)
+        let customIDs = Set(profiles.map(\.id))
+        return profiles + SandboxBrowserProfile.defaults.filter { !customIDs.contains($0.id) }
+    }
+
+    private static func decodeProfile(_ value: Any) throws -> SandboxBrowserProfile {
+        guard let object = value as? [String: Any],
+              let id = boundedString(object["id"], maximumBytes: 80),
+              id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil,
+              let name = boundedString(object["name"], maximumBytes: 80), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawTools = object["tools"] as? [Any], rawTools.count <= 8 else {
+            throw SandboxBrowserProfileError.invalidResponse
+        }
+        let tools = try rawTools.map(decodeTool)
+        guard Set(tools.map(\.id)).count == tools.count else { throw SandboxBrowserProfileError.invalidResponse }
+        return SandboxBrowserProfile(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), tools: tools)
+    }
+
+    private static func decodeTool(_ value: Any) throws -> SandboxBrowserTool {
+        guard let object = value as? [String: Any],
+              let id = boundedString(object["id"], maximumBytes: 80),
+              id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil,
+              let name = boundedString(object["name"], maximumBytes: 80), !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawURL = boundedString(object["url"], maximumBytes: 600),
+              let components = URLComponents(string: rawURL),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              let url = components.url else {
+            throw SandboxBrowserProfileError.invalidResponse
+        }
+        let templateURL = url.absoluteString
+            .replacingOccurrences(of: "%7Burl%7D", with: "{url}", options: .caseInsensitive)
+            .replacingOccurrences(of: "%7BrawUrl%7D", with: "{rawUrl}", options: .caseInsensitive)
+        return SandboxBrowserTool(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines), url: templateURL)
+    }
+
+    private static func boundedString(_ value: Any?, maximumBytes: Int) -> String? {
+        guard let string = value as? String, string.utf8.count <= maximumBytes else { return nil }
+        return string
+    }
+
+    private static func sendBoundedRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCache = nil
+        let session = URLSession(configuration: configuration, delegate: SandboxBrowserProfileRedirectBlocker(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (bytes, response) = try await session.bytes(for: request)
+        if let length = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init), length > responseByteLimit {
+            throw SandboxBrowserProfileError.responseTooLarge
+        }
+        var data = Data()
+        data.reserveCapacity(min(responseByteLimit, 64 * 1_024))
+        for try await byte in bytes {
+            guard data.count < responseByteLimit else { throw SandboxBrowserProfileError.responseTooLarge }
+            data.append(byte)
+        }
+        return (data, response)
+    }
+}
+
 struct SandboxLiveConfiguration {
     let userID: String
     let token: String
@@ -53,6 +225,7 @@ struct SandboxLiveConfiguration {
     var locale = "en-US"
     var timezoneId = "UTC"
     var platform = "Linux x86_64"
+    var profileTools = SandboxBrowserProfile.defaults[0].tools
 }
 
 @MainActor
@@ -175,14 +348,21 @@ enum SandboxLiveProtocol {
               configuration.locale.utf8.count <= 64,
               configuration.timezoneId.utf8.count <= 128,
               configuration.platform.utf8.count <= 128,
-              !resumeToken.isEmpty, !clientID.isEmpty else {
+              !resumeToken.isEmpty, !clientID.isEmpty,
+              configuration.profileTools.count <= 8,
+              configuration.profileTools.allSatisfy({ tool in
+                  tool.id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil
+                      && !tool.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      && tool.name.utf8.count <= 80 && tool.url.utf8.count <= 600
+                      && (try? normalizedProfileToolURL(tool.url)) != nil
+              }), Set(configuration.profileTools.map(\.id)).count == configuration.profileTools.count else {
             throw SandboxLiveSessionError.invalidResponse
         }
         let payload: [String: Any] = [
             "type": "start", "sessionId": sessionID, "resumeToken": resumeToken,
             "network": network(for: target), "target": target.absoluteString,
             "durationSeconds": configuration.durationSeconds,
-            "profileTools": [], "userAgent": configuration.userAgent,
+            "profileTools": configuration.profileTools.map { ["id": $0.id, "name": $0.name, "url": $0.url] }, "userAgent": configuration.userAgent,
             "width": configuration.width, "height": configuration.height,
             "locale": configuration.locale, "timezoneId": configuration.timezoneId,
             "platform": configuration.platform, "clientId": clientID,
@@ -254,6 +434,14 @@ enum SandboxLiveProtocol {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         guard let text = String(data: data, encoding: .utf8) else { throw SandboxLiveSessionError.invalidResponse }
         return text
+    }
+
+    private static func normalizedProfileToolURL(_ value: String) throws -> URL {
+        guard let components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
+              let url = components.url else { throw SandboxLiveSessionError.invalidResponse }
+        return url
     }
 }
 
