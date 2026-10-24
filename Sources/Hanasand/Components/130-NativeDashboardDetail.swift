@@ -161,7 +161,7 @@ struct NativeDashboardDetail: View {
         case "/organizations/team":
             OrganizationMembersNativePanel()
         case "/ti":
-            ThreatIntelligenceNativePanel()
+            ThreatIntelligenceNativePanel(initialQuery: model.selectedNativeDashboardDetailID)
         case "/ti/overview":
             ThreatIntelligenceOverviewNativePanel(onOpenRoute: { path in
                 guard let route = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com\(path)") else { return }
@@ -314,7 +314,15 @@ struct NativeDashboardDetail: View {
         case "/system/rates":
             RateLimitsNativePanel()
         case "/profile":
-            ProfileNativePanel()
+            switch NativeProfileRoutePolicy.destination(
+                requestedUserID: model.selectedNativeDashboardDetailID,
+                authenticatedUserID: model.userIDForRequests
+            ) {
+            case .signedInAccount:
+                ProfileNativePanel()
+            case let .publicProfile(userID):
+                NativePublicProfilePanel(userID: userID)
+            }
         case "/management", "/users":
             UsersNativePanel()
         case "/role":
@@ -326,6 +334,10 @@ struct NativeDashboardDetail: View {
                 NativeShareWorkspacePanel(
                     alias: model.selectedNativeDashboardDetailID,
                     fileID: model.selectedNativeDashboardQuery["file"],
+                    initialPath: NativeShareWorkspaceRouteSelection.initialPath(
+                        explicitFileID: model.selectedNativeDashboardQuery["file"],
+                        routeSection: model.selectedNativeDashboardQuery["section"]
+                    ),
                     isProject: model.selectedNativeDashboardQuery["workspace"] == "project",
                     initialChatOpen: model.selectedNativeDashboardQuery["chat"] == "1",
                     createIfMissing: model.selectedNativeDashboardQuery["new"] == "1",

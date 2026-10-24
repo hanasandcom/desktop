@@ -285,6 +285,37 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(source?.query["scope"], "global")
     }
 
+    func testThreatSearchAndNestedShareRoutesReachTheirNativeConsumers() {
+        let threatSearch = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/ti/search")
+        XCTAssertEqual(threatSearch?.path, "/ti")
+        XCTAssertEqual(threatSearch?.detailID, "search")
+        XCTAssertEqual(
+            ThreatIntelligenceRouteSearch.panelInitialQuery(
+                routeInitialQuery: threatSearch?.detailID,
+                path: threatSearch?.path,
+                detailID: "",
+                query: nil
+            ),
+            "search"
+        )
+
+        let shareFile = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/s/share-1/src/main.swift")
+        XCTAssertEqual(shareFile?.path, "/s")
+        XCTAssertEqual(shareFile?.detailID, "share-1")
+        XCTAssertEqual(shareFile?.section, "src/main.swift")
+        XCTAssertNil(shareFile?.query["file"])
+
+        let projectFile = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/p/project-1/src/main.swift")
+        XCTAssertEqual(projectFile?.path, "/s")
+        XCTAssertEqual(projectFile?.detailID, "project-1")
+        XCTAssertEqual(projectFile?.section, "src/main.swift")
+        XCTAssertEqual(projectFile?.query["workspace"], "project")
+
+        let explicitFile = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/p/project-1/src/main.swift?file=file-9")
+        XCTAssertEqual(explicitFile?.section, "src/main.swift")
+        XCTAssertEqual(explicitFile?.query["file"], "file-9")
+    }
+
     func testAccountReturnAndResetTokensSurviveNativeRouteResolutionWithoutBeingDropped() {
         let login = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/login?path=%2Forganizations&expired=true")
         XCTAssertEqual(login?.path, "/login")

@@ -25,16 +25,28 @@ enum ThreatIntelligenceRouteSearch {
         let routeQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return routeQuery.isEmpty ? nil : routeQuery
     }
+
+    static func panelInitialQuery(routeInitialQuery: String?, path: String?, detailID: String, query: String? = nil) -> String? {
+        let routed = routeInitialQuery?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !routed.isEmpty { return routed }
+        return initialQuery(path: path, detailID: detailID, query: query)
+    }
 }
 
 struct ThreatIntelligenceNativePanel: View {
+    let initialQuery: String?
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var section: ThreatResultSection = .activity
     @State private var removingSearch: String?
 
+    init(initialQuery: String? = nil) {
+        self.initialQuery = initialQuery
+    }
+
     private var routeSearchQuery: String? {
-        ThreatIntelligenceRouteSearch.initialQuery(
+        ThreatIntelligenceRouteSearch.panelInitialQuery(
+            routeInitialQuery: initialQuery,
             path: model.selectedDashboardPath,
             detailID: model.selectedNativeDashboardDetailID,
             query: model.selectedNativeDashboardQuery["q"]

@@ -4,6 +4,32 @@ import XCTest
 @testable import Hanasand
 
 final class NativeShareWorkspaceClientTests: XCTestCase {
+    func testNestedShareRouteResolvesByPathAfterTreeLoadWithoutUsingIDsOrAliasesAsPaths() {
+        let tree = [NativeShareWorkspaceTreeItem(
+            id: "folder-1", name: "src", alias: "source-alias", parent: "root-1", type: "folder",
+            children: [NativeShareWorkspaceTreeItem(
+                id: "file-1", name: "main.swift", alias: "main-alias", parent: "folder-1", type: "file", children: nil
+            )]
+        )]
+
+        let selected = NativeShareWorkspaceRouteSelection.resolve(path: "src/main.swift", tree: tree, rootName: "Project")
+        XCTAssertEqual(selected?.id, "file-1")
+        XCTAssertNil(NativeShareWorkspaceRouteSelection.resolve(path: "file-1", tree: tree))
+        XCTAssertNil(NativeShareWorkspaceRouteSelection.resolve(path: "main-alias", tree: tree))
+        XCTAssertNil(NativeShareWorkspaceRouteSelection.resolve(path: "main.swift", tree: tree))
+        XCTAssertEqual(
+            NativeShareWorkspaceRouteSelection.resolve(path: "Project/src/main.swift", tree: tree, rootName: "Project")?.id,
+            "file-1"
+        )
+        XCTAssertNil(NativeShareWorkspaceRouteSelection.initialPath(explicitFileID: "file-9", routeSection: "src/main.swift"))
+        XCTAssertEqual(NativeShareWorkspaceRouteSelection.initialPath(explicitFileID: nil, routeSection: "src/main.swift"), "src/main.swift")
+    }
+
+    func testFolderSelectionAllowsMetadataActionsButNeverFileContentSave() {
+        XCTAssertTrue(NativeShareWorkspaceEditorPolicy.canSaveContent(isFolder: false))
+        XCTAssertFalse(NativeShareWorkspaceEditorPolicy.canSaveContent(isFolder: true))
+    }
+
     func testUnresolvedSaveConflictBlocksWorkspaceNavigationAndTreeMutations() {
         XCTAssertFalse(NativeShareWorkspaceInteractionPolicy.make(hasUnresolvedSaveConflict: true).allowsNavigationAndTreeMutations)
         XCTAssertTrue(NativeShareWorkspaceInteractionPolicy.make(hasUnresolvedSaveConflict: false).allowsNavigationAndTreeMutations)

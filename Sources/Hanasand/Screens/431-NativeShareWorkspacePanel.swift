@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NativeShareWorkspacePanel: View {
     let context: NativeShareWorkspaceContext
+    let initialPath: String?
     let onOpenChat: (() -> Void)?
 
     @EnvironmentObject private var model: DesktopAgentModel
@@ -23,11 +24,12 @@ struct NativeShareWorkspacePanel: View {
     @State private var baselineContent = ""
     @State private var saveConflict: NativeShareWorkspaceSaveConflict?
 
-    init(alias: String, fileID: String? = nil, isProject: Bool = false,
+    init(alias: String, fileID: String? = nil, initialPath: String? = nil, isProject: Bool = false,
          initialChatOpen: Bool = false, createIfMissing: Bool = false,
          onOpenChat: (() -> Void)? = nil) {
         context = NativeShareWorkspaceContext(alias: alias, fileID: fileID, isProject: isProject,
                                               initialChatOpen: initialChatOpen, createIfMissing: createIfMissing)
+        self.initialPath = initialPath
         self.onOpenChat = onOpenChat
         _selectedFileID = State(initialValue: fileID ?? "")
     }
@@ -39,6 +41,14 @@ struct NativeShareWorkspacePanel: View {
     private var canEdit: Bool {
         model.hasHanasandAuth && selectedFile?.locked != true
             && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
+    }
+    private var canSaveSelectedFileContent: Bool {
+        NativeShareWorkspaceEditorPolicy.canSaveContent(isFolder: selectedFile?.type == "folder")
+    }
+    private var loadIdentity: String {
+        [context.alias, context.fileID ?? "", context.isProject ? "project" : "share",
+         context.initialChatOpen ? "chat" : "", context.createIfMissing ? "create" : "", initialPath ?? ""]
+            .joined(separator: "\u{1f}")
     }
 
     var body: some View {
@@ -78,7 +88,7 @@ struct NativeShareWorkspacePanel: View {
                 }
             }
         }
-        .task(id: context) { await load() }
+        .task(id: loadIdentity) { await load() }
         .confirmationDialog(
             "Delete \(pendingDeleteItem?.name ?? "item")?",
             isPresented: Binding(get: { pendingDeleteItem != nil }, set: { if !$0 { pendingDeleteItem = nil } }),
@@ -161,7 +171,7 @@ struct NativeShareWorkspacePanel: View {
     }
 
     private var editorPanel: some View {
-        NativeGroupPanel(title: selectedFile?.displayName ?? "File editor", subtitle: selectedFile?.path ?? "Select a file from the tree") {
+        NativeGroupPanel(title: selectedFile?.type == "folder" ? "Folder details" : (selectedFile?.displayName ?? "File editor"), subtitle: selectedFile?.path ?? "Select a file from the tree") {
             if let selectedFile {
                 if let saveConflict, saveConflict.id == selectedFile.id {
                     NativeNotice(
@@ -202,21 +212,25 @@ struct NativeShareWorkspacePanel: View {
                             .disabled(isSaving || pendingMutation != nil || saveConflict != nil || draftPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                TextEditor(text: $draftContent)
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 350)
-                    .padding(7)
-                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .disabled(!canEdit || isSaving || saveConflict != nil || pendingMutation != nil)
-                HStack {
-                    if selectedFile.locked == true {
-                        Label("Locked", systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(theme.danger)
-                    } else if !model.hasHanasandAuth {
-                        Label("Read only · sign in to edit", systemImage: "lock.open").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                if selectedFile.type == "folder" {
+                    NativeNotice(message: "Folder selected. You can rename it or update its path; folders do not have editable file content.", title: "Folder")
+                } else {
+                    TextEditor(text: $draftContent)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minHeight: 350)
+                        .padding(7)
+                        .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .disabled(!canEdit || isSaving || saveConflict != nil || pendingMutation != nil)
+                    HStack {
+                        if selectedFile.locked == true {
+                            Label("Locked", systemImage: "lock.fill").font(.system(size: 11)).foregroundStyle(theme.danger)
+                        } else if !model.hasHanasandAuth {
+                            Label("Read only · sign in to edit", systemImage: "lock.open").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                        }
+                        Spacer()
+                        ActionButton(title: isSaving ? "Saving…" : "Save file", icon: "checkmark") { Task { await saveFile() } }
+                            .disabled(isSaving || isLoading || !canEdit || !canSaveSelectedFileContent || pendingMutation != nil || saveConflict != nil)
                     }
-                    Spacer()
-                    ActionButton(title: isSaving ? "Saving…" : "Save file", icon: "checkmark") { Task { await saveFile() } }
-                        .disabled(isSaving || isLoading || !canEdit || pendingMutation != nil || saveConflict != nil)
                 }
             } else {
                 NativeEmptyState(title: "Select a file", message: "Choose a file from the workspace tree to view its contents.")
@@ -236,7 +250,20 @@ struct NativeShareWorkspacePanel: View {
                 isProject: context.isProject, initialChatOpen: false,
                 createIfMissing: context.createIfMissing && workspace == nil)
             let loaded = try await client.load(context: requestContext)
-            apply(loaded)
+            if context.fileID == nil,
+               let initialPath,
+               let item = NativeShareWorkspaceRouteSelection.resolve(path: initialPath, tree: loaded.tree, rootName: loaded.root.name) {
+                let selected: NativeShareWorkspaceFile
+                if item.type == "folder" {
+                    selected = NativeShareWorkspaceFile(id: item.id, name: item.name, path: nil, alias: item.alias,
+                                                        content: nil, type: item.type, parent: item.parent, locked: nil)
+                } else {
+                    selected = try await client.loadFile(id: item.id)
+                }
+                apply(NativeShareWorkspace(root: loaded.root, tree: loaded.tree, selectedFile: selected))
+            } else {
+                apply(loaded)
+            }
             status = context.createIfMissing ? "Workspace created." : "Workspace loaded."
             if context.initialChatOpen && !didOpenChat {
                 didOpenChat = true
@@ -291,7 +318,7 @@ struct NativeShareWorkspacePanel: View {
     }
 
     @MainActor private func saveFile() async {
-        guard let selectedFile, pendingMutation == nil else { return }
+        guard let selectedFile, canSaveSelectedFileContent, pendingMutation == nil else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -572,4 +599,30 @@ struct NativeShareWorkspacePanel: View {
         }
         return walk(workspace?.tree ?? [])
     }
+}
+
+enum NativeShareWorkspaceRouteSelection {
+    static func initialPath(explicitFileID: String?, routeSection: String?) -> String? {
+        explicitFileID == nil ? routeSection : nil
+    }
+
+    static func resolve(path: String, tree: [NativeShareWorkspaceTreeItem], rootName: String? = nil) -> NativeShareWorkspaceTreeItem? {
+        var requested = path.split(separator: "/").map(String.init)
+        if let rootName, requested.first == rootName { requested.removeFirst() }
+        guard !requested.isEmpty else { return nil }
+
+        func walk(_ items: [NativeShareWorkspaceTreeItem], prefix: [String] = []) -> NativeShareWorkspaceTreeItem? {
+            for item in items {
+                let current = prefix + [item.name]
+                if current == requested { return item }
+                if let match = walk(item.children ?? [], prefix: current) { return match }
+            }
+            return nil
+        }
+        return walk(tree)
+    }
+}
+
+enum NativeShareWorkspaceEditorPolicy {
+    static func canSaveContent(isFolder: Bool) -> Bool { !isFolder }
 }
