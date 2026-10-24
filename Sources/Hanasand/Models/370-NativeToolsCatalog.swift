@@ -34,10 +34,27 @@ enum NativeToolsCatalog {
 
         return categories.compactMap { title, belongs in
             let matching = actions.filter { action in
-                belongs(action) && (searchableQuery.isEmpty || [action.title, action.subtitle, title]
-                    .contains { $0.localizedCaseInsensitiveContains(searchableQuery) })
+                guard belongs(action) else { return false }
+                guard !searchableQuery.isEmpty else { return true }
+                let searchTerms = [action.title, action.subtitle, title] + searchAliases(for: action)
+                return searchTerms.contains { $0.localizedCaseInsensitiveContains(searchableQuery) }
             }
             return matching.isEmpty ? nil : NativeToolsSection(title: title, actions: matching)
+        }
+    }
+
+    private static func searchAliases(for action: DesktopAction) -> [String] {
+        switch action.routePath {
+        case "/ti": ["Threat Search"]
+        case "/ti/profiles": ["Actors"]
+        case "/ti/sources": ["Feeds"]
+        case "/findings/actions": ["Delivery"]
+        case "/traffic/map": ["Live map"]
+        case "/pwned": ["Check Password"]
+        case "/support": ["Support Chats"]
+        case "/organization-privacy": ["Privacy & Retention"]
+        case "/api": ["API Docs"]
+        default: []
         }
     }
 }
