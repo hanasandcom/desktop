@@ -72,7 +72,7 @@ final class LogsRealtimeClientTests: XCTestCase {
     let apiBase = URL(string: "https://api.example.test/api")!
     let responseURL = try LogsRealtimeClient.requestURL(apiBaseURL: apiBase)
     let json =
-      #"{"rows":[{"id":"event-1","event_timestamp":"2026-10-23T09:20:00Z","normalized":{"severity":"critical","service":"api","host":"node-1","message":"Read only event"}}],"generated_at":"2026-10-23T09:20:01Z","next_cursor":"older-page","total_events":132}"#
+      #"{"rows":[{"id":"event-1","event_timestamp":"2026-10-23T09:20:00Z","normalized":{"severity":"critical","service":"api","host":"node-1","message":"Read only event","detections":[{"rule_id":"rule-42","summary":"Suspicious process","severity":"critical"},{"rule_id":"javascript:alert(1)","summary":"Unsafe link","severity":"high"}]}}],"generated_at":"2026-10-23T09:20:01Z","next_cursor":"older-page","total_events":132}"#
       .data(using: .utf8)!
     var captured: URLRequest?
     let client = try LogsRealtimeClient(
@@ -86,18 +86,20 @@ final class LogsRealtimeClientTests: XCTestCase {
     }
 
     let envelope = try await client.load()
+    XCTAssertEqual(envelope.rows.first?.detections, [
+      LogsDetection(id: "0:rule-42", ruleID: "rule-42", summary: "Suspicious process", severity: "critical")
+    ])
     XCTAssertEqual(captured?.httpMethod, "GET")
     XCTAssertEqual(captured?.url, responseURL)
     XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer opaque-token")
     XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "user-1")
     XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
-    XCTAssertEqual(
-      envelope.rows,
-      [
-        LogsRealtimeEvent(
-          id: "event-1", timestamp: "2026-10-23T09:20:00Z", severity: "critical", service: "api",
-          host: "node-1", message: "Read only event")
-      ])
+    XCTAssertEqual(envelope.rows.first?.id, "event-1")
+    XCTAssertEqual(envelope.rows.first?.timestamp, "2026-10-23T09:20:00Z")
+    XCTAssertEqual(envelope.rows.first?.severity, "critical")
+    XCTAssertEqual(envelope.rows.first?.service, "api")
+    XCTAssertEqual(envelope.rows.first?.host, "node-1")
+    XCTAssertEqual(envelope.rows.first?.message, "Read only event")
     XCTAssertEqual(envelope.nextCursor, "older-page")
     XCTAssertEqual(envelope.totalEvents, 132)
   }

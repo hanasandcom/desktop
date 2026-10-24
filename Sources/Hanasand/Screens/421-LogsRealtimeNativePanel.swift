@@ -233,6 +233,7 @@ struct LogsRealtimeNativePanel: View {
           .font(.system(size: 10, weight: .medium, design: .monospaced))
           .foregroundStyle(theme.textTertiary)
           .lineLimit(1)
+        detectionLinks(event.detections)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       Button {
@@ -254,6 +255,32 @@ struct LogsRealtimeNativePanel: View {
       RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(theme.divider, lineWidth: 1)
     )
     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+
+  @ViewBuilder
+  private func detectionLinks(_ detections: [LogsDetection]) -> some View {
+    if !detections.isEmpty {
+      VStack(alignment: .leading, spacing: 4) {
+        ForEach(detections) { detection in
+          Button {
+            model.openNativeDashboard(
+              path: "/rules/detail", label: "Rule: \(detection.summary)", detailID: detection.ruleID)
+          } label: {
+            Label(detection.summary, systemImage: "arrow.up.right.square")
+              .lineLimit(2)
+              .fixedSize(horizontal: false, vertical: true)
+              .padding(.horizontal, 7)
+              .padding(.vertical, 4)
+              .background(theme.cardRaised)
+              .clipShape(RoundedRectangle(cornerRadius: 6))
+          }
+          .buttonStyle(.plain)
+          .font(.system(size: 11, weight: .medium))
+          .foregroundStyle(theme.accent)
+          .accessibilityLabel("Open matched rule: \(detection.summary)")
+        }
+      }
+    }
   }
 
   private func poll() async {

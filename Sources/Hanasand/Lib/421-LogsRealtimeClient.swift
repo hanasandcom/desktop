@@ -8,6 +8,7 @@ struct LogsRealtimeEvent: Decodable, Identifiable, Equatable {
   let host: String
   let message: String
   let rawNormalized: APIReferenceJSONValue
+  var detections: [LogsDetection] { logsDetections(from: rawNormalized) }
 
   var copyJSON: String {
     let payload: [String: Any] = ["id": id, "event_timestamp": timestamp, "normalized": logsJSONFoundationValue(rawNormalized)]

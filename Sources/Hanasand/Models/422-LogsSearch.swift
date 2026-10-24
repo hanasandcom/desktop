@@ -47,6 +47,7 @@ struct LogsSearchEvent: Decodable, Identifiable, Equatable {
   let host: String
   let message: String
   let rawNormalized: APIReferenceJSONValue
+  var detections: [LogsDetection] { logsDetections(from: rawNormalized) }
 
   var copyJSON: String {
     let payload: [String: Any] = ["id": id, "event_timestamp": timestamp, "normalized": logsJSONFoundationValue(rawNormalized)]
@@ -100,6 +101,29 @@ struct LogsSearchEvent: Decodable, Identifiable, Equatable {
     value.unicodeScalars.contains {
       CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t"
     }
+  }
+}
+
+struct LogsDetection: Equatable, Identifiable {
+  let id: String
+  let ruleID: String
+  let summary: String
+  let severity: String
+}
+
+func logsDetections(from normalized: APIReferenceJSONValue) -> [LogsDetection] {
+  guard case .object(let fields) = normalized,
+        case .array(let entries)? = fields["detections"] else { return [] }
+  return entries.prefix(20).enumerated().compactMap { index, entry in
+    guard case .object(let fields) = entry,
+          case .string(let ruleID)? = fields["rule_id"],
+          ruleID.range(of: #"^[A-Za-z0-9_.:@-]{1,200}$"#, options: .regularExpression) != nil,
+          case .string(let summary)? = fields["summary"], summary.utf8.count <= 500,
+          !summary.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+          case .string(let severity)? = fields["severity"],
+          ["low", "medium", "high", "critical"].contains(severity.lowercased())
+    else { return nil }
+    return LogsDetection(id: "\(index):\(ruleID)", ruleID: ruleID, summary: summary, severity: severity.lowercased())
   }
 }
 

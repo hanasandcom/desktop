@@ -88,6 +88,7 @@ final class LogsSearchClientTests: XCTestCase {
   func testCopyJSONPreservesAllNormalizedEventFields() throws {
     let body = #"{"id":"event-1","event_timestamp":"2026-10-24T06:00:00Z","normalized":{"severity":"high","level":"error","log_type":"application","service":"api","host":"node-1","message":"request failed","process":{"executable":"worker","command_line":"worker --safe"},"detections":[{"rule_id":"r-1","summary":"matched","severity":"high"}]}}"#.data(using: .utf8)!
     let event = try JSONDecoder().decode(LogsSearchEvent.self, from: body)
+    XCTAssertEqual(event.detections, [LogsDetection(id: "0:r-1", ruleID: "r-1", summary: "matched", severity: "high")])
     let copied = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(event.copyJSON.utf8)) as? [String: Any])
     let normalized = try XCTUnwrap(copied["normalized"] as? [String: Any])
     XCTAssertEqual(normalized["process"] as? [String: String], ["executable": "worker", "command_line": "worker --safe"])
