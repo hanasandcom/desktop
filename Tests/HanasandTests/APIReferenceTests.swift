@@ -73,6 +73,17 @@ final class APIReferenceTests: XCTestCase {
         XCTAssertNil(APIReferenceSecurity.apiKeyScope(method: "GET", path: "/actors", operation: [], document: nil, serverURL: "https://api.example.test/api/v1"))
     }
 
+    func testCommonErrorSummaryIncludesOnlyKnownResponsesPresentInTheContract() throws {
+        let responseDocument = #"""
+        {"openapi":"3.1.0","info":{"title":"Example API","version":"1"},"paths":{},"components":{"responses":{"BadRequest":{"description":"The request is invalid."},"Unavailable":{"$ref":"#/components/responses/BadRequest"},"NotFound":{"description":"Not included in the common summary."}}}}
+        """#
+        let document = try APIReferenceDocument.decode(Data(responseDocument.utf8))
+
+        XCTAssertEqual(document.commonErrorResponses.map(\.name), ["BadRequest", "Unavailable"])
+        let resolved = document.resolvingComponentReferences(in: try XCTUnwrap(document.commonErrorResponses.last?.value))
+        XCTAssertEqual(resolved.objectValue?["description"], .string("The request is invalid."))
+    }
+
     func testResolvesNestedComponentReferencesInOperationDetails() throws {
         let document = try APIReferenceDocument.decode(Data(contract.utf8))
         let operation = try XCTUnwrap(document.operations.first?.operation)

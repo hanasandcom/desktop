@@ -24,6 +24,15 @@ struct APIReferenceDocument: Decodable {
     let components: [String: APIReferenceJSONValue]?
     let security: [APIReferenceJSONValue]?
 
+    var commonErrorResponses: [APIReferenceNamedResponse] {
+        let names = ["BadRequest", "Unauthorized", "Forbidden", "RateLimited", "InternalError", "Unavailable"]
+        guard case .object(let responses)? = components?["responses"] else { return [] }
+        return names.compactMap { name in
+            guard let value = responses[name] else { return nil }
+            return APIReferenceNamedResponse(name: name, value: value)
+        }
+    }
+
     struct Server: Decodable { let url: String }
 
     var operations: [APIReferenceOperationRow] {
@@ -112,6 +121,12 @@ struct APIReferenceDocument: Decodable {
               }) else { throw APIReferenceError.invalidDocument }
         return document
     }
+}
+
+struct APIReferenceNamedResponse: Identifiable {
+    let name: String
+    let value: APIReferenceJSONValue
+    var id: String { name }
 }
 
 struct APIReferenceOperation {

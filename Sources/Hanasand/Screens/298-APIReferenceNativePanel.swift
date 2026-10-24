@@ -47,6 +47,7 @@ struct APIReferenceNativePanel: View {
                         operationList(document: document, rows: reference.operationRows, isApplication: false)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    commonErrors(document)
                 case .applicationAPI:
                     NativeGroupPanel(title: "Application API", subtitle: "Website snapshot · \(APIReferenceSnapshot.current.documentationSource) · Fictional examples") {
                         Text("Application authentication applies. The source snapshot does not specify every endpoint access rule.")
@@ -85,6 +86,18 @@ struct APIReferenceNativePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { await reference.refresh(websiteBaseURL: appModel.settings.websiteBaseURL) }
         .onDisappear { reference.invalidate() }
+    }
+
+    @ViewBuilder
+    private func commonErrors(_ document: APIReferenceDocument) -> some View {
+        if !document.commonErrorResponses.isEmpty {
+            NativeGroupPanel(title: "Errors", subtitle: "Common API error responses") {
+                ForEach(document.commonErrorResponses) { response in
+                    jsonSection(response.name, document.resolvingComponentReferences(in: response.value))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
