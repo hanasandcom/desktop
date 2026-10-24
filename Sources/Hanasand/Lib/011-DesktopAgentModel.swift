@@ -156,7 +156,7 @@ final class DesktopAgentModel: ObservableObject {
 
     @Published var rateLimitOverrideMaxRequests = "60"; @Published var uploadFileURL: URL?; @Published var uploadName = ""; @Published var uploadDescription = ""
 
-    @Published var uploadPath = ""; @Published var uploadType = "application/octet-stream"; @Published var uploadStatus = "Choose a file to upload to the CDN."; @Published var uploadedFileURL = ""
+    @Published var uploadPath = ""; @Published var uploadType = "application/octet-stream"; @Published var uploadStatus = "Choose a file to upload to the CDN."; @Published var uploadedFileURL = ""; @Published var uploadedFileID = ""
 
     @Published var isUploadingFile = false; @Published var isCheckingUploadPath = false; @Published var uploadPathAvailable: Bool?; @Published var documentPages: [DesktopDocumentPage] = []
 

@@ -47,6 +47,32 @@ struct GalleryLibraryItem: Decodable, Identifiable, Hashable {
     let name: String?
     let type: String
     let isFavorite: Bool?
+    let uploadedAt: String?
+    let sizeBytes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, isFavorite, uploadedAt, sizeBytes
+    }
+
+    init(id: String, name: String?, type: String, isFavorite: Bool?, uploadedAt: String? = nil, sizeBytes: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.isFavorite = isFavorite
+        self.uploadedAt = uploadedAt
+        self.sizeBytes = sizeBytes
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decodeIfPresent(String.self, forKey: .name)
+        type = try values.decode(String.self, forKey: .type)
+        isFavorite = try values.decodeIfPresent(Bool.self, forKey: .isFavorite)
+        uploadedAt = try values.decodeIfPresent(String.self, forKey: .uploadedAt)
+        sizeBytes = (try? values.decodeIfPresent(Int.self, forKey: .sizeBytes))
+            ?? (try? values.decodeIfPresent(String.self, forKey: .sizeBytes).flatMap(Int.init))
+    }
 }
 
 struct GalleryLibraryPage: Equatable {

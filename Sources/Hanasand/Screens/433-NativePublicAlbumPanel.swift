@@ -109,8 +109,13 @@ struct NativePublicAlbumPanel: View {
             }
             if let selectedMedia, selectedMedia.isImage, let image = NSImage(data: selectedMedia.data) {
                 Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 620)
-            } else if item.type.hasPrefix("video/") {
-                NativeEmptyState(title: "Video shared", message: "The video is available from this public album, but this panel previews still images only.")
+            } else if let selectedMedia, selectedMedia.isVideo {
+                NativeVideoPreview(id: selectedMedia.id, data: selectedMedia.data,
+                                   fileExtension: URL(fileURLWithPath: selectedMedia.fileName).pathExtension)
+                    .frame(maxWidth: .infinity, minHeight: 260, maxHeight: 620)
+            } else if item.type.hasPrefix("video/"), selectedMedia == nil {
+                NativeEmptyState(title: error.isEmpty ? "Loading video" : "Video unavailable",
+                                 message: error.isEmpty ? "Fetching this shared video for native playback." : error)
             } else if selectedMedia == nil {
                 NativeEmptyState(title: "Image unavailable", message: "This image could not be decoded by the native image viewer.")
             }
@@ -174,7 +179,7 @@ struct NativePublicAlbumPanel: View {
     @MainActor private func open(_ item: NativePublicAlbumItem) async {
         selectedItem = item
         selectedMedia = nil
-        guard item.type.hasPrefix("image/") else { return }
+        guard item.type.hasPrefix("image/") || item.type.hasPrefix("video/") else { return }
         do {
             selectedMedia = try await makeClient().media(for: item)
             error = ""

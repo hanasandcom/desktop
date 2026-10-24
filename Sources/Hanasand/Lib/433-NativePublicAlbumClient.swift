@@ -121,7 +121,8 @@ struct NativePublicAlbumClient {
 
     func media(for item: NativePublicAlbumItem) async throws -> NativeCDNFilePreview {
         try item.validate()
-        return try await NativeCDNFilePreviewClient(baseURL: fileBaseURL).load(id: item.id)
+        let client = try NativeCDNFilePreviewClient(baseURL: fileBaseURL, sender: fileSender)
+        return try await client.load(id: item.id)
     }
 
     private static func validToken(_ value: String) -> Bool {

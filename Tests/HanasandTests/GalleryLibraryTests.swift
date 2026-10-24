@@ -35,10 +35,20 @@ final class GalleryLibraryTests: XCTestCase {
         XCTAssertEqual(query?.first(where: { $0.name == "limit" })?.value, "60")
         XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "60")
         XCTAssertEqual(query?.first(where: { $0.name == "search" })?.value, "blue sky & stars")
-        XCTAssertEqual(query?.first(where: { $0.name == "media" })?.value, "images")
+        XCTAssertNil(query?.first(where: { $0.name == "media" }), "The website gallery includes non-image files too")
         XCTAssertEqual(query?.first(where: { $0.name == "favorites" })?.value, "true")
         XCTAssertTrue(request?.url?.path.hasSuffix("/files/user/owner") == true)
         XCTAssertEqual(request?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+    }
+
+    func testLibraryDecodesVideoAndOptionalUploadMetadata() async throws {
+        let client = try GalleryAlbumClient(settings: settings) { request in
+            self.response(request, #"[{"id":"video-1","name":"Clip.mp4","type":"video/mp4","uploaded_at":"2026-10-20T12:00:00Z","size_bytes":"2048"}]"#)
+        }
+        let page = try await client.listLibraryPage()
+        XCTAssertEqual(page.items.first?.type, "video/mp4")
+        XCTAssertEqual(page.items.first?.uploadedAt, "2026-10-20T12:00:00Z")
+        XCTAssertEqual(page.items.first?.sizeBytes, 2048)
     }
 
     func testLibraryPagePaginationIsDerivedFromRawPageAndSearchIsBounded() async throws {

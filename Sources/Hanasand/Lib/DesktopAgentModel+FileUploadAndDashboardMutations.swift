@@ -23,14 +23,13 @@ extension DesktopAgentModel {
         append(meta: "Upload", body: "Copied \(uploadedFileURL)", kind: .command)
     }
 
-    func openUploadedFileURL() {
-        guard let url = URL(string: uploadedFileURL), !uploadedFileURL.isEmpty else {
-            uploadStatus = "No uploaded URL to open yet."
+    func openUploadedFileInDesktop() {
+        guard !uploadedFileID.isEmpty else {
+            uploadStatus = "The uploaded file preview is not available yet."
             return
         }
-        openURL(url.absoluteString, label: "Uploaded file")
-        uploadStatus = "Opened uploaded file."
-        append(meta: "Upload", body: url.absoluteString, kind: .command)
+        openNativeDashboard(path: "/cdn/files", label: "Uploaded file", detailID: uploadedFileID)
+        uploadStatus = "Opened the native file preview."
     }
 
     func selectUploadProviders(_ providers: [NSItemProvider]) -> Bool {
@@ -94,6 +93,7 @@ extension DesktopAgentModel {
             let uploaded = try JSONDecoder().decode(UploadedFileResponse.self, from: data)
             let destination = uploadedURL(for: uploaded)
             uploadedFileURL = destination
+            uploadedFileID = uploaded.id
             uploadStatus = "Uploaded \(uploadName) successfully."
             append(meta: "Upload", body: destination, kind: .change)
         } catch {

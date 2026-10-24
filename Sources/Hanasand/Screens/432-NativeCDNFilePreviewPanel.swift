@@ -37,7 +37,8 @@ struct NativeCDNFilePreviewPanel: View {
                     .frame(maxHeight: 520).padding(10)
                     .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 } else if file.isVideo {
-                    NativeEmptyState(title: "Video file ready", message: "Save a local copy to play this video in a native media app.")
+                    NativeVideoPreview(id: file.id, data: file.data, fileExtension: URL(fileURLWithPath: file.fileName).pathExtension)
+                        .frame(maxWidth: .infinity, minHeight: 260, maxHeight: 640)
                 } else if file.mediaType == "application/octet-stream" {
                     NativeEmptyState(title: "Downloadable file", message: "This CDN response is an attachment. Save a copy to open it with a native app.")
                 } else {
@@ -73,7 +74,8 @@ struct NativeCDNFilePreviewPanel: View {
             let client = try NativeCDNFilePreviewClient(baseURL: model.settings.cdnBaseURL.normalizedBaseURL,
                                                        userID: canSendAccountCookie ? settings.userID : "",
                                                        token: canSendAccountCookie ? settings.authToken : "")
-            file = try await client.load(id: fileID)
+            let loaded = try await client.load(id: fileID)
+            file = loaded
             error = ""
         } catch {
             file = nil

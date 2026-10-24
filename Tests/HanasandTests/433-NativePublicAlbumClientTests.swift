@@ -47,6 +47,25 @@ final class NativePublicAlbumClientTests: XCTestCase {
         XCTAssertEqual(image.fileName, "photo.webp")
     }
 
+    func testPublicVideoUsesNativeCDNMediaClientWithoutCredentials() async throws {
+        var captured: URLRequest?
+        let client = try makeClient(fileSender: { request in
+            captured = request
+            return (Data([0x00, 0x00, 0x00, 0x18]), self.response(for: request.url!, headers: [
+                "Content-Type": "video/mp4",
+                "Content-Disposition": "inline; filename=\"clip.mp4\"",
+            ]))
+        })
+
+        let video = try await client.media(for: NativePublicAlbumItem(id: "clip-1", name: "Clip", type: "video/mp4", uploadedAt: nil, photoTakenAt: nil, sizeBytes: 4))
+
+        XCTAssertEqual(captured?.url?.path, "/api/files/clip-1")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertTrue(video.isVideo)
+        XCTAssertEqual(video.fileName, "clip.mp4")
+    }
+
     func testRejectsInvalidTokenSearchAndMalformedAlbumRows() async throws {
         let client = try makeClient(pageSender: { request in
             (Data(Self.pageJSON.utf8), self.response(for: request.url!))

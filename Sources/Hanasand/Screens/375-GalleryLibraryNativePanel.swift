@@ -12,7 +12,7 @@ struct GalleryLibraryNativePanel: View {
     @State private var loading = false
     @State private var loadingMore = false
     @State private var error = ""
-    @State private var status = "Your private CDN image library"
+    @State private var status = "Your private CDN file library"
     @State private var activeRequest = UUID()
     @State private var favoritePending: [String: UUID] = [:]
     @State private var favoriteErrors: [String: String] = [:]
@@ -32,18 +32,21 @@ struct GalleryLibraryNativePanel: View {
     var body: some View {
         FeatureWorkspace(title: "Images", subtitle: status) {
             if !model.hasHanasandAuth {
-                NativeEmptyState(title: "Sign in to view images", message: "Your private image library uses the authenticated CDN session.")
+                NativeEmptyState(title: "Sign in to view your files", message: "Your private file library uses the authenticated CDN session.")
             } else if impersonating {
-                NativeEmptyState(title: "Return to your own account", message: "The private image library is unavailable while an impersonation token or target account is active.")
+                NativeEmptyState(title: "Return to your own account", message: "The private file library is unavailable while an impersonation token or target account is active.")
             } else {
-                NativeGroupPanel(title: "Your image library", subtitle: "Private files from your authenticated CDN account", fillsAvailableWidth: true) {
+                NativeGroupPanel(title: "Your file library", subtitle: "Private files from your authenticated CDN account", fillsAvailableWidth: true) {
                     HStack(spacing: 8) {
-                        TextField("Search images", text: $search)
+                        TextField("Search files", text: $search)
                             .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("Search images")
+                            .accessibilityLabel("Search private files")
                         Toggle("Favorites", isOn: $favoritesOnly)
                             .toggleStyle(.checkbox)
                             .fixedSize()
+                        ActionButton(title: "Upload media", icon: "arrow.up.to.line") {
+                            model.openNativeDashboard(path: "/upload", label: "Upload media")
+                        }
                         ActionButton(title: loading ? "Loading…" : "Refresh", icon: "arrow.clockwise") {
                             let request = UUID()
                             activeRequest = request
@@ -59,16 +62,16 @@ struct GalleryLibraryNativePanel: View {
                         }
                     }
                     if loading && files.isEmpty {
-                        NativeEmptyState(title: "Loading images", message: "Searching the signed-in account’s private image library.")
+                        NativeEmptyState(title: "Loading files", message: "Searching the signed-in account’s private CDN library.")
                     } else if files.isEmpty && error.isEmpty {
                         NativeEmptyState(
-                            title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !favoritesOnly ? "No images yet" : "No matching images",
+                            title: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !favoritesOnly ? "No files yet" : "No matching files",
                             message: search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !favoritesOnly
-                                ? "Images in your CDN account will appear here."
+                                ? "Upload a file to start your private CDN library."
                                 : "Try a different search or switch back to the full library."
                         )
                     } else if !files.isEmpty {
-                        Text("\(files.count) image\(files.count == 1 ? "" : "s") loaded\(hasMore ? " · more available" : "")")
+                        Text("\(files.count) file\(files.count == 1 ? "" : "s") loaded\(hasMore ? " · more available" : "")")
                             .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], alignment: .leading, spacing: 12) {
                             ForEach(files) { file in
@@ -90,8 +93,8 @@ struct GalleryLibraryNativePanel: View {
             files = []; offset = 0; hasMore = false; error = ""
             favoriteErrors = [:]; favoritePending = [:]
             preview = nil
-            status = "Loading your image library…"
-            guard !impersonating, model.hasHanasandAuth else { status = "Your private CDN image library"; return }
+            status = "Loading your file library…"
+            guard !impersonating, model.hasHanasandAuth else { status = "Your private CDN file library"; return }
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
             await loadPage(offset: 0, reset: true, request: request)
         }
@@ -104,18 +107,51 @@ struct GalleryLibraryNativePanel: View {
 
     private func libraryTile(_ file: GalleryLibraryItem) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Button { preview = file } label: {
-                GalleryLibraryThumbnail(settings: model.settings, file: file, sessionRevision: sessionRevision)
-                    .frame(height: 154)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Button {
+                if file.type.hasPrefix("image/") { preview = file }
+                else { openFile(file) }
+            } label: {
+                Group {
+                    if file.type.hasPrefix("image/") {
+                        GalleryLibraryThumbnail(settings: model.settings, file: file, sessionRevision: sessionRevision)
+                    } else {
+                        ZStack {
+                            theme.card
+                            Image(systemName: file.type.hasPrefix("video/") ? "video" : "doc")
+                                .font(.system(size: 34)).foregroundStyle(theme.textTertiary)
+                        }
+                    }
+                }
+                .frame(height: 154)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Preview \(file.name ?? "image")")
-            Text(file.name ?? "Untitled image")
+            .accessibilityLabel(file.type.hasPrefix("image/") ? "Preview \(file.name ?? "image")" : "Open \(file.name ?? "file")")
+            Text(file.name ?? "Untitled file")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
-                .lineLimit(1).help(file.name ?? "Untitled image")
+                .lineLimit(1).help(file.name ?? "Untitled file")
+            HStack(spacing: 5) {
+                Text(file.uploadedAt.map { formatDateText($0, fallback: "Date unavailable") } ?? file.type)
+                if let size = file.sizeBytes {
+                    Text("·")
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                }
+            }
+            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).lineLimit(1)
             HStack(spacing: 6) {
+                Button {
+                    copyFileURL(file)
+                } label: {
+                    Label("Copy link", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    openFile(file)
+                } label: {
+                    Label("Open", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.bordered)
                 Button {
                     Task { await toggleFavorite(file) }
                 } label: {
@@ -137,6 +173,20 @@ struct GalleryLibraryNativePanel: View {
         .padding(10)
         .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(theme.divider, lineWidth: 1))
+    }
+
+    private func openFile(_ file: GalleryLibraryItem) {
+        model.openNativeDashboard(path: "/cdn/files", label: file.name ?? "CDN file", detailID: file.id)
+    }
+
+    private func copyFileURL(_ file: GalleryLibraryItem) {
+        guard var components = URLComponents(url: model.settings.cdnBaseURL.normalizedBaseURL, resolvingAgainstBaseURL: false),
+              let encodedID = file.id.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) else { return }
+        components.percentEncodedPath = "/files/\(encodedID)"
+        guard let url = components.url, url.scheme == "https", url.host == model.settings.cdnBaseURL.normalizedBaseURL.host else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        status = "File link copied"
     }
 
     @MainActor private func loadPage(offset requestedOffset: Int, reset: Bool, request: UUID) async {
@@ -165,7 +215,7 @@ struct GalleryLibraryNativePanel: View {
         } catch {
             guard request == activeRequest else { return }
             self.error = error.localizedDescription
-            status = "Image library needs attention"
+            status = "File library needs attention"
         }
     }
 

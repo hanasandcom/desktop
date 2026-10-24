@@ -81,9 +81,8 @@ extension DesktopAgentModel {
     }
 
     func createShortcutLink() async {
-        let id = linkDraftID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let path = linkDraftPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty, isValidShortcutDestination(path) else {
+        guard let id = ShortcutLinkValidation.identifier(linkDraftID),
+              let path = ShortcutLinkValidation.destination(linkDraftPath) else {
             nativeDashboardStatus = "Add a shortcut id and a valid destination."
             append(meta: "Link", body: nativeDashboardStatus, kind: .error)
             return
@@ -109,7 +108,7 @@ extension DesktopAgentModel {
     }
 
     func lookupShortcutLink() async -> DashboardShortcutLink? {
-        guard let id = NativeRouteSelection.resolve(linkLookupID, among: [linkLookupID]) else {
+        guard let id = ShortcutLinkValidation.identifier(linkLookupID) else {
             nativeDashboardStatus = "Enter a valid shortcut id first."
             return nil
         }
@@ -133,9 +132,8 @@ extension DesktopAgentModel {
     }
 
     func updateShortcutLink() async {
-        let id = (linkLookupResult?.id ?? linkDraftID).trimmingCharacters(in: .whitespacesAndNewlines)
-        let path = linkDraftPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty, isValidShortcutDestination(path) else {
+        guard let id = ShortcutLinkValidation.identifier(linkLookupResult?.id ?? linkDraftID),
+              let path = ShortcutLinkValidation.destination(linkDraftPath) else {
             nativeDashboardStatus = "Load a shortcut and enter a valid destination."
             append(meta: "Link update", body: nativeDashboardStatus, kind: .error)
             return

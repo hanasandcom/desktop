@@ -166,13 +166,12 @@ struct GalleryAlbumClient {
         components.queryItems = [
             URLQueryItem(name: "limit", value: "60"),
             URLQueryItem(name: "offset", value: String(offset)),
-            URLQueryItem(name: "search", value: term),
-            URLQueryItem(name: "media", value: "images")
+            URLQueryItem(name: "search", value: term)
         ]
         if favorites { components.queryItems?.append(URLQueryItem(name: "favorites", value: "true")) }
         guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
         let rows = try await decode([GalleryLibraryItem].self, path: String(path.dropFirst()))
-        guard rows.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 128 && $0.type.hasPrefix("image/") }) else {
+        guard rows.allSatisfy({ !$0.id.isEmpty && $0.id.count <= 128 && !$0.type.isEmpty }) else {
             throw GalleryAlbumClientError.invalidResponse
         }
         return GalleryLibraryPage(items: rows, nextOffset: offset + rows.count, hasMore: rows.count == 60)

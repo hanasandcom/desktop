@@ -78,8 +78,8 @@ struct UploadNativePanel: View {
                                 .textSelection(.enabled)
                                 .lineLimit(1)
                             Spacer()
-                            ActionButton(title: "Open", icon: "arrow.up.right.square") {
-                                model.openUploadedFileURL()
+                            ActionButton(title: "Preview in Desktop", icon: "macwindow") {
+                                model.openUploadedFileInDesktop()
                             }
                             ActionButton(title: "Copy URL", icon: "doc.on.doc") {
                                 model.copyUploadedFileURL()

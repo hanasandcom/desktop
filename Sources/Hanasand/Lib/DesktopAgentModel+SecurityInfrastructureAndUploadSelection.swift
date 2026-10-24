@@ -218,6 +218,7 @@ extension DesktopAgentModel {
         }
         uploadPathAvailable = nil
         uploadedFileURL = ""
+        uploadedFileID = ""
         uploadStatus = "Ready to upload \(url.lastPathComponent)."
     }
 
@@ -229,6 +230,7 @@ extension DesktopAgentModel {
         uploadType = "application/octet-stream"
         uploadPathAvailable = nil
         uploadedFileURL = ""
+        uploadedFileID = ""
         uploadStatus = "Choose a file to upload to the CDN."
     }
 }
