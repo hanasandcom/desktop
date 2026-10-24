@@ -14,10 +14,12 @@ struct UploadNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State var isDropTargeted = false
+    @State private var remoteMediaURL = ""
+    @State private var isImportingRemoteMedia = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), alignment: .leading)], alignment: .leading, spacing: 8) {
                 ActionButton(title: "Choose file", icon: "doc.badge.plus") {
                     model.chooseUploadFile()
                 }
@@ -38,14 +40,38 @@ struct UploadNativePanel: View {
                 }
             }
 
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 10) {
                 FeatureCard(title: "File", value: model.uploadFileURL?.lastPathComponent ?? "None", icon: "doc")
                 FeatureCard(title: "Type", value: model.uploadType, icon: "tag")
                 FeatureCard(title: "Path", value: uploadPathStatus, icon: "point.topleft.down.curvedto.point.bottomright.up")
             }
 
-            NativeGroupPanel(title: isDropTargeted ? "Drop file to upload" : "CDN upload", subtitle: "Native /files upload contract") {
+            NativeGroupPanel(title: isDropTargeted ? "Drop file to review" : "Review public media", subtitle: "Files are published to a public CDN") {
                 VStack(alignment: .leading, spacing: 10) {
+                    Text("Only publish media that can be shared outside your organization. Images and videos must be 20 MiB or smaller.")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        TextField("Paste a direct image or video URL", text: $remoteMediaURL)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 10)
+                            .frame(height: 34)
+                            .background(theme.field)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        ActionButton(title: isImportingRemoteMedia ? "Importing" : "Import", icon: "arrow.down.doc") {
+                            Task { await importRemoteMedia() }
+                        }
+                        .disabled(remoteMediaURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isImportingRemoteMedia)
+                    }
+                    if isImportingRemoteMedia { ProgressView("Fetching through Hanasand media proxy…") }
+                    if let fileURL = model.uploadFileURL {
+                        Text("Review: \(fileURL.lastPathComponent) · \(fileSizeDescription(fileURL))")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                            .textSelection(.enabled)
+                    }
                     field("Name", text: $model.uploadName, placeholder: "Filename shown on the CDN")
                     field("Path", text: $model.uploadPath, placeholder: "optional-short-path")
                         .onChange(of: model.uploadPath) { _, _ in
@@ -95,6 +121,37 @@ struct UploadNativePanel: View {
                 model.selectUploadProviders(providers)
             }
         }
+    }
+
+    @MainActor
+    private func importRemoteMedia() async {
+        let value = remoteMediaURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        isImportingRemoteMedia = true
+        defer { isImportingRemoteMedia = false }
+        model.uploadStatus = "Fetching media through the authenticated Hanasand proxy…"
+        do {
+            let client = try NativePublicMediaImportClient(websiteBaseURL: model.settings.websiteBaseURL,
+                                                           userID: model.userIDForRequests,
+                                                           token: model.authTokenForRequests)
+            let imported = try await client.fetch(value)
+            let ext = URL(fileURLWithPath: imported.fileName).pathExtension
+            let safeExtension = ext.isEmpty ? UTType(imported.mediaType)?.preferredFilenameExtension ?? "media" : ext
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hanasand-public-media-\(UUID().uuidString).\(safeExtension)")
+            try imported.data.write(to: destination, options: .atomic)
+            model.selectUploadFile(destination)
+            model.uploadName = imported.fileName
+            model.uploadType = imported.mediaType
+            model.uploadStatus = "Imported for review. Confirm the public-sharing notice before uploading."
+        } catch {
+            model.uploadStatus = error.localizedDescription
+        }
+    }
+
+    private func fileSizeDescription(_ url: URL) -> String {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]), let bytes = values.fileSize else { return "size unavailable" }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
     var uploadPathStatus: String {

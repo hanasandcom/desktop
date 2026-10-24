@@ -75,6 +75,21 @@ extension DesktopAgentModel {
             return
         }
 
+        guard let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+            uploadStatus = "Choose a readable, non-empty file before uploading."
+            return
+        }
+        guard size <= NativePublicMediaImportLimits.maxBytes else {
+            uploadStatus = NativePublicMediaImportError.tooLarge.localizedDescription
+            return
+        }
+        guard let uploadAuthHeaders = NativePublicMediaImportClient.cdnUploadAuthenticationHeaders(
+            userID: userIDForRequests, token: authTokenForRequests
+        ) else {
+            uploadStatus = NativePublicMediaImportError.signInRequired.localizedDescription
+            return
+        }
+
         isUploadingFile = true
         defer { isUploadingFile = false }
 
@@ -87,9 +102,13 @@ extension DesktopAgentModel {
             request.httpBody = body
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
             request.setValue("application/json", forHTTPHeaderField: "Accept")
+            for (name, value) in uploadAuthHeaders { request.setValue(value, forHTTPHeaderField: name) }
 
             let (data, response) = try await URLSession.shared.data(for: request)
-            try validateHTTP(response)
+            guard let http = response as? HTTPURLResponse else { throw NativePublicMediaImportError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else {
+                throw NativePublicMediaImportError.uploadRecovery(status: http.statusCode)
+            }
             let uploaded = try JSONDecoder().decode(UploadedFileResponse.self, from: data)
             let destination = uploadedURL(for: uploaded)
             uploadedFileURL = destination
@@ -97,7 +116,7 @@ extension DesktopAgentModel {
             uploadStatus = "Uploaded \(uploadName) successfully."
             append(meta: "Upload", body: destination, kind: .change)
         } catch {
-            uploadStatus = "Upload failed: \(error.localizedDescription)"
+            uploadStatus = error.localizedDescription
             append(meta: "Upload", body: error.localizedDescription, kind: .error)
         }
     }
@@ -120,6 +139,8 @@ extension DesktopAgentModel {
     func multipartUploadBody(fileURL: URL, boundary: String) throws -> Data {
         var body = Data()
         let fileData = try Data(contentsOf: fileURL)
+        guard !fileData.isEmpty else { throw NativePublicMediaImportError.emptyMedia }
+        guard fileData.count <= NativePublicMediaImportLimits.maxBytes else { throw NativePublicMediaImportError.tooLarge }
         let fields: [(String, String)] = [
             ("name", uploadName.isEmpty ? fileURL.lastPathComponent : uploadName),
             ("description", uploadDescription),
