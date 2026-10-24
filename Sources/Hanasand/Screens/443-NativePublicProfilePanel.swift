@@ -23,6 +23,10 @@ private struct NativePublicProfile: Decodable {
         case createdAt = "created_at"
         case memberships = "organization_memberships"
     }
+
+    var displayName: String {
+        NativeProfilePresentation.displayName(name: name, username: username, id: id, active: active)
+    }
 }
 
 struct NativePublicProfilePanel: View {
@@ -39,12 +43,12 @@ struct NativePublicProfilePanel: View {
             if isLoading {
                 ProgressView("Loading profile…")
             } else if let profile {
-                NativeGroupPanel(title: profile.name?.isEmpty == false ? profile.name! : profile.id,
+                NativeGroupPanel(title: profile.displayName,
                                  subtitle: "@\(profile.username ?? profile.id)") {
                     HStack(alignment: .center, spacing: 12) {
                         profileAvatar(profile)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(profile.name?.isEmpty == false ? profile.name! : profile.username ?? profile.id)
+                            Text(profile.displayName)
                                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(theme.text)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text("@\(profile.username ?? profile.id)")
@@ -89,7 +93,7 @@ struct NativePublicProfilePanel: View {
     }
 
     @ViewBuilder private func profileAvatar(_ profile: NativePublicProfile) -> some View {
-        let displayName = profile.name?.isEmpty == false ? profile.name! : profile.username ?? profile.id
+        let displayName = profile.displayName
         let initials = displayName.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
         if profile.active != false, let url = avatarURL(profile.avatar) {
             AsyncImage(url: url) { phase in

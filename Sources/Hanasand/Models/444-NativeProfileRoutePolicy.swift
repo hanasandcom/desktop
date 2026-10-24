@@ -21,3 +21,16 @@ enum NativeProfileRoutePolicy {
         return normalized.isEmpty ? nil : normalized
     }
 }
+
+enum NativeProfilePresentation {
+    static func displayName(name: String?, username: String?, id: String, active: Bool?) -> String {
+        let usernameOrID = nonempty(username) ?? id
+        if active == false { return usernameOrID }
+        return nonempty(name) ?? usernameOrID
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+}
