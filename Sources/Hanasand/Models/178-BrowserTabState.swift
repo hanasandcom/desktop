@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
-final class BrowserTabState: NSObject, ObservableObject, WKNavigationDelegate, Identifiable {
+final class BrowserTabState: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, Identifiable {
     let id = UUID(); @Published var label: String; @Published var address = ""; @Published var title: String
 
     @Published var canGoBack = false; @Published var canGoForward = false; @Published var isLoading = false; @Published var progress = 0.0
@@ -37,6 +37,7 @@ final class BrowserTabState: NSObject, ObservableObject, WKNavigationDelegate, I
         super.init()
 
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         progressObservation = webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] view, _ in
             Task { @MainActor in
                 self?.progress = view.estimatedProgress

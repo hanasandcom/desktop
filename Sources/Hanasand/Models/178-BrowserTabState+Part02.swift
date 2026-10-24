@@ -112,6 +112,18 @@ extension BrowserTabState {
         decisionHandler(.cancel)
     }
 
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // Keep checkout and payment-provider popups in the app's embedded browser.
+        guard navigationAction.targetFrame == nil else { return nil }
+        webView.load(navigationAction.request)
+        return nil
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         updateNavigationState(webView)
     }
