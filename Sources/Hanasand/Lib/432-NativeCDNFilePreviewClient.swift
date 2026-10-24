@@ -40,7 +40,7 @@ struct NativeCDNFilePreviewClient {
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.httpShouldHandleCookies = false
-        request.setValue("image/*, video/*, application/octet-stream;q=0.5", forHTTPHeaderField: "Accept")
+        request.setValue("image/*, video/*, application/pdf, application/octet-stream;q=0.5", forHTTPHeaderField: "Accept")
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         if !userID.isEmpty {
             request.setValue("id=\(userID); access_token=\(token)", forHTTPHeaderField: "Cookie")
@@ -55,6 +55,9 @@ struct NativeCDNFilePreviewClient {
         }
         let mediaType = http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";", maxSplits: 1).first.map(String.init)?.lowercased() ?? ""
         guard Self.acceptedTypes.contains(mediaType) else { throw NativeCDNFilePreviewError.invalidResponse }
+        if mediaType == "application/pdf", NativeCDNFilePreviewLimits.validatedPDFPageCount(in: data) == nil {
+            throw NativeCDNFilePreviewError.invalidResponse
+        }
         let disposition = http.value(forHTTPHeaderField: "Content-Disposition") ?? ""
         return NativeCDNFilePreview(id: id, fileName: Self.fileName(from: disposition, fallback: id), mediaType: mediaType,
                                     data: data, disposition: disposition)
@@ -62,7 +65,7 @@ struct NativeCDNFilePreviewClient {
 
     private static let acceptedTypes: Set<String> = [
         "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/heic", "image/heif",
-        "video/mp4", "video/webm", "video/ogg", "application/octet-stream",
+        "video/mp4", "video/webm", "video/ogg", "application/pdf", "application/octet-stream",
     ]
 
     private static func fileName(from disposition: String, fallback: String) -> String {

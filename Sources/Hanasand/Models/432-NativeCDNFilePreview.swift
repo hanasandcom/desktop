@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 
 struct NativeCDNFilePreview: Equatable {
     let id: String
@@ -9,6 +10,7 @@ struct NativeCDNFilePreview: Equatable {
 
     var isImage: Bool { mediaType.hasPrefix("image/") }
     var isVideo: Bool { mediaType.hasPrefix("video/") }
+    var isPDF: Bool { mediaType == "application/pdf" }
     var textPreview: String? {
         let ext = URL(fileURLWithPath: fileName).pathExtension.lowercased()
         guard ["txt", "md", "json", "csv", "xml", "yaml", "yml", "log", "swift", "ts", "tsx", "js", "css", "html", "sh", "py"].contains(ext),
@@ -20,6 +22,16 @@ struct NativeCDNFilePreview: Equatable {
 enum NativeCDNFilePreviewLimits {
     static let responseBytes = 50 * 1024 * 1024
     static let identifierBytes = 200
+    static let pdfPages = 1_000
+
+    static func validatedPDFPageCount(in data: Data) -> Int? {
+        guard data.starts(with: Data("%PDF-".utf8)),
+              let document = PDFDocument(data: data),
+              !document.isLocked,
+              document.pageCount > 0,
+              document.pageCount <= pdfPages else { return nil }
+        return document.pageCount
+    }
 }
 
 enum NativeCDNFilePreviewError: LocalizedError, Equatable {

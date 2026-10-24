@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 
 struct NativeCDNFilePreviewPanel: View {
@@ -10,6 +11,7 @@ struct NativeCDNFilePreviewPanel: View {
     @State private var error = ""
     @State private var isLoading = false
     @State private var isSaving = false
+    @State private var pdfDocument: PDFDocument?
 
     var body: some View {
         NativeGroupPanel(title: "File preview", subtitle: file?.fileName ?? fileID) {
@@ -26,7 +28,14 @@ struct NativeCDNFilePreviewPanel: View {
                 }
             }
             if let file {
-                if file.isImage, let image = NSImage(data: file.data) {
+                if file.isPDF, let pdfDocument {
+                    NativeCDNPDFView(document: pdfDocument)
+                        .frame(maxWidth: .infinity, minHeight: 420, maxHeight: 720)
+                        .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .accessibilityLabel("PDF preview, \(pdfDocument.pageCount) pages")
+                } else if file.isPDF {
+                    NativeEmptyState(title: "PDF preview unavailable", message: "This PDF could not be opened safely. Save a copy to inspect it with another app.")
+                } else if file.isImage, let image = NSImage(data: file.data) {
                     Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 640)
                         .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 } else if let text = file.textPreview {
@@ -76,9 +85,11 @@ struct NativeCDNFilePreviewPanel: View {
                                                        token: canSendAccountCookie ? settings.authToken : "")
             let loaded = try await client.load(id: fileID)
             file = loaded
+            pdfDocument = loaded.isPDF ? PDFDocument(data: loaded.data) : nil
             error = ""
         } catch {
             file = nil
+            pdfDocument = nil
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
@@ -93,5 +104,26 @@ struct NativeCDNFilePreviewPanel: View {
         defer { isSaving = false }
         do { try file.data.write(to: url, options: .atomic) }
         catch { self.error = "Could not save this file: \(error.localizedDescription)" }
+    }
+}
+
+private struct NativeCDNPDFView: NSViewRepresentable {
+    let document: PDFDocument
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.displaysPageBreaks = true
+        view.backgroundColor = .windowBackgroundColor
+        view.document = document
+        return view
+    }
+
+    func updateNSView(_ view: PDFView, context: Context) {
+        if view.document !== document {
+            view.document = document
+        }
     }
 }

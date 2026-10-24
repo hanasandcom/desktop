@@ -45,6 +45,43 @@ final class NativeCDNFilePreviewTests: XCTestCase {
         XCTAssertEqual(preview.disposition, "attachment; filename=\"readme.md\"")
     }
 
+    func testLoadsAndValidatesNativePDFBytes() async throws {
+        var captured: URLRequest?
+        let fixture = Self.pdfFixture()
+        let client = try makeClient(userID: "reader", token: "private-token") { request in
+            captured = request
+            return (fixture, self.response(for: request.url!, headers: [
+                "Content-Type": "application/pdf; charset=binary",
+                "Content-Disposition": "inline; filename=\"report.pdf\"",
+            ]))
+        }
+
+        let preview = try await client.load(id: "private-pdf")
+
+        XCTAssertTrue(captured?.value(forHTTPHeaderField: "Accept")?.contains("application/pdf") == true)
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cookie"), "id=reader; access_token=private-token")
+        XCTAssertEqual(preview.mediaType, "application/pdf")
+        XCTAssertEqual(preview.fileName, "report.pdf")
+        XCTAssertTrue(preview.isPDF)
+        XCTAssertEqual(NativeCDNFilePreviewLimits.validatedPDFPageCount(in: preview.data), 1)
+    }
+
+    func testRejectsMalformedEmptyAndExcessivePagePDFs() throws {
+        XCTAssertNil(NativeCDNFilePreviewLimits.validatedPDFPageCount(in: Data("%PDF-not-a-document".utf8)))
+        XCTAssertNil(NativeCDNFilePreviewLimits.validatedPDFPageCount(in: Self.pdfFixture(pages: 0)))
+        XCTAssertNil(NativeCDNFilePreviewLimits.validatedPDFPageCount(in: Self.pdfFixture(pages: NativeCDNFilePreviewLimits.pdfPages + 1)))
+    }
+
+    func testClientRejectsMislabeledPDFAndNonPDFBytes() async throws {
+        let client = try makeClient { request in
+            (Data("<html>not a PDF</html>".utf8), self.response(for: request.url!, headers: ["Content-Type": "application/pdf"]))
+        }
+        do {
+            _ = try await client.load(id: "file-1")
+            XCTFail("PDF MIME responses must contain a parseable PDF document.")
+        } catch { XCTAssertEqual(error as? NativeCDNFilePreviewError, .invalidResponse) }
+    }
+
     func testRejectsUnsafeIDsUnsupportedMimeAndOversizedFiles() async throws {
         let client = try makeClient { request in
             (Data([1]), self.response(for: request.url!, headers: ["Content-Type": "text/html"]))
@@ -86,5 +123,26 @@ final class NativeCDNFilePreviewTests: XCTestCase {
 
     private func response(for url: URL, status: Int = 200, headers: [String: String] = [:]) -> HTTPURLResponse {
         HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
+    }
+
+    private static func pdfFixture(pages: Int = 1) -> Data {
+        var content = "%PDF-1.4\n"
+        var offsets = [Int]()
+        let pageKids = pages > 0 ? (0..<pages).map { "\($0 + 3) 0 R" }.joined(separator: " ") : ""
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [\(pageKids)] /Count \(pages) >>",
+        ] + (0..<pages).map { _ in
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << >> >>"
+        }
+        for (index, object) in objects.enumerated() {
+            offsets.append(content.utf8.count)
+            content += "\(index + 1) 0 obj\n\(object)\nendobj\n"
+        }
+        let xrefOffset = content.utf8.count
+        content += "xref\n0 \(objects.count + 1)\n0000000000 65535 f \n"
+        for offset in offsets { content += String(format: "%010d 00000 n \n", offset) }
+        content += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(xrefOffset)\n%%EOF\n"
+        return Data(content.utf8)
     }
 }
