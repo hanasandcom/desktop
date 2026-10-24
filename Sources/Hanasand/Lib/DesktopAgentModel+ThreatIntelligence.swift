@@ -14,6 +14,22 @@ private struct ThreatSearchPayload: Encodable { let query: String }
 private struct ThreatSavedSearchReceipt: Decodable { let savedSearch: ThreatSavedSearch?; let ok: Bool? }
 
 extension DesktopAgentModel {
+    var threatIntelligenceSearchScope: ThreatIntelligenceSearchScope {
+        ThreatIntelligenceSearchScope(
+            userID: userIDForRequests,
+            organizationID: settings.selectedOrganizationID,
+            websiteBaseURL: settings.websiteBaseURL,
+            apiBaseURL: settings.apiBaseURL,
+            routePath: selectedDashboardPath ?? "",
+            routeDetailID: selectedNativeDashboardDetailID,
+            routeQuery: selectedNativeDashboardQuery["q"] ?? ""
+        )
+    }
+
+    func cancelThreatIntelligenceSearch() {
+        isLoadingThreatSearch = false
+    }
+
     func loadThreatSavedSearches() async {
         guard hasHanasandAuth, settings.impersonationToken.isEmpty, settings.impersonatingUserID.isEmpty else {
             threatSavedSearches = []
@@ -28,17 +44,24 @@ extension DesktopAgentModel {
         } catch { threatSavedSearchStatus = "Could not load saved searches: \(error.localizedDescription)" }
     }
 
-    func searchThreatIntelligence(refresh: Bool = false) async {
+    @discardableResult
+    func searchThreatIntelligence(refresh: Bool = false, expectedScope: ThreatIntelligenceSearchScope? = nil) async -> Bool {
         let query = threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hasHanasandAuth else { threatSearchStatus = "Sign in to search threat intelligence."; return }
-        guard (2...200).contains(query.count) else { threatSearchStatus = "Enter a search between 2 and 200 characters."; return }
+        guard hasHanasandAuth else { threatSearchStatus = "Sign in to search threat intelligence."; return false }
+        guard (2...200).contains(query.count) else { threatSearchStatus = "Enter a search between 2 and 200 characters."; return false }
+        let requestScope = threatIntelligenceSearchScope
+        guard expectedScope == nil || expectedScope == requestScope else { return false }
         isLoadingThreatSearch = true
         threatSearchStatus = refresh ? "Refreshing threat intelligence" : "Searching threat intelligence"
-        defer { isLoadingThreatSearch = false }
+        defer { if !Task.isCancelled { isLoadingThreatSearch = false } }
         do {
             var components = URLComponents(url: settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), resolvingAgainstBaseURL: false)
             components?.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "cached", value: refresh ? "false" : "true")]
             let result: ThreatIntelSearchResult = try await requestJSON(components?.url ?? settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), authenticated: true)
+            guard !Task.isCancelled,
+                  threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare(query) == .orderedSame,
+                  threatIntelligenceSearchScope == requestScope,
+                  expectedScope == nil || expectedScope == threatIntelligenceSearchScope else { return false }
             guard result.query.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare(query) == .orderedSame else {
                 throw ThreatIntelClientError.invalidResponse
             }
@@ -46,7 +69,14 @@ extension DesktopAgentModel {
             threatSearchQuery = result.query
             threatSearchResultLimit = 20
             threatSearchStatus = result.status == "unavailable" ? "Threat intelligence is temporarily unavailable." : "Loaded \(result.query)"
-        } catch { threatSearchStatus = "Could not search threat intelligence: \(error.localizedDescription)" }
+            return true
+        } catch {
+            guard !Task.isCancelled,
+                  threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare(query) == .orderedSame,
+                  threatIntelligenceSearchScope == requestScope else { return false }
+            threatSearchStatus = "Could not search threat intelligence: \(error.localizedDescription)"
+            return false
+        }
     }
 
     func changeThreatSavedSearch(_ query: String, save: Bool) async {

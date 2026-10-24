@@ -1,5 +1,67 @@
 import Foundation
 
+struct ThreatIntelligenceSearchScope: Equatable {
+    let userID: String
+    let organizationID: String
+    let websiteBaseURL: String
+    let apiBaseURL: String
+    let routePath: String
+    let routeDetailID: String
+    let routeQuery: String
+}
+
+struct ThreatSearchPollingBudget {
+    static let maximumRefreshes = 5
+    static let minimumIntervalSeconds = 3
+    static let maximumIntervalSeconds = 60
+
+    private let normalizedQuery: String
+    private let scope: ThreatIntelligenceSearchScope
+    private(set) var remainingRefreshes = maximumRefreshes
+
+    init(query: String, scope: ThreatIntelligenceSearchScope) {
+        normalizedQuery = Self.normalize(query)
+        self.scope = scope
+    }
+
+    mutating func nextIntervalSeconds(
+        resultQuery: String,
+        resultStatus: String,
+        refreshAfterSeconds: Int,
+        currentQuery: String,
+        currentScope: ThreatIntelligenceSearchScope
+    ) -> Int? {
+        guard scope == currentScope,
+              normalizedQuery == Self.normalize(currentQuery),
+              normalizedQuery == Self.normalize(resultQuery),
+              remainingRefreshes > 0,
+              let interval = Self.intervalSeconds(status: resultStatus, refreshAfterSeconds: refreshAfterSeconds) else {
+            return nil
+        }
+        remainingRefreshes -= 1
+        return interval
+    }
+
+    mutating func cancel() {
+        remainingRefreshes = 0
+    }
+
+    static func intervalSeconds(status: String, refreshAfterSeconds: Int) -> Int? {
+        guard !isTerminalStatus(status),
+              refreshAfterSeconds > 0 else { return nil }
+        return min(maximumIntervalSeconds, max(minimumIntervalSeconds, refreshAfterSeconds))
+    }
+
+    static func isTerminalStatus(_ status: String) -> Bool {
+        ["ready", "unavailable", "blocked_unsafe_target"]
+            .contains(status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    private static func normalize(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 struct ThreatIntelSearchResult: Decodable {
     struct Candidate: Decodable, Identifiable {
         var id: String { "\(name):\(url?.absoluteString ?? "")" }

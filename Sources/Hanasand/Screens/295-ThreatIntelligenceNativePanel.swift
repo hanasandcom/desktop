@@ -17,6 +17,19 @@ private enum ThreatResultSection: String, CaseIterable {
     case targets = "Targets"
 }
 
+private struct ThreatSearchRequest: Equatable {
+    let id: UUID
+    let query: String
+    let refresh: Bool
+    let scope: ThreatIntelligenceSearchScope
+}
+
+private struct ThreatSearchTaskKey: Equatable {
+    let requestID: UUID?
+    let scope: ThreatIntelligenceSearchScope
+    let isActive: Bool
+}
+
 enum ThreatIntelligenceRouteSearch {
     static func initialQuery(path: String?, detailID: String, query: String? = nil) -> String? {
         guard path == "/ti" else { return nil }
@@ -37,8 +50,12 @@ struct ThreatIntelligenceNativePanel: View {
     let initialQuery: String?
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @State private var section: ThreatResultSection = .activity
     @State private var removingSearch: String?
+    @State private var searchRequest: ThreatSearchRequest?
+    @State private var viewIsVisible = false
+    @State private var autoRefreshNotice: String?
 
     init(initialQuery: String? = nil) {
         self.initialQuery = initialQuery
@@ -54,6 +71,14 @@ struct ThreatIntelligenceNativePanel: View {
     }
 
     private var result: ThreatIntelSearchResult? { model.threatSearchResult }
+    private var currentSearchScope: ThreatIntelligenceSearchScope { model.threatIntelligenceSearchScope }
+    private var searchTaskKey: ThreatSearchTaskKey {
+        ThreatSearchTaskKey(
+            requestID: searchRequest?.id,
+            scope: currentSearchScope,
+            isActive: viewIsVisible && scenePhase == .active
+        )
+    }
     private var rowsRemaining: Int {
         guard let result else { return 0 }
         switch section {
@@ -69,19 +94,18 @@ struct ThreatIntelligenceNativePanel: View {
             NativeGroupPanel(title: "Threat intelligence search", subtitle: "Search actor, domain, CVE, or organization evidence") {
                 TextField("Actor, domain, CVE, or organization", text: $model.threatSearchQuery)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit { Task { await model.searchThreatIntelligence() } }
-                HStack(spacing: 8) {
-                    ActionButton(title: model.isLoadingThreatSearch ? "Searching…" : "Search", icon: "magnifyingglass") {
-                        Task { await model.searchThreatIntelligence() }
+                    .onSubmit { beginSearch(query: model.threatSearchQuery) }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        searchButton
+                        clearButton
+                        if model.isLoadingThreatSearch { ProgressView().controlSize(.small) }
                     }
-                    .disabled(model.isLoadingThreatSearch || model.threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
-                    ActionButton(title: "Clear", icon: "xmark") {
-                        model.threatSearchQuery = ""
-                        model.threatSearchResult = nil
-                        model.threatSearchStatus = ""
-                        model.threatSearchResultLimit = 20
+                    VStack(alignment: .leading, spacing: 8) {
+                        searchButton
+                        clearButton
+                        if model.isLoadingThreatSearch { ProgressView().controlSize(.small) }
                     }
-                    if model.isLoadingThreatSearch { ProgressView().controlSize(.small) }
                 }
                 if !model.threatSearchStatus.isEmpty { Text(model.threatSearchStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled) }
             }
@@ -96,8 +120,7 @@ struct ThreatIntelligenceNativePanel: View {
                         ForEach(model.threatSavedSearches) { item in
                             HStack(spacing: 6) {
                                 Button(item.query) {
-                                    model.threatSearchQuery = item.query
-                                    Task { await model.searchThreatIntelligence() }
+                                    beginSearch(query: item.query)
                                 }
                                 .buttonStyle(.bordered)
                                 Button { removingSearch = item.query } label: { Image(systemName: "xmark.circle") }
@@ -124,10 +147,39 @@ struct ThreatIntelligenceNativePanel: View {
                 NativeEmptyState(title: "Search for threat intelligence", message: "Search the Hanasand intelligence catalogue and review source-backed activity.")
             }
         }
-        .task(id: routeSearchQuery) {
-            guard let query = routeSearchQuery else { return }
-            model.threatSearchQuery = query
-            await model.searchThreatIntelligence()
+        .onAppear {
+            viewIsVisible = true
+            if let query = routeSearchQuery { beginSearch(query: query) }
+        }
+        .onDisappear {
+            viewIsVisible = false
+            stopAutomaticRefresh(notice: nil)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                stopAutomaticRefresh(notice: "Automatic refresh stopped while the app is inactive. Select Refresh result to continue.")
+            }
+        }
+        .onChange(of: currentSearchScope) { _, _ in
+            stopAutomaticRefresh(notice: nil)
+            model.threatSearchResult = nil
+            model.threatSearchStatus = ""
+            if viewIsVisible, scenePhase == .active, let query = routeSearchQuery { beginSearch(query: query) }
+        }
+        .onChange(of: model.threatSearchQuery) { _, query in
+            let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if let request = searchRequest, normalized != request.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                stopAutomaticRefresh(notice: nil)
+            }
+            if let result, normalized != result.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                model.threatSearchResult = nil
+            }
+        }
+        .task(id: searchTaskKey) {
+            guard let request = searchRequest,
+                  request.scope == currentSearchScope,
+                  viewIsVisible, scenePhase == .active else { return }
+            await searchAndRefresh(request)
         }
         .confirmationDialog("Remove saved search?", isPresented: Binding(get: { removingSearch != nil }, set: { if !$0 { removingSearch = nil } }), titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -137,6 +189,85 @@ struct ThreatIntelligenceNativePanel: View {
             }
             Button("Cancel", role: .cancel) { removingSearch = nil }
         } message: { Text(removingSearch ?? "") }
+    }
+
+    private var searchButton: some View {
+        ActionButton(title: model.isLoadingThreatSearch ? "Searching…" : "Search", icon: "magnifyingglass") {
+            beginSearch(query: model.threatSearchQuery)
+        }
+        .disabled(model.isLoadingThreatSearch || model.threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+    }
+
+    private var clearButton: some View {
+        ActionButton(title: "Clear", icon: "xmark") {
+            stopAutomaticRefresh(notice: nil)
+            model.threatSearchQuery = ""
+            model.threatSearchResult = nil
+            model.threatSearchStatus = ""
+            model.threatSearchResultLimit = 20
+        }
+    }
+
+    private func beginSearch(query rawQuery: String, refresh: Bool = false) {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (2...200).contains(query.count) else {
+            model.threatSearchStatus = "Enter a search between 2 and 200 characters."
+            return
+        }
+        if searchRequest != nil { stopAutomaticRefresh(notice: nil) }
+        model.threatSearchQuery = query
+        autoRefreshNotice = nil
+        searchRequest = ThreatSearchRequest(id: UUID(), query: query, refresh: refresh, scope: currentSearchScope)
+    }
+
+    private func stopAutomaticRefresh(notice: String?) {
+        if searchRequest != nil { model.cancelThreatIntelligenceSearch() }
+        searchRequest = nil
+        autoRefreshNotice = notice
+    }
+
+    @MainActor
+    private func searchAndRefresh(_ request: ThreatSearchRequest) async {
+        var budget = ThreatSearchPollingBudget(query: request.query, scope: request.scope)
+        guard await model.searchThreatIntelligence(refresh: request.refresh, expectedScope: request.scope),
+              isCurrent(request) else { return }
+
+        while isCurrent(request), let result = model.threatSearchResult {
+            guard let delay = budget.nextIntervalSeconds(
+                resultQuery: result.query,
+                resultStatus: result.status,
+                refreshAfterSeconds: result.refreshAfterSeconds,
+                currentQuery: model.threatSearchQuery,
+                currentScope: currentSearchScope
+            ) else {
+                if !ThreatSearchPollingBudget.isTerminalStatus(result.status) {
+                    autoRefreshNotice = budget.remainingRefreshes == 0
+                        ? "Automatic refresh paused after \(ThreatSearchPollingBudget.maximumRefreshes) attempts. Select Refresh result to try again."
+                        : "This search is still processing. Select Refresh result to check again."
+                }
+                return
+            }
+
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { return }
+            guard isCurrent(request) else { return }
+            autoRefreshNotice = "Checking for updated threat evidence…"
+            guard await model.searchThreatIntelligence(refresh: true, expectedScope: request.scope),
+                  isCurrent(request) else {
+                if isCurrent(request) {
+                    autoRefreshNotice = "Automatic refresh failed. Select Refresh result to try again."
+                }
+                return
+            }
+            autoRefreshNotice = nil
+        }
+    }
+
+    private func isCurrent(_ request: ThreatSearchRequest) -> Bool {
+        !Task.isCancelled && searchRequest?.id == request.id &&
+            request.scope == currentSearchScope && viewIsVisible && scenePhase == .active &&
+            request.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ==
+                model.threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     @ViewBuilder private func resultView(_ result: ThreatIntelSearchResult) -> some View {
@@ -157,12 +288,20 @@ struct ThreatIntelligenceNativePanel: View {
             }
             ForEach(Array(result.notes.enumerated()), id: \.offset) { _, note in Text(note).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled) }
             HStack(spacing: 8) {
-                ActionButton(title: "Refresh result", icon: "arrow.clockwise") { Task { await model.searchThreatIntelligence(refresh: true) } }
+                ActionButton(title: "Refresh result", icon: "arrow.clockwise") {
+                    beginSearch(query: result.query, refresh: true)
+                }
                     .disabled(model.isLoadingThreatSearch)
-                ForEach(ThreatResultSection.allCases, id: \.self) { value in
-                    FilterChip(title: sectionTitle(value, result), active: section == value) { section = value; model.threatSearchResultLimit = 20 }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { resultSectionFilters(result) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) { resultSectionFilters(result) }
+                        }
+                    }
                 }
             }
+            if let autoRefreshNotice { Text(autoRefreshNotice).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary) }
         }
 
         NativeGroupPanel(title: section.rawValue, subtitle: "Showing \(min(rowsRemaining, model.threatSearchResultLimit)) of \(rowsRemaining)") {
@@ -190,6 +329,15 @@ struct ThreatIntelligenceNativePanel: View {
                 if rowsRemaining > model.threatSearchResultLimit {
                     ActionButton(title: "Show 20 more", icon: "chevron.down") { model.threatSearchResultLimit += 20 }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder private func resultSectionFilters(_ result: ThreatIntelSearchResult) -> some View {
+        ForEach(ThreatResultSection.allCases, id: \.self) { value in
+            FilterChip(title: sectionTitle(value, result), active: section == value) {
+                section = value
+                model.threatSearchResultLimit = 20
             }
         }
     }
