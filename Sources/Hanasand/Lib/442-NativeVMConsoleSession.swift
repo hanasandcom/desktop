@@ -26,6 +26,7 @@ final class NativeVMConsoleSession: ObservableObject {
     }()
 
     @Published private(set) var terminal = NativeTerminalBuffer()
+    @Published private(set) var bootLog = NativeVMBootLog()
     @Published private(set) var status = "Disconnected"
     @Published private(set) var username = ""
     @Published private(set) var isConnected = false
@@ -67,6 +68,7 @@ final class NativeVMConsoleSession: ObservableObject {
         self.isImpersonating = isImpersonating
         self.provisioningFlow = provisioningFlow
         terminal.reset()
+        bootLog.clear()
         username = ""
     }
 
@@ -81,6 +83,7 @@ final class NativeVMConsoleSession: ObservableObject {
             return
         }
         terminal.reset()
+        bootLog.clear()
         totalOutputUnits = 0
         receiveTask = Task { [weak self] in
             guard let self else { return }
@@ -96,7 +99,7 @@ final class NativeVMConsoleSession: ObservableObject {
                 while !Task.isCancelled {
                     let message = try await task.receive()
                     guard case let .string(text) = message else { continue }
-                    handle(text)
+                    handleMessage(text)
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -106,6 +109,7 @@ final class NativeVMConsoleSession: ObservableObject {
                 socket?.cancel(with: .goingAway, reason: nil)
                 socket = nil
                 terminal.reset()
+                bootLog.clear()
             }
         }
     }
@@ -125,6 +129,7 @@ final class NativeVMConsoleSession: ObservableObject {
                 generation &+= 1
                 socket.cancel(with: .goingAway, reason: nil)
                 self.socket = nil
+                bootLog.clear()
             }
         }
         return true
@@ -157,6 +162,7 @@ final class NativeVMConsoleSession: ObservableObject {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
         terminal.reset()
+        bootLog.clear()
         isConnected = false
         isPreparing = false
         status = "Disconnected"
@@ -206,7 +212,7 @@ final class NativeVMConsoleSession: ObservableObject {
         status = "Opening console…"
     }
 
-    private func handle(_ raw: String) {
+    func handleMessage(_ raw: String) {
         guard raw.utf16.count <= 131_072 else { failSession("Terminal output exceeded the event limit. Reconnect to continue."); return }
         guard let data = raw.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -225,8 +231,10 @@ final class NativeVMConsoleSession: ObservableObject {
             acceptOutput(chunk)
         case "boot-output":
             guard let chunk = value["data"] as? String else { return }
-            acceptOutput(chunk)
-        case "boot-error", "error":
+            bootLog.append(chunk)
+        case "boot-error":
+            bootLog.recordError()
+        case "error":
             isConnected = false
             isPreparing = false
             generation &+= 1
@@ -234,6 +242,7 @@ final class NativeVMConsoleSession: ObservableObject {
             socket?.cancel(with: .goingAway, reason: nil)
             socket = nil
             terminal.reset()
+            bootLog.clear()
         case "closed":
             isConnected = false
             isPreparing = false
@@ -242,6 +251,7 @@ final class NativeVMConsoleSession: ObservableObject {
             socket?.cancel(with: .normalClosure, reason: nil)
             socket = nil
             terminal.reset()
+            bootLog.clear()
         default:
             break
         }
@@ -268,6 +278,7 @@ final class NativeVMConsoleSession: ObservableObject {
         socket?.cancel(with: .policyViolation, reason: nil)
         socket = nil
         terminal.reset()
+        bootLog.clear()
     }
 
     private static func message(type: String, value: String) throws -> String {

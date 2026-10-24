@@ -19,4 +19,26 @@ final class NativeVMConsoleTests: XCTestCase {
     func testConsoleRouteRejectsCompositeVMName() {
         XCTAssertNil(nativeVMConsoleWebSocketURL(apiBaseURL: "https://api.example.test/api", vmName: "cluster-1/node-2"))
     }
+
+    func testBootLogRetainsOnlyTheLatest32768Characters() {
+        var log = NativeVMBootLog()
+        log.append(String(repeating: "a", count: NativeVMBootLog.maximumCharacters) + "tail")
+
+        XCTAssertEqual(log.text.count, NativeVMBootLog.maximumCharacters)
+        XCTAssertTrue(log.text.hasSuffix("tail"))
+        XCTAssertEqual(log.status, "Boot output available.")
+    }
+
+    func testBootErrorIsASeparateNonfatalStatusAndClearResetsIt() {
+        var log = NativeVMBootLog()
+        log.append("kernel starting\n")
+        log.recordError()
+
+        XCTAssertEqual(log.text, "kernel starting\n")
+        XCTAssertEqual(log.status, "Boot log is unavailable; the guest console remains separate.")
+
+        log.clear()
+        XCTAssertTrue(log.text.isEmpty)
+        XCTAssertEqual(log.status, "Waiting for boot output.")
+    }
 }

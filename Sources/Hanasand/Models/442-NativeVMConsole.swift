@@ -1,5 +1,29 @@
 import Foundation
 
+struct NativeVMBootLog: Equatable {
+    static let maximumCharacters = 32_768
+
+    private(set) var text = ""
+    private(set) var status = "Waiting for boot output."
+
+    mutating func append(_ chunk: String) {
+        guard !chunk.isEmpty else { return }
+        text = String((text + chunk).suffix(Self.maximumCharacters))
+        if !status.hasPrefix("Boot error:") {
+            status = "Boot output available."
+        }
+    }
+
+    mutating func recordError() {
+        status = "Boot log is unavailable; the guest console remains separate."
+    }
+
+    mutating func clear() {
+        text = ""
+        status = "Waiting for boot output."
+    }
+}
+
 func nativeVMConsoleWebSocketURL(apiBaseURL: String, vmName: String) -> URL? {
     let name = vmName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, name.count <= 200, !name.contains("/"), !name.contains("\\"),

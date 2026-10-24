@@ -6,9 +6,11 @@ struct NativeVMConsolePanel: View {
     @StateObject private var session: NativeVMConsoleSession
     @State private var reviewConsole = false
     private let vmName: String
+    private let provisioningFlow: Bool
 
     init(vmName: String, apiBaseURL: String, userID: String, token: String, isImpersonating: Bool, provisioningFlow: Bool) {
         self.vmName = vmName
+        self.provisioningFlow = provisioningFlow
         _session = StateObject(wrappedValue: NativeVMConsoleSession(
             apiBaseURL: apiBaseURL,
             vmName: vmName,
@@ -22,6 +24,18 @@ struct NativeVMConsolePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if provisioningFlow {
+                NativeGroupPanel(title: "VM boot output", subtitle: session.bootLog.status) {
+                    ScrollView {
+                        Text(session.bootLog.text.isEmpty ? "Boot output will appear here while the VM starts." : session.bootLog.text)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.text)
+                            .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 180)
+                }
+            }
             NativeGroupPanel(title: "VM console", subtitle: "Interactive console session · \(vmName)") {
                 HStack(spacing: 8) {
                     Text(session.status).font(.system(size: 12, weight: .medium)).foregroundStyle(session.isConnected ? theme.green : theme.textSecondary)
