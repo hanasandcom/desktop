@@ -30,10 +30,8 @@ struct ProfileNativePanel: View {
     @State var confirmRevokeOtherSessions = false
     @State var confirmLogout = false
     @State var confirmDeleteAccount = false
-    var initialSection: String? = nil
 
     var body: some View {
-        ScrollViewReader { proxy in
         Group {
         if let profile = model.profile {
             VStack(alignment: .leading, spacing: 14) {
@@ -287,11 +285,6 @@ struct ProfileNativePanel: View {
             .task(id: activityCredentialKey) { await loadAccountActivity() }
         } else {
             NativeEmptyState(title: "Profile not loaded", message: "Hanasand session is not ready yet. Log in again if this profile does not load.")
-        }
-        }
-        .onChange(of: initialSection, initial: true) { _, section in
-            guard let section else { return }
-            DispatchQueue.main.async { proxy.scrollTo(section, anchor: .top) }
         }
         }
     }

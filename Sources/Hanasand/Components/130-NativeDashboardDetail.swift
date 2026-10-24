@@ -25,7 +25,11 @@ struct NativeDashboardDetail: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: model.selectedDashboardTitle, subtitle: statusSubtitle) {
+        FeatureWorkspace(
+            title: model.selectedDashboardTitle,
+            subtitle: statusSubtitle,
+            initialScrollTarget: model.selectedDashboardPath == "/profile" ? model.selectedNativeDashboardQuery["section"] : nil
+        ) {
             HStack(spacing: 8) {
                 detailToolbarButton(title: "Back", icon: "chevron.left") {
                     model.closeNativeDashboardPage()
@@ -273,7 +277,7 @@ struct NativeDashboardDetail: View {
         case "/system/rates":
             RateLimitsNativePanel()
         case "/profile":
-            ProfileNativePanel(initialSection: model.selectedNativeDashboardQuery["section"])
+            ProfileNativePanel()
         case "/management", "/users":
             UsersNativePanel()
         case "/role":

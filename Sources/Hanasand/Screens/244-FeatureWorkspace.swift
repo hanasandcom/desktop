@@ -14,9 +14,11 @@ struct FeatureWorkspace<Content: View>: View {
     @Environment(\.desktopTheme) var theme
     let title: String
     let subtitle: String
+    var initialScrollTarget: String? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
+        ScrollViewReader { proxy in
         VStack(spacing: 0) {
             TopBar()
             ScrollView {
@@ -44,5 +46,10 @@ struct FeatureWorkspace<Content: View>: View {
             }
         }
         .background(theme.background)
+        .onChange(of: initialScrollTarget, initial: true) { _, target in
+            guard let target else { return }
+            DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
+        }
+        }
     }
 }
