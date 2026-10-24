@@ -279,6 +279,45 @@ final class SupportDeskClientTests: XCTestCase {
         }
     }
 
+    func testGuestConnectIssuesFreshOneUseTicketWithSessionCapability() async throws {
+        let firstTicket = String(repeating: "b", count: 64)
+        let secondTicket = String(repeating: "c", count: 64)
+        var captured: [URLRequest] = []
+        let tickets = [firstTicket, secondTicket]
+        let client = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+            captured.append(request)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: String])
+            XCTAssertEqual(payload, ["action": "connect"])
+            let body = try JSONSerialization.data(withJSONObject: ["ticket": tickets[captured.count - 1]])
+            return (body, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!)
+        }
+
+        let issuedFirst = try await client.connectTicket()
+        let issuedSecond = try await client.connectTicket()
+        XCTAssertEqual(issuedFirst, firstTicket)
+        XCTAssertEqual(issuedSecond, secondTicket)
+        XCTAssertEqual(captured.count, 2)
+        for request in captured {
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.absoluteString, "https://support.synthetic.invalid/api/support/chat")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "x-support-session"), guestToken)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertFalse(request.httpShouldHandleCookies)
+        }
+
+        let invalidBodies = [#"{}"#, #"{"ticket":"short"}"#,
+                             String(data: try JSONSerialization.data(withJSONObject: ["ticket": String(repeating: "G", count: 64)]), encoding: .utf8)!]
+        for invalidBody in invalidBodies {
+            let invalid = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in
+                self.response(invalidBody, request: request)
+            }
+            do { _ = try await invalid.connectTicket(); XCTFail("Malformed or missing one-use ticket must be rejected") }
+            catch SupportDeskClientError.invalidResponse {}
+        }
+    }
+
     func testGuestTransportRejectsInvalidCapabilityAndMessageInput() async throws {
         XCTAssertThrowsError(try SupportGuestChatClient(baseURL: service, token: "short"))
         let client = try SupportGuestChatClient(baseURL: service, token: guestToken) { request in

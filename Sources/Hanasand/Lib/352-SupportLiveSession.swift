@@ -55,23 +55,44 @@ final class SupportLiveSession: ObservableObject {
     @Published private(set) var status: SupportLiveStatus = .idle
 
     private let makeSocket: @MainActor () -> SupportLiveSocketTransport
+    private let waitBeforeRetry: @MainActor (Duration) async throws -> Void
     private var worker: Task<Void, Never>?
     private var socket: SupportLiveSocketTransport?
     private var generation = 0
 
-    init(makeSocket: (@MainActor () -> SupportLiveSocketTransport)? = nil) {
+    init(makeSocket: (@MainActor () -> SupportLiveSocketTransport)? = nil,
+         waitBeforeRetry: (@MainActor (Duration) async throws -> Void)? = nil) {
         self.makeSocket = makeSocket ?? { URLSessionSupportLiveSocket() }
+        self.waitBeforeRetry = waitBeforeRetry ?? { duration in try await Task.sleep(for: duration) }
     }
 
     func start(apiBaseURL: String, websiteBaseURL: String, userID: String, token: String, impersonationToken: String = "",
                changed: @escaping @MainActor () -> Void) {
         stop()
         guard !userID.isEmpty, !token.isEmpty else { status = .idle; return }
+        start(apiBaseURL: apiBaseURL, websiteBaseURL: websiteBaseURL,
+              makeAuthFrame: { try SupportLiveProtocol.authFrame(userID: userID, token: token,
+                                                                  impersonationToken: impersonationToken) },
+              changed: changed)
+    }
+
+    func startGuest(apiBaseURL: String, websiteBaseURL: String,
+                    connectTicket: @escaping @MainActor () async throws -> String,
+                    changed: @escaping @MainActor () -> Void) {
+        stop()
+        start(apiBaseURL: apiBaseURL, websiteBaseURL: websiteBaseURL,
+              makeAuthFrame: { try SupportLiveProtocol.guestAuthFrame(ticket: await connectTicket()) },
+              changed: changed)
+    }
+
+    private func start(apiBaseURL: String, websiteBaseURL: String,
+                       makeAuthFrame: @escaping @MainActor () async throws -> String,
+                       changed: @escaping @MainActor () -> Void) {
         let own = generation
         worker = Task { [weak self] in
             guard let self else { return }
-            await self.run(apiBaseURL: apiBaseURL, websiteBaseURL: websiteBaseURL, userID: userID, token: token,
-                           impersonationToken: impersonationToken, generation: own, changed: changed)
+            await self.run(apiBaseURL: apiBaseURL, websiteBaseURL: websiteBaseURL,
+                           makeAuthFrame: makeAuthFrame, generation: own, changed: changed)
         }
     }
 
@@ -84,7 +105,8 @@ final class SupportLiveSession: ObservableObject {
         status = .idle
     }
 
-    private func run(apiBaseURL: String, websiteBaseURL: String, userID: String, token: String, impersonationToken: String,
+    private func run(apiBaseURL: String, websiteBaseURL: String,
+                     makeAuthFrame: @escaping @MainActor () async throws -> String,
                      generation own: Int, changed: @escaping @MainActor () -> Void) async {
         var failures = 0
         while !Task.isCancelled && own == generation {
@@ -94,8 +116,8 @@ final class SupportLiveSession: ObservableObject {
             do {
                 let url = try SupportLiveProtocol.socketURL(apiBaseURL: apiBaseURL)
                 let origin = try SupportLiveProtocol.originHeader(websiteBaseURL: websiteBaseURL)
-                let auth = try SupportLiveProtocol.authFrame(userID: userID, token: token,
-                                                              impersonationToken: impersonationToken)
+                // Guest tickets are short-lived and single-use, so build auth for each socket attempt.
+                let auth = try await makeAuthFrame()
                 var request = URLRequest(url: url, timeoutInterval: 20)
                 request.httpShouldHandleCookies = false
                 request.setValue(origin, forHTTPHeaderField: "Origin")
@@ -131,7 +153,7 @@ final class SupportLiveSession: ObservableObject {
             if socket === next { socket = nil }
             failures += 1
             guard failures < 5 else { status = .unavailable; return }
-            do { try await Task.sleep(for: .seconds(min(15, 1 << failures))) }
+            do { try await waitBeforeRetry(.seconds(min(15, 1 << failures))) }
             catch { return }
         }
     }

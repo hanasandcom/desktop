@@ -88,6 +88,7 @@ struct ProfileNativePanel: View {
                             confirmDeleteAccount = true
                         }
                     }
+                    NativeGoogleConnectionStatus()
                     if let roles = profile.roles, !roles.isEmpty {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 10)], spacing: 10) {
                             ForEach(roles) { role in
@@ -561,5 +562,106 @@ private func recentAccountActivity(_ days: [AccountActivityDay], dayCount: Int) 
         guard let date = calendar.date(byAdding: .day, value: offset - dayCount + 1, to: end) else { return nil }
         let day = formatter.string(from: date)
         return AccountActivityDay(day: day, logins: dayCounts[day] ?? 0)
+    }
+}
+
+private struct NativeGoogleConnectionStatus: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
+    @State private var connection: SocialConnection?
+    @State private var errorMessage = ""
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+
+    private var accountScope: String {
+        let scope = [model.settings.apiBaseURL, model.userIDForRequests, model.authTokenForRequests,
+                     model.settings.impersonationToken, model.settings.impersonatingUserID,
+                     model.profile?.id ?? ""].joined(separator: "\n")
+        return SHA256.hash(data: Data(scope.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private var canReadOwnConnections: Bool {
+        model.hasHanasandAuth
+            && model.settings.impersonationToken.isEmpty
+            && model.settings.impersonatingUserID.isEmpty
+            && model.settings.userID == model.userIDForRequests
+            && model.profile?.id == model.userIDForRequests
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Connected sign-in accounts")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                Spacer(minLength: 8)
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                } else {
+                    Button("Refresh") { Task { await reload() } }
+                        .font(.system(size: 11, weight: .semibold))
+                        .disabled(!canReadOwnConnections)
+                }
+            }
+
+            if !canReadOwnConnections {
+                NativeNotice(message: "Return to your own account to view connected sign-in accounts.", tone: .info)
+            } else if !errorMessage.isEmpty {
+                NativeNotice(message: errorMessage)
+            } else if hasLoaded, let connection {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(theme.green)
+                        .frame(width: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Google connected")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                        if let email = connection.email, !email.isEmpty {
+                            Text(email).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            } else if hasLoaded {
+                Text("No Google sign-in account is connected.")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if isLoading {
+                Text("Loading connection status…")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+            }
+        }
+        .padding(10)
+        .background(theme.cardRaised.opacity(0.55), in: RoundedRectangle(cornerRadius: 9))
+        .task(id: accountScope) { await reload() }
+    }
+
+    @MainActor private func reload() async {
+        guard canReadOwnConnections else {
+            connection = nil
+            errorMessage = ""
+            isLoading = false
+            hasLoaded = false
+            return
+        }
+        let requestedScope = accountScope
+        isLoading = true
+        errorMessage = ""
+        hasLoaded = false
+        connection = nil
+        defer { if requestedScope == accountScope { isLoading = false } }
+
+        do {
+            let client = try SocialConnectionsClient(settings: model.settings)
+            let connections = try await client.load()
+            guard requestedScope == accountScope, canReadOwnConnections else { return }
+            connection = connections.first { $0.provider == "google" }
+            hasLoaded = true
+        } catch {
+            guard requestedScope == accountScope, canReadOwnConnections else { return }
+            errorMessage = error.localizedDescription
+        }
     }
 }

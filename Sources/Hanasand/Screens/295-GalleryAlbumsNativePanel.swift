@@ -12,6 +12,7 @@ struct GalleryAlbumsNativePanel: View {
     @State private var nameDraft = ""
     @State private var memberDraft = ""
     @State private var memberRole = "viewer"
+    @State private var selectedMonth = ""
     @State private var offset = 0
     @State private var libraryOffset = 0
     @State private var busy = false
@@ -50,9 +51,14 @@ struct GalleryAlbumsNativePanel: View {
         .onChange(of: sessionFingerprint) { _, _ in
             sessionRevision += 1
             albums = []; album = nil; library = []; selectedFiles.removeAll()
+            selectedMonth = ""
             publicShareURL = nil
             showPicker = false; error = ""; status = "Refreshing account…"
             Task { await refreshAlbums() }
+        }
+        .onChange(of: selectedMonth) { _, month in
+            guard let album else { return }
+            Task { await open(album.id, offset: 0, month: month) }
         }
         .confirmationDialog("Delete album?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete album", role: .destructive) { Task { await deleteAlbum() } }
@@ -142,8 +148,8 @@ struct GalleryAlbumsNativePanel: View {
     @ViewBuilder private func albumDetail(_ album: GalleryAlbumDetail) -> some View {
         NativeGroupPanel(title: album.name, subtitle: "\(album.total) items · \(album.role) · \(album.isPublic ? "Public link enabled" : "Private")") {
             HStack(spacing: 8) {
-                ActionButton(title: "All albums", icon: "chevron.left") { self.album = nil; showPicker = false; error = "" }
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await open(album.id, offset: offset) } }
+                ActionButton(title: "All albums", icon: "chevron.left") { self.album = nil; selectedMonth = ""; showPicker = false; error = "" }
+                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await open(album.id, offset: offset, month: selectedMonth) } }
                 if GalleryAlbumAccess.canLeave(album, currentUserId: model.userIDForRequests) {
                     ActionButton(title: "Leave shared album", icon: "rectangle.portrait.and.arrow.right", tone: .danger) {
                         confirmLeaveAlbum = true
@@ -206,6 +212,15 @@ struct GalleryAlbumsNativePanel: View {
         }
 
         NativeGroupPanel(title: "Album contents", subtitle: "Items \(album.items.isEmpty ? 0 : album.offset + 1)–\(album.offset + album.items.count) of \(album.total)") {
+            if !album.timeline.isEmpty {
+                HStack(spacing: 8) {
+                    Label("Capture month", systemImage: "calendar")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                    Spacer(minLength: 0)
+                    albumMonthPicker
+                }
+            }
             if album.items.isEmpty {
                 NativeEmptyState(title: album.total == 0 ? "This album is empty" : "No items on this page", message: album.total == 0 ? "Add photos already in your library." : "Return to the previous page or refresh.")
             }
@@ -226,8 +241,8 @@ struct GalleryAlbumsNativePanel: View {
                 .padding(.vertical, 6)
             }
             HStack {
-                ActionButton(title: "Previous page", icon: "chevron.left") { Task { await open(album.id, offset: max(0, offset - 60)) } }.disabled(busy || offset == 0)
-                ActionButton(title: "Next page", icon: "chevron.right") { Task { await open(album.id, offset: offset + 60) } }.disabled(busy || offset + album.items.count >= album.total || offset >= 1_000_000)
+                ActionButton(title: "Previous page", icon: "chevron.left") { Task { await open(album.id, offset: max(0, offset - 60), month: selectedMonth) } }.disabled(busy || offset == 0)
+                ActionButton(title: "Next page", icon: "chevron.right") { Task { await open(album.id, offset: offset + 60, month: selectedMonth) } }.disabled(busy || offset + album.items.count >= album.total || offset >= 1_000_000)
             }
         }
 
@@ -280,6 +295,20 @@ struct GalleryAlbumsNativePanel: View {
 
     private func makeClient() -> GalleryAlbumClient? { try? GalleryAlbumClient(settings: model.settings) }
 
+    private var albumMonthPicker: some View {
+        Picker("Capture month", selection: $selectedMonth) {
+            Text("All months").tag("")
+            ForEach(album?.timeline ?? []) { month in
+                Text("\(month.monthKey) · \(month.photoCount)").tag(month.monthKey)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: 220, alignment: .trailing)
+        .disabled(busy || album?.timeline.isEmpty != false)
+        .accessibilityLabel("Filter album by capture month")
+    }
+
     private var sessionFingerprint: String {
         let settings = model.settings
         return "\(settings.userID)|\(settings.authToken.hashValue)|\(settings.cdnBaseURL)|\(settings.impersonatingUserID)|\(settings.impersonationToken.hashValue)"
@@ -318,12 +347,12 @@ struct GalleryAlbumsNativePanel: View {
         albums = result
     }
 
-    private func open(_ id: String, offset: Int = 0, using requestedSettings: HanasandDesktopSettings? = nil,
+    private func open(_ id: String, offset: Int = 0, month: String = "", using requestedSettings: HanasandDesktopSettings? = nil,
                       scopeIsCurrent: (@MainActor () -> Bool)? = nil) async {
-        guard let result = await withClient({ try await $0.album(id: id, offset: offset) }, success: "Album loaded",
+        guard let result = await withClient({ try await $0.album(id: id, offset: offset, month: month) }, success: "Album loaded",
             using: requestedSettings, scopeIsCurrent: scopeIsCurrent) else { return }
         publicShareURL = nil
-        album = result; self.offset = offset; nameDraft = result.name
+        album = result; self.offset = offset; selectedMonth = month; nameDraft = result.name
     }
 
     private func beginSharingChange(_ enabled: Bool) {
@@ -345,13 +374,13 @@ struct GalleryAlbumsNativePanel: View {
             scopeIsCurrent: scopeIsCurrent) else {
             // A failed PATCH may have reached the service. Refresh the authoritative state once;
             // never retry the mutation automatically.
-            if scopeIsCurrent() { await open(selectedAlbum.id, offset: offset, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent) }
+            if scopeIsCurrent() { await open(selectedAlbum.id, offset: offset, month: selectedMonth, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent) }
             return
         }
         guard scopeIsCurrent() else { return }
         publicShareURL = result.shareURL
         self.album = GalleryAlbumDetail(id: selectedAlbum.id, name: selectedAlbum.name, owner: selectedAlbum.owner, isPublic: result.isPublic, role: selectedAlbum.role, items: selectedAlbum.items, total: selectedAlbum.total, limit: selectedAlbum.limit, offset: selectedAlbum.offset, members: selectedAlbum.members)
-        await open(selectedAlbum.id, offset: offset, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent)
+        await open(selectedAlbum.id, offset: offset, month: selectedMonth, using: confirmedSettings, scopeIsCurrent: scopeIsCurrent)
         if result.isPublic, scopeIsCurrent() { publicShareURL = result.shareURL }
         await refreshAlbums(using: confirmedSettings, scopeIsCurrent: scopeIsCurrent)
     }
@@ -363,7 +392,7 @@ struct GalleryAlbumsNativePanel: View {
 
     private func renameAlbum() async {
         guard let album, let _ = await withClient({ try await $0.renameAlbum(id: album.id, name: nameDraft) }, success: "Album renamed") else { return }
-        await open(album.id, offset: offset); await refreshAlbums()
+        await open(album.id, offset: offset, month: selectedMonth); await refreshAlbums()
     }
 
     private func deleteAlbum() async {
@@ -406,17 +435,17 @@ struct GalleryAlbumsNativePanel: View {
 
     private func remove(_ item: GalleryAlbumItem) async {
         guard let album, await withClient({ try await $0.removeItem(item, from: album) }, success: "Item removed from album") != nil else { return }
-        itemToRemove = nil; await open(album.id, offset: offset); await refreshAlbums()
+        itemToRemove = nil; await open(album.id, offset: offset, month: selectedMonth); await refreshAlbums()
     }
 
     private func addMember() async {
         guard let album, let _ = await withClient({ try await $0.setMember(memberDraft, role: memberRole, in: album) }, success: "Album access updated") else { return }
-        memberDraft = ""; await open(album.id, offset: offset)
+        memberDraft = ""; await open(album.id, offset: offset, month: selectedMonth)
     }
 
     private func remove(_ member: GalleryAlbumMember) async {
         guard let album, await withClient({ try await $0.removeMember(member.userId, from: album) }, success: "Album access removed") != nil else { return }
-        memberToRemove = nil; await open(album.id, offset: offset)
+        memberToRemove = nil; await open(album.id, offset: offset, month: selectedMonth)
     }
 }
 

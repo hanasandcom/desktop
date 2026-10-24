@@ -60,6 +60,17 @@ enum SupportLiveProtocol {
         return text
     }
 
+    static func guestAuthFrame(ticket: String) throws -> String {
+        guard ticket.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+            throw SupportLiveError.invalidCredentials
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["type": "auth", "ticket": ticket], options: [.sortedKeys])
+        guard let text = String(data: data, encoding: .utf8), text.utf8.count <= 4096 else {
+            throw SupportLiveError.invalidCredentials
+        }
+        return text
+    }
+
     static func frameType(_ text: String) throws -> String {
         guard text.utf8.count <= 1_048_576, let data = text.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],

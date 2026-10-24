@@ -302,6 +302,18 @@ struct SupportGuestChatClient {
         return conversation
     }
 
+    func connectTicket() async throws -> String {
+        let (data, response) = try await request(path: "support/chat", method: "POST", body: ["action": "connect"])
+        let http = try checked(response)
+        guard (200..<300).contains(http.statusCode) else { throw failure(status: http.statusCode) }
+        guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ticket = payload["ticket"] as? String,
+              ticket.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+            throw SupportDeskClientError.invalidResponse
+        }
+        return ticket
+    }
+
     func sendMessage(_ message: String, requestID: String, conversationID: String?, handoff: Bool = false) async throws -> SupportGuestConversation {
         let clean = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.validGuestUUID(requestID), conversationID.map(Self.validGuestUUID) ?? true,

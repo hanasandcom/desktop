@@ -34,6 +34,7 @@ struct SupportDeskNativePanel: View {
     @State private var guestCloseFeedbackFound: Bool? = nil
     @State private var guestCloseFeedbackReason = ""
     @State private var guestRetry: (requestID: String, message: String, handoff: Bool)?
+    @State private var guestRefreshPending = false
 
     private var ticket: SupportDeskTicket? { snapshot?.tickets.first(where: { $0.id == selectedID }) }
     private var canWrite: Bool {
@@ -66,6 +67,7 @@ struct SupportDeskNativePanel: View {
                 if let guestSession {
                     Text("Session expires \(guestSession.expiresAt.formatted(date: .abbreviated, time: .shortened)).")
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                    Text(live.status.title).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) { guestActions }
@@ -101,6 +103,9 @@ struct SupportDeskNativePanel: View {
             }
         }
         .task(id: revision) { await loadGuest() }
+        .onAppear { isVisible = true; updateGuestLive() }
+        .onDisappear { isVisible = false; live.stop() }
+        .onChange(of: scenePhase) { _, _ in updateGuestLive() }
         .confirmationDialog("Resolve this conversation?", isPresented: $pendingGuestResolve, titleVisibility: .visible) {
             Button("Resolve conversation", role: .destructive) { Task { await resolveGuestConversation() } }
             Button("Cancel", role: .cancel) { }
@@ -361,8 +366,16 @@ struct SupportDeskNativePanel: View {
         catch { self.error = error.localizedDescription }
     }
 
-    @MainActor private func loadGuest() async {
-        busy = true; error = ""; notice = ""; defer { busy = false }
+    @MainActor private func loadGuest(keepingLive: Bool = false) async {
+        if !keepingLive { live.stop() }
+        busy = true; error = ""; notice = ""
+        defer {
+            busy = false
+            if guestRefreshPending {
+                guestRefreshPending = false
+                refreshGuestFromLive()
+            }
+        }
         do {
             let previousToken = guestSession?.token
             let session = try SupportGuestSession.loadFromKeychain()
@@ -379,7 +392,27 @@ struct SupportDeskNativePanel: View {
             } else if conversation.id == nil && !conversation.tickets.contains(where: { $0.id == selectedID }) {
                 // Keep a locally selected, not-yet-created chat ID for the first message.
             }
+            if !keepingLive { updateGuestLive() }
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    private func refreshGuestFromLive() {
+        guard isVisible else { return }
+        guard !busy else { guestRefreshPending = true; return }
+        Task { await loadGuest(keepingLive: true) }
+    }
+
+    private func updateGuestLive() {
+        guard isVisible, scenePhase == .active, !model.hasHanasandAuth,
+              let guestSession, let client = try? makeGuestClient(session: guestSession) else {
+            live.stop()
+            return
+        }
+        live.startGuest(apiBaseURL: SupportGuestChatClient.defaultBaseURL.absoluteString,
+                        websiteBaseURL: model.settings.websiteBaseURL,
+                        connectTicket: { try await client.connectTicket() }) {
+            refreshGuestFromLive()
+        }
     }
 
     @MainActor private func sendGuestMessage(handoff: Bool) async {
