@@ -34,9 +34,10 @@ struct NativeDashboardDetail: View {
     @Environment(\.desktopTheme) var theme
 
     static func hasNativePanel(for path: String) -> Bool {
+        if path == "/authenticator" || path == "/findings/actions" { return true }
         switch path {
         case "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings", "/privacy", "/terms", "/reserved-usernames", "/pricing", "/solutions/scanner", "/solutions/security-monitoring", "/security.txt",
-             "/dashboard", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/monitor", "/ti/darkweb/index", "/activity", "/ai/workspace", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/organizations", "/organizations/team", "/ti", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/organization-api-keys", "/api", "/api/openapi", "/developers", "/public-profile", "/sandbox", "/sandbox/result", "/sandbox/report", "/pwned", "/support", "/thesis", "/tools", "/traffic/map", "/images/library", "/cdn/files", "/shared/album", "/scanner", "/dashboard/scanner", "/organization-privacy", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/system/hosts", "/system/updates", "/g", "/dashboard/tests", "/load-testing", "/test", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron", "/mail", "/system", "/system/containers", "/traffic/blocklist", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/system/ai", "/system/rates", "/profile", "/management", "/users", "/role", "/s", "/repositories", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/notes", "/db", "/db/backups", "/db/restore", "/vulnerability-findings", "/traffic", "/upload", "/dashboard/files":
+             "/dashboard", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/monitor", "/ti/darkweb/index", "/activity", "/ai/workspace", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/organizations", "/organizations/team", "/ti", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/organization-api-keys", "/api", "/api/openapi", "/developers", "/public-profile", "/sandbox", "/sandbox/result", "/sandbox/report", "/pwned", "/support", "/thesis", "/tools", "/authenticator", "/traffic/map", "/images/library", "/cdn/files", "/shared/album", "/scanner", "/dashboard/scanner", "/organization-privacy", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/system/hosts", "/system/updates", "/g", "/dashboard/tests", "/load-testing", "/test", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron", "/mail", "/system", "/system/containers", "/traffic/blocklist", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/system/ai", "/system/rates", "/profile", "/management", "/users", "/role", "/s", "/repositories", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/notes", "/db", "/db/backups", "/db/restore", "/vulnerability-findings", "/traffic", "/upload", "/dashboard/files":
             return true
         default:
             return false
@@ -227,6 +228,8 @@ struct NativeDashboardDetail: View {
             ThesisNativePanel()
         case "/tools":
             NativeToolsExplorePanel()
+        case "/authenticator":
+            NativeAuthenticatorPanel()
         case "/traffic/map":
             TrafficMapNativePanel()
         case "/images/library":
@@ -257,6 +260,8 @@ struct NativeDashboardDetail: View {
             ThreatRulesNativePanel(category: "detection", initialRuleID: model.selectedNativeDashboardDetailID.isEmpty ? nil : model.selectedNativeDashboardDetailID)
         case "/rules/tuning":
             ThreatRuleTuningNativePanel()
+        case "/findings/actions":
+            NativeFindingsActionsPanel()
         case "/integrations":
             IntegrationsNativePanel(initialOrganizationID: model.selectedNativeDashboardQuery["org"] ?? model.selectedNativeDashboardQuery["organizationId"] ?? model.selectedNativeDashboardQuery["orgId"])
         case "/dashboard/management/service-accounts":

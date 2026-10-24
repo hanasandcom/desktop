@@ -85,7 +85,7 @@ struct SubscriptionNativePanel: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
             }
-            Text("Subscription management opens Stripe's secure billing portal.")
+            Text("Subscription management opens Stripe's secure billing portal in the in-app browser.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.textTertiary)
         }
@@ -215,7 +215,7 @@ struct SubscriptionNativePanel: View {
             let client = try AccountSubscriptionClient(baseURL: baseURL, userID: model.userIDForRequests, token: model.authTokenForRequests)
             let url = try await client.createBillingPortalURL()
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
-            guard NSWorkspace.shared.open(url) else { throw AccountSubscriptionClientError.invalidPortalURL }
+            model.openInlineBrowser(url: url.absoluteString, title: "Stripe billing", source: "Billing", includeURLInActivityLog: false)
         } catch {
             if !Task.isCancelled, requestID == currentRequestID, scope == requestedScope {
                 self.error = error.localizedDescription

@@ -71,7 +71,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/about")?.path, "/about")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/developers")?.path, "/developers")
         let destinations = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/actions?org=org-22")
-        XCTAssertEqual(destinations?.path, "/integrations")
+        XCTAssertEqual(destinations?.path, "/findings/actions")
         XCTAssertEqual(destinations?.query["org"], "org-22")
         let organizationCases = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/alerts?organizationId=org-23")
         XCTAssertEqual(organizationCases?.path, "/cases")
@@ -201,10 +201,30 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: "/vulnerability-findings"))
     }
 
+    func testAuthenticatorRouteResolvesToItsNativePanel() {
+        let route = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/authenticator")
+        XCTAssertEqual(route?.path, "/authenticator")
+        XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: "/authenticator"))
+    }
+
+    @MainActor
+    func testStripeDestinationOpensInBuiltInBrowserWithoutLoggingSessionURL() {
+        let model = DesktopAgentModel()
+        let sessionURL = "https://checkout.stripe.com/c/pay/cs_test_sensitive"
+        model.events = []
+
+        model.openInlineBrowser(url: sessionURL, title: "Stripe checkout", source: "VM failover", includeURLInActivityLog: false)
+
+        XCTAssertEqual(model.selectedSection, .browser)
+        XCTAssertEqual(model.browserOpenRequest?.url, sessionURL)
+        XCTAssertEqual(model.browserOpenRequest?.title, "Stripe checkout")
+        XCTAssertFalse(model.events.contains { $0.body.contains("cs_test_sensitive") })
+    }
+
     func testCanonicalMobileNavigationPathsResolveToTheirNativeWorkflows() {
         let routes: [(String, String)] = [
             ("https://hanasand.com/findings/actors", "/ti/profiles"),
-            ("https://hanasand.com/findings/actions", "/integrations"),
+            ("https://hanasand.com/findings/actions", "/findings/actions"),
             ("https://hanasand.com/findings/delivery", "/integrations"),
             ("https://hanasand.com/organizations/privacy", "/organization-privacy"),
             ("https://hanasand.com/organizations/api-keys", "/organization-api-keys"),
@@ -339,7 +359,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
             ("/cases", "/cases"), ("/ti", "/ti"), ("/ti/activity", "/ti/activity"),
             ("/findings/actors", "/ti/profiles"), ("/ti/profiles", "/ti/enrichment"),
             ("/watchlists", "/watchlists"), ("/findings", "/findings"),
-            ("/findings/actions", "/integrations"),
+            ("/findings/actions", "/findings/actions"),
             ("/system/virtual-machines", "/vms"), ("/repositories", "/repositories"),
             ("/ti/sources", "/ti/sources"), ("/ti/runs", "/ti/runs"),
             ("/ti/timeliness", "/ti/timeliness"), ("/sandbox", "/sandbox"),

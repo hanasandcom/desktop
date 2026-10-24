@@ -54,6 +54,7 @@ extension DesktopAgentModel {
         [
             .route("Overview", "Service and account overview.", "gauge.with.dots.needle", "/dashboard"),
             .route("Explore", "Find every desktop tool by category or search.", "magnifyingglass", "/tools"),
+            .route("Authenticator", "Generate verification codes stored in this Mac’s Keychain.", "key.horizontal", "/authenticator"),
             .route("Monitoring cases", "Review health checks and cases.", "tray.full", "/cases"),
             .route("Service status", "View public service checks, incidents, and daily history.", "heart.text.square", "/status"),
             .route("Threat intelligence", "Search actors and vulnerabilities.", "magnifyingglass", "/ti"),
@@ -68,6 +69,7 @@ extension DesktopAgentModel {
             .route("Organization Privacy", "Review retention and privacy history.", "hand.raised", "/organization-privacy"),
             .route("Subscription", "View plan, access, and allowances.", "creditcard", "/subscription"),
             .route("Findings", "Investigate source-backed alerts and evidence.", "scope", "/findings"),
+            .route("Findings Actions", "Run native watchlist, collection, delivery, and evidence actions.", "bolt.horizontal", "/findings/actions"),
             .route("Match Rules", "Manage matching rules for monitored activity.", "line.3.horizontal.decrease.circle", "/rules/match"),
             .route("Analysis Rules", "Review analysis and retention rules.", "function", "/rules/analysis"),
             .route("Detection Rules", "Manage detection and response rules.", "shield.lefthalf.filled", "/rules/detection"),

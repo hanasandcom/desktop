@@ -210,7 +210,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/db", ["/dashboard/db"])
         add("/db/restore", ["/dashboard/db/restore"])
         add("/findings", ["/dashboard/findings"])
-        add("/integrations", ["/dashboard/findings/actions"])
+        add("/findings/actions", ["/dashboard/findings/actions"])
         add("/dashboard/delivery-history", ["/dashboard/findings/delivery"])
         add("/ti/profiles", ["/dashboard/findings/actors"])
         add("/watchlists", ["/dashboard/findings/watchlists"])

@@ -69,7 +69,7 @@ extension DesktopAgentModel {
         append(meta: "Mini browser", body: minified ? "Opened minified \(title)." : "Opened floating \(title).", kind: .command)
     }
 
-    func openInlineBrowser(url rawValue: String, title rawTitle: String? = nil, source: String = "Agent") {
+    func openInlineBrowser(url rawValue: String, title rawTitle: String? = nil, source: String = "Agent", includeURLInActivityLog: Bool = true) {
         let resolved = BrowserTargetResolver.resolve(rawValue)
         guard !routeOwnedHanasandBrowserURL(resolved.url, source: source) else { return }
         let title = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? rawTitle! : resolved.title
@@ -77,7 +77,10 @@ extension DesktopAgentModel {
         browserActiveTitle = title
         browserOpenRequest = BrowserOpenRequest(title: title, url: resolved.url)
         selectedSection = .browser
-        append(meta: "Browser", body: "\(source) opened \(resolved.url) in the built-in browser.", kind: .command)
+        let activity = includeURLInActivityLog
+            ? "\(source) opened \(resolved.url) in the built-in browser."
+            : "\(source) opened \(title) in the built-in browser."
+        append(meta: "Browser", body: activity, kind: .command)
     }
 
     func popOutBrowser(url rawValue: String? = nil, title rawTitle: String? = nil, minified: Bool = false, source: String = "Agent") {

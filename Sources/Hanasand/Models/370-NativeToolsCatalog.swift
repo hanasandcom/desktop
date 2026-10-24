@@ -13,7 +13,7 @@ enum NativeToolsCatalog {
         let actions = dashboard + administration
         let categories: [(String, (DesktopAction) -> Bool)] = [
             ("Security & intelligence", { action in
-                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/sandbox", "/pwned", "/scanner"].contains(action.routePath)
+                ["/cases", "/ti", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/traffic/map", "/findings", "/findings/actions", "/rules/match", "/rules/analysis", "/rules/detection", "/rules/tuning", "/sandbox", "/pwned", "/scanner", "/authenticator"].contains(action.routePath)
             }),
             ("Infrastructure", { action in
                 ["/status", "/system/hosts", "/system/updates", "/traffic", "/traffic/blocklist", "/system/ai", "/system/rates", "/system/cron", "/system", "/system/containers", "/vms"].contains(action.routePath)

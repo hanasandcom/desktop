@@ -254,8 +254,8 @@ private struct NativeVMHostOptionsPanel: View {
             }
             let checkout = try await makeAccessClient().loadFailoverCheckoutURL(for: vm.name)
             guard scope == scopeKey else { status = "Account or organization changed. Refresh before opening checkout."; return }
-            guard NSWorkspace.shared.open(checkout) else { throw NativeVMAccessError.invalidResponse }
-            status = "Secure Stripe checkout opened in your browser."
+            model.openInlineBrowser(url: checkout.absoluteString, title: "Stripe checkout", source: "VM failover", includeURLInActivityLog: false)
+            status = "Secure Stripe checkout opened in the in-app browser."
         } catch {
             status = error.localizedDescription
         }

@@ -83,6 +83,20 @@ final class NativeToolsCatalogTests: XCTestCase {
             "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity",
         ]))
     }
+
+    func testAuthenticatorIsDiscoverableInTheNativeToolsCatalog() {
+        let action = DesktopAction.route(
+            "Authenticator",
+            "Generate verification codes stored in this Mac’s Keychain.",
+            "key.horizontal",
+            "/authenticator"
+        )
+
+        let sections = NativeToolsCatalog.sections(dashboard: [action], administration: [], query: "authenticator")
+
+        XCTAssertEqual(sections.flatMap(\.actions).map(\.title), ["Authenticator"])
+        XCTAssertTrue(NativeDashboardDetail.hasNativePanel(for: "/authenticator"))
+    }
 }
 
 private extension DesktopAction {
