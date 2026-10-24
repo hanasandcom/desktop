@@ -8,6 +8,13 @@ struct NativeFindingsActionsPanel: View {
     @State private var receipt: NativeFindingsActionReceipt?
     @State private var error = ""
     @State private var busy = false
+    @State private var operationID = UUID()
+
+    private var workspaceKey: String {
+        [model.settings.websiteBaseURL, model.userIDForRequests, model.settings.authToken,
+         model.selectedOrganizationID, model.settings.selectedOrganizationUserID,
+         model.settings.impersonatingUserID, model.settings.impersonationToken].joined(separator: "|")
+    }
 
     private var readOnly: Bool {
         !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty
@@ -82,6 +89,14 @@ struct NativeFindingsActionsPanel: View {
             }
         }
         .padding(16)
+        .onChange(of: workspaceKey) { _, _ in
+            operationID = UUID()
+            input = NativeFindingsActionInput()
+            selectedAction = .saveWatchlist
+            receipt = nil
+            error = ""
+            busy = false
+        }
     }
 
     private var subtitle: String {
@@ -101,6 +116,8 @@ struct NativeFindingsActionsPanel: View {
         selectedAction = action
         receipt = nil
         error = ""
+        let currentOperation = UUID()
+        operationID = currentOperation
         let settings = model.settings
         do {
             let client = try NativeFindingsActionsClient(settings: settings)
@@ -108,10 +125,12 @@ struct NativeFindingsActionsPanel: View {
                 settings == model.settings && !Task.isCancelled
             }
             guard settings == model.settings else { throw NativeFindingsActionsError.invalidScope }
+            guard operationID == currentOperation else { return }
             receipt = outcome
         } catch {
+            guard operationID == currentOperation else { return }
             self.error = error.localizedDescription
         }
-        busy = false
+        if operationID == currentOperation { busy = false }
     }
 }

@@ -60,6 +60,23 @@ final class NativeFindingsActionsTests: XCTestCase {
         XCTAssertThrowsError(try NativeFindingsActionsClient(settings: settings))
     }
 
+    func testWorkspaceChangeBeforeActionPreventsRequest() async throws {
+        var sends = 0
+        let client = try NativeFindingsActionsClient(settings: makeSettings()) { request in
+            sends += 1
+            return (Data(#"{"watchlist":{"id":"watchlist-1"}}"#.utf8), self.response(for: request))
+        }
+        do {
+            _ = try await client.perform(.saveWatchlist, input: NativeFindingsActionInput(terms: "Acme")) {
+                false
+            }
+            XCTFail("Expected a stale workspace to be rejected")
+        } catch {
+            XCTAssertEqual(error as? NativeFindingsActionsError, .invalidScope)
+        }
+        XCTAssertEqual(sends, 0)
+    }
+
     func testAmbiguousServerFailureRequiresRefreshAndAdvisoryCaseUsesDurableWorkflow() async throws {
         let client = try NativeFindingsActionsClient(settings: makeSettings()) { request in
             (Data("{}".utf8), self.response(for: request, status: 503))
