@@ -66,8 +66,9 @@ final class NativeVMAccessClientTests: XCTestCase {
                 XCTAssertEqual(patch, ["failover_enabled": true])
                 return (Data(#"{"name":"vm-17","primary_host":"ovhcloud","failover_host":"inspur","failover_premium":true,"failover_enabled":true}"#.utf8), try Self.response(for: request, status: 200))
             case ("/api/vm/vm-17/failover", "POST"):
-                XCTAssertNil(request.httpBody)
-                return (Data(#"{"vm":{"name":"vm-17","primary_host":"inspur","failover_host":"ovhcloud","failover_premium":true,"failover_enabled":true},"message":"Moved to inspur."}"#.utf8), try Self.response(for: request, status: 200))
+                let body = try XCTUnwrap(request.httpBody).flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: String] }
+                XCTAssertEqual(body, ["targetHost": "inspur", "requestId": "abcdef01-2345-6789-abcd-ef0123456789"])
+                return (Data(#"{"vm":{"name":"vm-17","primary_host":"ovhcloud","failover_host":"inspur","failover_premium":true,"failover_enabled":true},"message":"Host switch queued."}"#.utf8), try Self.response(for: request, status: 202))
             default:
                 XCTFail("Unexpected method/path: \(String(describing: request.httpMethod)) \(String(describing: request.url?.path))")
                 throw NativeVMAccessError.invalidResponse
@@ -77,9 +78,10 @@ final class NativeVMAccessClientTests: XCTestCase {
         let updated = try await client.updateFailover(for: "vm-17", enabled: true)
         XCTAssertEqual(updated.standbyHost, "inspur")
         XCTAssertTrue(updated.failoverEnabled)
-        let receipt = try await client.runFailover(for: "vm-17")
-        XCTAssertEqual(receipt.message, "Moved to inspur.")
-        XCTAssertEqual(receipt.hostOptions.primaryHost, "inspur")
+        let requestID = try XCTUnwrap(UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789"))
+        let receipt = try await client.runFailover(for: "vm-17", targetHost: "inspur", requestID: requestID)
+        XCTAssertEqual(receipt.message, "Host switch queued.")
+        XCTAssertEqual(receipt.hostOptions.primaryHost, "ovhcloud")
         XCTAssertEqual(requests.map(\.httpMethod), ["PUT", "POST"])
     }
 
@@ -89,14 +91,31 @@ final class NativeVMAccessClientTests: XCTestCase {
             requestCount += 1
             throw URLError(.timedOut)
         }
-        do { _ = try await failing.updateFailover(for: "vm-17", enabled: true); XCTFail("Timeout must be uncertain.") }
+        let requestID = try XCTUnwrap(UUID(uuidString: "ABCDEF01-2345-6789-ABCD-EF0123456789"))
+        do { _ = try await failing.runFailover(for: "vm-17", targetHost: "inspur", requestID: requestID); XCTFail("Timeout must be uncertain.") }
         catch { XCTAssertEqual(error as? NativeVMAccessError, .uncertainOutcome) }
         XCTAssertEqual(requestCount, 1)
 
-        let wrongReceipt = try makeClient { request in
-            (Data(#"{"name":"vm-18","failover_premium":true,"failover_enabled":true}"#.utf8), try Self.response(for: request, status: 200))
+        let serverFailure = try makeClient { request in
+            requestCount += 1
+            return (Data(#"{"error":"temporary failure"}"#.utf8), try Self.response(for: request, status: 500))
         }
-        do { _ = try await wrongReceipt.updateFailover(for: "vm-17", enabled: true); XCTFail("Wrong-VM mutation receipt must be uncertain.") }
+        do { _ = try await serverFailure.runFailover(for: "vm-17", targetHost: "inspur", requestID: requestID); XCTFail("5xx after a mutation must be uncertain.") }
+        catch { XCTAssertEqual(error as? NativeVMAccessError, .uncertainOutcome) }
+        XCTAssertEqual(requestCount, 2)
+
+        let nonQueuedReceipt = try makeClient { request in
+            requestCount += 1
+            return (Data(#"{"vm":{"name":"vm-17","primary_host":"ovhcloud","failover_host":"inspur","failover_premium":true,"failover_enabled":true},"message":"Moved."}"#.utf8), try Self.response(for: request, status: 200))
+        }
+        do { _ = try await nonQueuedReceipt.runFailover(for: "vm-17", targetHost: "inspur", requestID: requestID); XCTFail("A non-202 response must not be treated as queued.") }
+        catch { XCTAssertEqual(error as? NativeVMAccessError, .uncertainOutcome) }
+        XCTAssertEqual(requestCount, 3)
+
+        let wrongReceipt = try makeClient { request in
+            (Data(#"{"vm":{"name":"vm-18","primary_host":"ovhcloud","failover_host":"inspur","failover_premium":true,"failover_enabled":true},"message":"Host switch queued."}"#.utf8), try Self.response(for: request, status: 202))
+        }
+        do { _ = try await wrongReceipt.runFailover(for: "vm-17", targetHost: "inspur", requestID: requestID); XCTFail("Wrong-VM mutation receipt must be uncertain.") }
         catch { XCTAssertEqual(error as? NativeVMAccessError, .uncertainOutcome) }
     }
 

@@ -225,8 +225,8 @@ private struct NativeVMHostOptionsPanel: View {
                 status = "Automatic failover disabled."
             case .failover:
                 guard current.failoverPremium == true, current.failoverEnabled == true,
-                      current.failoverHost?.isEmpty == false else { throw NativeVMAccessError.accessDenied }
-                status = try await client.runFailover(for: vm.name).message
+                      let standbyHost = current.failoverHost, !standbyHost.isEmpty else { throw NativeVMAccessError.accessDenied }
+                status = try await client.runFailover(for: vm.name, targetHost: standbyHost, requestID: UUID()).message
             }
             guard scope == scopeKey else { status = "The operation completed; refresh the current workspace state."; return }
             onChanged()

@@ -120,13 +120,25 @@ struct NativeVMAccessClient {
         return hostOptions
     }
 
-    func runFailover(for rawName: String) async throws -> NativeVMFailoverReceipt {
+    func runFailover(for rawName: String, targetHost rawTargetHost: String, requestID: UUID) async throws -> NativeVMFailoverReceipt {
         let name = try Self.validatedName(rawName)
-        let result = try await request(path: "vm/\(Self.pathSegment(name))/failover", method: "POST", mutation: true)
+        let targetHost = rawTargetHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard targetHost.count <= 200,
+              targetHost.range(of: #"^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$"#, options: .regularExpression) != nil else {
+            throw NativeVMAccessError.invalidResponse
+        }
+        let body = try JSONSerialization.data(withJSONObject: [
+            "targetHost": targetHost,
+            "requestId": requestID.uuidString.lowercased()
+        ])
+        let result = try await request(path: "vm/\(Self.pathSegment(name))/failover", method: "POST", body: body, mutation: true)
+        guard result.status == 202 else { throw NativeVMAccessError.uncertainOutcome }
         guard let object = try Self.object(result.data),
               let rawVM = object["vm"] as? [String: Any],
               let hostOptions = try Self.parseHostOptions(rawVM),
               hostOptions.vmName.caseInsensitiveCompare(name) == .orderedSame,
+              hostOptions.standbyHost == targetHost,
+              hostOptions.failoverPremium, hostOptions.failoverEnabled,
               let message = object["message"] as? String, !message.isEmpty, message.count <= 2_000 else {
             throw NativeVMAccessError.uncertainOutcome
         }
