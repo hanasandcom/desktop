@@ -124,3 +124,13 @@ struct ThreatDeliveryReviewState {
     mutating func finishWrite() { isWriting = false; requiresRefresh = true }
     mutating func refreshSucceeded() { requiresRefresh = false }
 }
+
+struct ThreatDeliveryDestinationsRoute: Equatable {
+    let path: String
+    let query: [String: String]
+
+    static func make(organizationID: String) -> ThreatDeliveryDestinationsRoute? {
+        guard ThreatDeliveryHistory.validID(organizationID), organizationID != "personal" else { return nil }
+        return ThreatDeliveryDestinationsRoute(path: "/integrations", query: ["organizationId": organizationID])
+    }
+}

@@ -65,6 +65,12 @@ struct ThreatDeliveryHistoryNativePanel: View {
                 Text("Review delivery attempts, select a finding, and run guarded test, send, or retry actions.")
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let history, let destinationRoute = ThreatDeliveryDestinationsRoute.make(organizationID: history.organizationID) {
+                    ActionButton(title: "Manage destinations", icon: "point.3.connected.trianglepath.dotted") {
+                        model.openNativeDashboard(path: destinationRoute.path, label: "Integrations", query: destinationRoute.query)
+                    }
+                    .disabled(isWriting)
+                }
                 if !status.isEmpty && history == nil {
                     NativeNotice(message: status)
                 }

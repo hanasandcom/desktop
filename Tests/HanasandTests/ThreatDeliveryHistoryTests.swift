@@ -70,6 +70,13 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertEqual(attempt.statusLabel, "Status not reported")
     }
 
+    func testDestinationsHandoffKeepsTheActiveOrganizationScope() throws {
+        XCTAssertEqual(ThreatDeliveryDestinationsRoute.make(organizationID: "org-123"),
+                       ThreatDeliveryDestinationsRoute(path: "/integrations", query: ["organizationId": "org-123"]))
+        XCTAssertNil(ThreatDeliveryDestinationsRoute.make(organizationID: "personal"))
+        XCTAssertNil(ThreatDeliveryDestinationsRoute.make(organizationID: "org/123"))
+    }
+
     func testActionGatesRequireScopedFindingAndEligibleFailedLiveReceipt() {
         let finding = ThreatDeliveryHistory.Finding(id: "alert-1", title: "Acme", actor: "actor", matchedTerm: "acme",
             reviewState: "needs_review", deliveryState: "pending", caseID: "HA-1", organizationID: "org-1", full: ["id": "alert-1"])
