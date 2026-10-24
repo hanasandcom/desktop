@@ -194,6 +194,20 @@ struct GalleryAlbumMemberPayload: Encodable {
     let role: String
 }
 
+enum GalleryAlbumListPresentation {
+    static func shouldShowEmptyState(albumCount: Int, isLoading: Bool, error: String) -> Bool {
+        albumCount == 0 && !isLoading && error.isEmpty
+    }
+}
+
+enum GalleryAlbumAddFeedback {
+    static func message(added: Int, requested: Int) -> String {
+        guard added < requested else { return "Added all \(added) selected photos." }
+        let skipped = max(0, requested - added)
+        return "Added \(added) of \(requested) selected photos. \(skipped) skipped because they were already in the album or unavailable to this account."
+    }
+}
+
 enum GalleryAlbumAccess {
     static func canManage(_ album: GalleryAlbumDetail, currentUserId: String) -> Bool {
         album.role == "owner" && album.owner == currentUserId

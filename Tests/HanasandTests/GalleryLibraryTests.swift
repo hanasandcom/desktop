@@ -16,6 +16,21 @@ final class GalleryLibraryTests: XCTestCase {
         return (Data(body.utf8), http)
     }
 
+    func testAlbumListEmptyStateDoesNotHideRequestFailures() {
+        XCTAssertTrue(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 0, isLoading: false, error: ""))
+        XCTAssertFalse(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 0, isLoading: true, error: ""))
+        XCTAssertFalse(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 0, isLoading: false, error: "Network unavailable"))
+        XCTAssertFalse(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 2, isLoading: false, error: ""))
+    }
+
+    func testPartialAlbumAddExplainsSkippedPhotos() {
+        XCTAssertEqual(
+            GalleryAlbumAddFeedback.message(added: 2, requested: 5),
+            "Added 2 of 5 selected photos. 3 skipped because they were already in the album or unavailable to this account."
+        )
+        XCTAssertEqual(GalleryAlbumAddFeedback.message(added: 3, requested: 3), "Added all 3 selected photos.")
+    }
+
     func testSearchAndFavoritesUseAuthenticatedOwnerScopedPagedContract() async throws {
         var request: URLRequest?
         let client = try GalleryAlbumClient(settings: settings) { next in

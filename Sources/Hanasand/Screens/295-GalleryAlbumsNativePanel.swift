@@ -18,6 +18,7 @@ struct GalleryAlbumsNativePanel: View {
     @State private var busy = false
     @State private var status = "Ready"
     @State private var error = ""
+    @State private var notice = ""
     @State private var confirmDelete = false
     @State private var confirmLeaveAlbum = false
     @State private var confirmEnablePublicLink = false
@@ -39,6 +40,9 @@ struct GalleryAlbumsNativePanel: View {
                     NativeGroupPanel(title: "Album request failed", subtitle: "") {
                         Text(error).foregroundStyle(theme.danger).textSelection(.enabled)
                     }
+                }
+                if !notice.isEmpty {
+                    NativeNotice(message: notice, title: "Photos added", tone: .success)
                 }
                 if let album {
                     albumDetail(album)
@@ -126,7 +130,7 @@ struct GalleryAlbumsNativePanel: View {
                     }
                 }
             }
-            if albums.isEmpty && !busy {
+            if GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: albums.count, isLoading: busy, error: error) {
                 NativeEmptyState(title: "No albums yet", message: "Create an album, then add photos already uploaded to your library.")
             }
             ForEach(albums) { item in
@@ -175,11 +179,15 @@ struct GalleryAlbumsNativePanel: View {
                 }
             }
             if canManage {
-                HStack(spacing: 8) {
-                    TextField("Album name", text: $nameDraft).textFieldStyle(.roundedBorder).disabled(busy)
-                    ActionButton(title: "Save name", icon: "checkmark") { Task { await renameAlbum() } }
-                        .disabled(busy || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines) == album.name)
-                    ActionButton(title: "Delete", icon: "trash", tone: .danger) { confirmDelete = true }.disabled(busy)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        albumNameField
+                        albumNameActions(album)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        albumNameField
+                        albumNameActions(album)
+                    }
                 }
             } else if !canAddItems {
                 Text("View only. Owners and contributors can add photos.")
@@ -189,13 +197,9 @@ struct GalleryAlbumsNativePanel: View {
 
         if showPicker && canAddItems {
             NativeGroupPanel(title: "Choose library photos", subtitle: "Select existing files · \(selectedFiles.count) selected") {
-                HStack {
-                    ActionButton(title: "Add selected", icon: "plus", tone: .normal) { Task { await addSelected() } }
-                        .disabled(busy || selectedFiles.isEmpty)
-                    ActionButton(title: "Previous", icon: "chevron.left") { Task { await loadLibrary(offset: max(0, libraryOffset - 60)) } }
-                        .disabled(busy || libraryOffset == 0)
-                    ActionButton(title: "Next", icon: "chevron.right") { Task { await loadLibrary(offset: libraryOffset + 60) } }
-                        .disabled(busy || library.count < 60 || libraryOffset >= 1_000_000)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { librarySelectionActions }
+                    VStack(alignment: .leading, spacing: 8) { librarySelectionActions }
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: 10)], spacing: 10) {
                     ForEach(library) { file in
@@ -250,9 +254,9 @@ struct GalleryAlbumsNativePanel: View {
                 }
                 .padding(.vertical, 6)
             }
-            HStack {
-                ActionButton(title: "Previous page", icon: "chevron.left") { Task { await open(album.id, offset: max(0, offset - 60), month: selectedMonth) } }.disabled(busy || offset == 0)
-                ActionButton(title: "Next page", icon: "chevron.right") { Task { await open(album.id, offset: offset + 60, month: selectedMonth) } }.disabled(busy || offset + album.items.count >= album.total || offset >= 1_000_000)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { albumContentPageActions(album) }
+                VStack(alignment: .leading, spacing: 8) { albumContentPageActions(album) }
             }
         }
 
@@ -260,37 +264,35 @@ struct GalleryAlbumsNativePanel: View {
             NativeGroupPanel(title: "Sharing & access", subtitle: "Owner controls") {
                 Text(album.isPublic ? "Anyone with the public link can view this album." : "Only you and invited accounts can view this album.")
                     .font(.system(size: 13)).foregroundStyle(theme.textSecondary)
-                HStack(spacing: 8) {
-                    if album.isPublic {
-                        ActionButton(title: "Get public link", icon: "link") { beginSharingChange(true) }.disabled(busy)
-                        ActionButton(title: "Disable public link", icon: "link.badge.minus", tone: .danger) { confirmDisablePublicLink = true }.disabled(busy)
-                    } else {
-                        ActionButton(title: "Enable public link", icon: "link") { confirmEnablePublicLink = true }.disabled(busy)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { sharingActions(album) }
+                    VStack(alignment: .leading, spacing: 8) { sharingActions(album) }
                 }
                 if let publicShareURL, album.isPublic {
-                    HStack(spacing: 8) {
-                        Text(publicShareURL.absoluteString).font(.system(size: 12, design: .monospaced)).foregroundStyle(theme.textSecondary).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-                        ActionButton(title: "Copy link", icon: "doc.on.doc") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(publicShareURL.absoluteString, forType: .string)
-                            status = "Public album link copied"
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            publicShareLinkText(publicShareURL)
+                            copyPublicLinkButton(publicShareURL)
+                            sharePublicLinkButton(publicShareURL)
                         }
-                        ShareLink(item: publicShareURL) {
-                            Label("Share link", systemImage: "square.and.arrow.up")
+                        VStack(alignment: .leading, spacing: 8) {
+                            publicShareLinkText(publicShareURL)
+                            HStack(spacing: 8) {
+                                copyPublicLinkButton(publicShareURL)
+                                sharePublicLinkButton(publicShareURL)
+                            }
                         }
-                        .buttonStyle(.bordered)
-                        .help("Share this public album link")
                     }
                 }
-                HStack(spacing: 8) {
-                    TextField("Hanasand account ID", text: $memberDraft).textFieldStyle(.roundedBorder).disabled(busy)
-                    Picker("Access", selection: $memberRole) {
-                        Text("View only").tag("viewer")
-                        Text("Can add photos").tag("contributor")
-                    }.frame(width: 170).disabled(busy)
-                    ActionButton(title: "Grant access", icon: "person.badge.plus") { Task { await addMember() } }
-                        .disabled(busy || memberDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { memberAccessForm }
+                    VStack(alignment: .leading, spacing: 8) {
+                        memberAccountField
+                        HStack(spacing: 8) {
+                            memberRolePicker
+                            grantAlbumAccessButton
+                        }
+                    }
                 }
                 ForEach(album.members ?? []) { member in
                     HStack {
@@ -301,6 +303,100 @@ struct GalleryAlbumsNativePanel: View {
                 }
             }
         }
+    }
+
+    private var albumNameField: some View {
+        TextField("Album name", text: $nameDraft)
+            .textFieldStyle(.roundedBorder)
+            .disabled(busy)
+            .frame(minWidth: 160)
+    }
+
+    private func albumNameActions(_ album: GalleryAlbumDetail) -> some View {
+        HStack(spacing: 8) {
+            ActionButton(title: "Save name", icon: "checkmark") { Task { await renameAlbum() } }
+                .disabled(busy || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines) == album.name)
+            ActionButton(title: "Delete", icon: "trash", tone: .danger) { confirmDelete = true }
+                .disabled(busy)
+        }
+    }
+
+    @ViewBuilder private var librarySelectionActions: some View {
+        ActionButton(title: "Add selected", icon: "plus", tone: .normal) { Task { await addSelected() } }
+            .disabled(busy || selectedFiles.isEmpty)
+        ActionButton(title: "Previous", icon: "chevron.left") { Task { await loadLibrary(offset: max(0, libraryOffset - 60)) } }
+            .disabled(busy || libraryOffset == 0)
+        ActionButton(title: "Next", icon: "chevron.right") { Task { await loadLibrary(offset: libraryOffset + 60) } }
+            .disabled(busy || library.count < 60 || libraryOffset >= 1_000_000)
+    }
+
+    @ViewBuilder private func albumContentPageActions(_ album: GalleryAlbumDetail) -> some View {
+        ActionButton(title: "Previous page", icon: "chevron.left") { Task { await open(album.id, offset: max(0, offset - 60), month: selectedMonth) } }
+            .disabled(busy || offset == 0)
+        ActionButton(title: "Next page", icon: "chevron.right") { Task { await open(album.id, offset: offset + 60, month: selectedMonth) } }
+            .disabled(busy || offset + album.items.count >= album.total || offset >= 1_000_000)
+    }
+
+    @ViewBuilder private func sharingActions(_ album: GalleryAlbumDetail) -> some View {
+        if album.isPublic {
+            ActionButton(title: "Get public link", icon: "link") { beginSharingChange(true) }.disabled(busy)
+            ActionButton(title: "Disable public link", icon: "link.badge.minus", tone: .danger) { confirmDisablePublicLink = true }.disabled(busy)
+        } else {
+            ActionButton(title: "Enable public link", icon: "link") { confirmEnablePublicLink = true }.disabled(busy)
+        }
+    }
+
+    private func publicShareLinkText(_ url: URL) -> some View {
+        Text(url.absoluteString)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(theme.textSecondary)
+            .textSelection(.enabled)
+            .lineLimit(2)
+            .truncationMode(.middle)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func copyPublicLinkButton(_ url: URL) -> some View {
+        ActionButton(title: "Copy link", icon: "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url.absoluteString, forType: .string)
+            status = "Public album link copied"
+        }
+    }
+
+    private func sharePublicLinkButton(_ url: URL) -> some View {
+        ShareLink(item: url) {
+            Label("Share link", systemImage: "square.and.arrow.up")
+        }
+        .buttonStyle(.bordered)
+        .help("Share this public album link")
+    }
+
+    private var memberAccountField: some View {
+        TextField("Hanasand account ID", text: $memberDraft)
+            .textFieldStyle(.roundedBorder)
+            .disabled(busy)
+            .frame(minWidth: 160)
+    }
+
+    private var memberRolePicker: some View {
+        Picker("Access", selection: $memberRole) {
+            Text("View only").tag("viewer")
+            Text("Can add photos").tag("contributor")
+        }
+        .frame(width: 170)
+        .disabled(busy)
+    }
+
+    private var grantAlbumAccessButton: some View {
+        ActionButton(title: "Grant access", icon: "person.badge.plus") { Task { await addMember() } }
+            .disabled(busy || memberDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    @ViewBuilder private var memberAccessForm: some View {
+        memberAccountField
+        memberRolePicker
+        grantAlbumAccessButton
     }
 
     @ViewBuilder private func albumNavigationButtons(_ album: GalleryAlbumDetail, stacked: Bool = false) -> some View {
@@ -371,6 +467,7 @@ struct GalleryAlbumsNativePanel: View {
             return nil
         }
         busy = true; error = ""; status = "Working…"
+        notice = ""
         defer { busy = false }
         do {
             let value = try await action(try GalleryAlbumClient(settings: requestSettings))
@@ -474,8 +571,9 @@ struct GalleryAlbumsNativePanel: View {
 
     private func addSelected() async {
         guard let album, let receipt = await withClient({ try await $0.addItems(Array(selectedFiles), to: album) }, success: "Photos added") else { return }
-        status = "Added \(receipt.added) of \(receipt.requested) selected photos"
         selectedFiles.removeAll(); showPicker = false; await open(album.id, offset: offset); await refreshAlbums()
+        notice = GalleryAlbumAddFeedback.message(added: receipt.added, requested: receipt.requested)
+        if error.isEmpty { status = "Album photos updated" }
     }
 
     private func remove(_ item: GalleryAlbumItem) async {
