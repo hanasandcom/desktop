@@ -11,6 +11,16 @@ import UniformTypeIdentifiers
 import WebKit
 
 extension DesktopAgentModel {
+    static func localAgentPort(from environment: [String: String] = ProcessInfo.processInfo.environment) -> UInt16 {
+        let defaultPort: UInt16 = 45_731
+        guard let rawValue = environment["HANASAND_DESKTOP_AGENT_PORT"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              let port = UInt16(rawValue), port >= 1_024 else {
+            return defaultPort
+        }
+        return port
+    }
+
     static var automaticUpdateCheckInterval: TimeInterval {
         let rawValue = ProcessInfo.processInfo.environment["HANASAND_APP_UPDATE_CHECK_SECONDS"] ?? ""
         if let value = TimeInterval(rawValue), value >= 10 {
@@ -83,7 +93,8 @@ extension DesktopAgentModel {
 
     func start() async {
         guard server == nil else { return }
-        let next = LoopbackAgentServer(port: 45731, certificateProvider: { [weak self] in
+        let port = Self.localAgentPort()
+        let next = LoopbackAgentServer(port: port, certificateProvider: { [weak self] in
             self?.desktopAgentSessionCertificate ?? ""
         }) { [weak self] command in
             Task { @MainActor in
@@ -94,7 +105,7 @@ extension DesktopAgentModel {
             try next.start(advertisingIPv4Addresses: Self.localAgentIPv4Addresses())
             server = next
             status = AgentStatus.ready(message: "online")
-            append(meta: "Agent", body: "https://localhost:45731")
+            append(meta: "Agent", body: "https://localhost:\(port)")
             startRemoteCodexWorkerIfAvailable()
             beginAutomaticUpdateCheck()
             beginDesktopAgentPresence()

@@ -6,7 +6,7 @@ PORT="${HANASAND_DESKTOP_AGENT_PORT:-45731}"
 BASE_URL="${HANASAND_DESKTOP_AGENT_URL:-https://localhost:${PORT}}"
 STAMP="$(date +"%Y%m%d-%H%M%S")"
 OUT_DIR="${HANASAND_DESKTOP_SMOKE_OUT:-${ROOT_DIR}/.artifacts/desktop-smoke-${STAMP}}"
-APP_BIN="${ROOT_DIR}/.build/debug/Hanasand"
+APP_BIN="${HANASAND_DESKTOP_APP_BIN:-${ROOT_DIR}/.build/debug/Hanasand}"
 SIGNER_SOURCE="${ROOT_DIR}/scripts/smoke-transport.swift"
 SIGNER_BIN="${OUT_DIR}/smoke-transport"
 APP_NAME="${HANASAND_DESKTOP_APP_NAME:-Hanasand}"
@@ -120,12 +120,23 @@ wait_for_agent() {
 
 start_app_if_needed() {
   if agent_ready; then
+    if [[ -n "${HANASAND_DESKTOP_APP_BIN:-}" ]]; then
+      log "${BASE_URL} is already serving; choose an unused HANASAND_DESKTOP_AGENT_PORT for the requested candidate binary"
+      return 1
+    fi
     log "loopback agent already reachable at ${BASE_URL}"
     return 0
   fi
 
-  log "building Desktop app"
-  swift build --package-path "${ROOT_DIR}" >/dev/null
+  if [[ -n "${HANASAND_DESKTOP_APP_BIN:-}" ]]; then
+    if [[ ! -x "${APP_BIN}" ]]; then
+      log "HANASAND_DESKTOP_APP_BIN is not executable: ${APP_BIN}"
+      return 1
+    fi
+  else
+    log "building Desktop app"
+    swift build --package-path "${ROOT_DIR}" >/dev/null
+  fi
 
   log "launching ${APP_BIN}"
   "${APP_BIN}" >"${OUT_DIR}/hanasand-desktop.log" 2>&1 &

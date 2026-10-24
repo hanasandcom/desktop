@@ -4,6 +4,15 @@ import XCTest
 @testable import Hanasand
 
 final class LoopbackAgentServerTests: XCTestCase {
+    @MainActor
+    func testLocalAgentPortUsesValidatedEnvironmentOverride() {
+        XCTAssertEqual(DesktopAgentModel.localAgentPort(from: ["HANASAND_DESKTOP_AGENT_PORT": "45732"]), 45_732)
+        for value in ["", "0", "80", "65536", "not-a-port"] {
+            XCTAssertEqual(DesktopAgentModel.localAgentPort(from: ["HANASAND_DESKTOP_AGENT_PORT": value]), 45_731)
+        }
+        XCTAssertEqual(DesktopAgentModel.localAgentPort(from: [:]), 45_731)
+    }
+
     func testNormalizesAPIReferenceDashboardCommand() {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "explore", body: Data()), "open_dashboard_tools")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "traffic-map", body: Data()), "open_dashboard_traffic_map")
