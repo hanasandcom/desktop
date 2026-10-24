@@ -55,13 +55,7 @@ struct ThreatRulesNativePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: title, subtitle: page.map { "\($0.organization.name) · \($0.rules.count) rules" } ?? "Organization-scoped detection configuration") {
-                HStack(spacing: 8) {
-                    ActionButton(title: busy ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load() } }.disabled(busy)
-                    ActionButton(title: "Create rule", icon: "plus") { beginNewRule() }.disabled(busy || !canEditDraft)
-                    if category == "detection", selected == nil, !showingEditor {
-                        ActionButton(title: showingImports ? "Close imports" : "Import rules", icon: "square.and.arrow.down") { showingImports.toggle() }.disabled(busy || !canImportRules)
-                    }
-                }
+                ruleHeaderActions
                 TextField("Search name, ID, or description", text: $search).textFieldStyle(.roundedBorder)
                 if !error.isEmpty { Text(error).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled) }
                 if !status.isEmpty { Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled) }
@@ -107,6 +101,50 @@ struct ThreatRulesNativePanel: View {
     }
     private var canImportRules: Bool { ["owner", "admin"].contains(page?.organization.role.lowercased() ?? "") }
     private var draftAction: String { (try? decodeDefinition()["action"]?.stringValue) ?? "keep" }
+
+    private var showsImportAction: Bool { category == "detection" && selected == nil && !showingEditor }
+
+    @ViewBuilder private var ruleHeaderActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                refreshRulesButton
+                createRuleButton
+                if showsImportAction { importRulesButton }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    refreshRulesButton
+                    createRuleButton
+                }
+                if showsImportAction { importRulesButton }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                refreshRulesButton
+                createRuleButton
+                if showsImportAction { importRulesButton }
+            }
+        }
+    }
+
+    private var refreshRulesButton: some View {
+        ActionButton(title: busy ? "Loading…" : "Refresh", icon: "arrow.clockwise") { Task { await load() } }
+            .disabled(busy)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var createRuleButton: some View {
+        ActionButton(title: "Create rule", icon: "plus") { beginNewRule() }
+            .disabled(busy || !canEditDraft)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var importRulesButton: some View {
+        ActionButton(title: showingImports ? "Close imports" : "Import rules", icon: "square.and.arrow.down") { showingImports.toggle() }
+            .disabled(busy || !canImportRules)
+            .fixedSize(horizontal: true, vertical: false)
+    }
 
     @ViewBuilder private var importEditor: some View {
         NativeGroupPanel(title: "Import detection rules", subtitle: "Imported rules apply to new events and are recorded in the organization audit history.") {
