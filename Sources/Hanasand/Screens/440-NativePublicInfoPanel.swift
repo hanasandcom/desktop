@@ -133,8 +133,13 @@ struct NativePublicInfoPanel: View {
             if page.kind == .home {
                 homeHero
             } else {
-                NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
+                NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true, showsTitle: page.kind != .faq) {
                     VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
+                        if page.kind == .faq {
+                            Text(page.eyebrow)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                        }
                         Text(page.title)
                             .font(.system(size: heroTitleSize, weight: .semibold))
                             .foregroundStyle(theme.text)
@@ -147,6 +152,10 @@ struct NativePublicInfoPanel: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
                             .textSelection(.enabled)
+                        if page.kind == .faq, let contactRoute = page.links.first(where: { $0.title == "Ask a different question" })?.route {
+                            ActionButton(title: "Ask a different question", icon: "arrow.right") { open(contactRoute) }
+                                .padding(.top, 4)
+                        }
                         if page.kind == .scannerSolution || page.kind == .monitoringSolution {
                             solutionActions
                                 .padding(.top, 4)
@@ -201,7 +210,7 @@ struct NativePublicInfoPanel: View {
                 }
             }
 
-            if !page.links.isEmpty && page.kind != .home && page.kind != .scannerSolution && page.kind != .monitoringSolution {
+            if !page.links.isEmpty && page.kind != .home && page.kind != .faq && page.kind != .scannerSolution && page.kind != .monitoringSolution {
                 NativeGroupPanel(title: page.kind == .home ? "Explore Hanasand" : "Related", subtitle: "") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), alignment: .leading)], alignment: .leading, spacing: 8) {
                         ForEach(page.links) { link in

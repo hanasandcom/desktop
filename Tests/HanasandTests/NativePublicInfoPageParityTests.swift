@@ -11,6 +11,14 @@ final class NativePublicInfoPageParityTests: XCTestCase {
         XCTAssertEqual(NativePublicInfoPage.faqItems.prefix(10).count, 10)
     }
 
+    func testFAQUsesTheWebsiteContactCTAWithoutAnExtraRelatedSection() throws {
+        let faq = try XCTUnwrap(NativePublicInfoPage.resolve("/faq"))
+        XCTAssertEqual(faq.eyebrow, "FAQ")
+        XCTAssertEqual(faq.links.map(\.title), ["Ask a different question"])
+        XCTAssertEqual(faq.links.map(\.route), ["/contact"])
+        XCTAssertTrue(faq.sections.isEmpty)
+    }
+
     func testSolutionCallsToActionMatchWebsiteDestinations() throws {
         let scanner = try XCTUnwrap(NativePublicInfoPage.resolve("/solutions/scanner"))
         XCTAssertEqual(scanner.links.map(\.route), ["/scanner"])

@@ -157,7 +157,6 @@ struct NativePublicInfoPage: Identifiable, Hashable {
         route: "/faq", title: "Answers for security teams evaluating Hanasand.", eyebrow: "FAQ",
         intro: "Short explanations of threat actors, monitoring coverage, alert confidence, routing, and what each signal does or does not prove.",
         kind: .faq,
-        sections: [.init(title: "Need a different answer?", paragraphs: ["Contact Hanasand and describe the question or workflow you are evaluating."])],
         links: [.init(title: "Ask a different question", route: "/contact")]
     )
 
