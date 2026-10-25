@@ -246,6 +246,131 @@ struct SandboxLiveWorkspaceNativePanel: View {
                     }
                 }
             }
+
+            if !session.providerResults.isEmpty {
+                NativeGroupPanel(title: "Provider results · \(session.providerResults.count)", subtitle: "Live analysis returned by the selected profile") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(session.providerResults) { result in
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(result.name)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(theme.text)
+                                    Spacer(minLength: 4)
+                                    Text(result.status)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(result.error.isEmpty ? theme.accent : theme.danger)
+                                        .multilineTextAlignment(.trailing)
+                                }
+                                if !result.target.isEmpty {
+                                    Text("Target · \(result.target)")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.url.isEmpty {
+                                    Text(result.url)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(theme.textTertiary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if let screenshotData = result.screenshotData, let screenshot = NSImage(data: screenshotData) {
+                                    Image(nsImage: screenshot)
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxWidth: .infinity)
+                                        .frame(maxHeight: 320)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                        .accessibilityLabel("\(result.name) provider screenshot")
+                                }
+                                if !result.deobfuscatedCode.isEmpty {
+                                    Text(result.deobfuscatedCode)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                        .background(theme.card, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                }
+                                if !result.webcrackLoadSummary.isEmpty {
+                                    Text("WebCrack · \(result.webcrackLoadSummary)")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(theme.textTertiary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                let metrics = [
+                                    result.vendorFlagged.map { "VirusTotal · \($0)\(result.vendorTotal.map { "/\($0)" } ?? " flagged")" },
+                                    result.alertCount.map { "Alerts · \($0)" },
+                                    result.communityCommentCount.map { "Community comments · \($0)" },
+                                ].compactMap { $0 }
+                                if !metrics.isEmpty {
+                                    Text(metrics.joined(separator: "   ·   "))
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.verdict.isEmpty {
+                                    Text("Verdict · \(result.verdict)")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.error.isEmpty {
+                                    Text(result.error)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(theme.danger)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.communitySummary.isEmpty {
+                                    Text("Provider summary · \(result.communitySummary)")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.communityComments.isEmpty {
+                                    Text("Community comments")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(theme.textTertiary)
+                                    ForEach(Array(result.communityComments.enumerated()), id: \.offset) { _, comment in
+                                        Text("• \(comment)")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(theme.textSecondary)
+                                            .textSelection(.enabled)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                if !result.extractedSignals.isEmpty {
+                                    Text("Signals · \(result.extractedSignals.joined(separator: " · "))")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                ForEach(result.threatAssociations) { association in
+                                    Text([association.name, association.category, association.confidence, association.evidence]
+                                        .filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(theme.textSecondary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !result.capturedAt.isEmpty {
+                                    Text("Captured · \(result.capturedAt)")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                            if result.id != session.providerResults.last?.id { Divider() }
+                        }
+                    }
+                }
+            }
         }
         .task(id: profileCredentialKey) {
             resetProfileScope()

@@ -61,6 +61,45 @@ struct SandboxBrowserProfile: Codable, Equatable, Identifiable {
     ]
 }
 
+struct SandboxLiveThreatAssociation: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let category: String
+    let confidence: String
+    let evidence: String
+    let source: String
+}
+
+struct SandboxLiveProviderResult: Equatable, Identifiable {
+    let id: String
+    let name: String
+    let toolKind: String
+    let target: String
+    let url: String
+    let capturedAt: String
+    let error: String
+    let screenshotData: Data?
+    let deobfuscatedCode: String
+    let webcrackLoadSummary: String
+    let vendorFlagged: Int?
+    let vendorTotal: Int?
+    let alertCount: Int?
+    let communityCommentCount: Int?
+    let communityComments: [String]
+    let communitySummary: String
+    let verdict: String
+    let extractedSignals: [String]
+    let threatAssociations: [SandboxLiveThreatAssociation]
+
+    var status: String {
+        if !error.isEmpty { return "Provider error" }
+        if let vendorFlagged { return vendorTotal.map { "\(vendorFlagged)/\($0) vendors" } ?? "\(vendorFlagged) vendors flagged" }
+        if let alertCount { return "\(alertCount) alerts" }
+        if !verdict.isEmpty { return verdict }
+        return "Captured"
+    }
+}
+
 enum SandboxBrowserProfileDraftMarker {
     static func isPending(storageKey: String, defaults: UserDefaults) -> Bool {
         defaults.bool(forKey: markerKey(storageKey: storageKey))
@@ -618,6 +657,81 @@ enum SandboxLiveProtocol {
         return (data, width, height)
     }
 
+    static func decodeProviderCapture(_ payload: [String: Any]) -> SandboxLiveProviderResult? {
+        guard let name = boundedString(payload["name"], maximumBytes: 160), !name.isEmpty else { return nil }
+        let rawID = boundedString(payload["id"], maximumBytes: 80) ?? name
+        let id = rawID.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil
+            ? rawID : String(rawID.lowercased().replacingOccurrences(of: "[^a-z0-9_-]+", with: "-", options: .regularExpression).prefix(80))
+        guard !id.isEmpty else { return nil }
+        let analysis = payload["toolAnalysis"] as? [String: Any] ?? [:]
+        let toolKind = boundedString(analysis["toolKind"], maximumBytes: 80)?.lowercased() ?? ""
+        let threatAssociations = (analysis["threatAssociations"] as? [[String: Any]] ?? []).prefix(12).enumerated().map { index, item in
+            SandboxLiveThreatAssociation(
+                id: "\(id)-threat-\(index)",
+                name: boundedString(item["name"], maximumBytes: 240) ?? "",
+                category: boundedString(item["category"], maximumBytes: 48) ?? "",
+                confidence: boundedString(item["confidence"], maximumBytes: 24) ?? "",
+                evidence: boundedString(item["evidence"], maximumBytes: 512) ?? "",
+                source: boundedString(item["source"], maximumBytes: 48) ?? ""
+            )
+        }.filter { !$0.name.isEmpty || !$0.evidence.isEmpty }
+        return SandboxLiveProviderResult(
+            id: id,
+            name: name,
+            toolKind: toolKind,
+            target: boundedString(payload["target"], maximumBytes: 2_048) ?? "",
+            url: boundedString(payload["url"], maximumBytes: 2_048) ?? "",
+            capturedAt: boundedString(payload["capturedAt"], maximumBytes: 128) ?? "",
+            error: boundedString(payload["error"], maximumBytes: 512) ?? "",
+            screenshotData: boundedJPEG(payload["image"]),
+            deobfuscatedCode: boundedString(payload["deobfuscatedCode"], maximumBytes: 65_536) ?? "",
+            webcrackLoadSummary: webcrackLoadSummary(payload["webcrackLoad"]),
+            vendorFlagged: boundedInteger(analysis["vendorFlagged"]),
+            vendorTotal: boundedInteger(analysis["vendorTotal"]),
+            alertCount: boundedInteger(analysis["alertCount"]),
+            communityCommentCount: boundedInteger(analysis["communityCommentCount"]),
+            communityComments: boundedStrings(analysis["communityComments"], count: 10, maximumBytes: 512),
+            communitySummary: boundedString(analysis["communitySummary"], maximumBytes: 1_024) ?? "",
+            verdict: boundedString(analysis["verdict"], maximumBytes: 96) ?? "",
+            extractedSignals: boundedStrings(analysis["extractedSignals"], count: 16, maximumBytes: 512),
+            threatAssociations: threatAssociations
+        )
+    }
+
+    private static func boundedString(_ value: Any?, maximumBytes: Int) -> String? {
+        guard let value = value as? String else { return nil }
+        return String(decoding: value.utf8.prefix(maximumBytes), as: UTF8.self)
+    }
+
+    private static func boundedStrings(_ value: Any?, count: Int, maximumBytes: Int) -> [String] {
+        guard let values = value as? [String] else { return [] }
+        return values.prefix(count).map { String(decoding: $0.utf8.prefix(maximumBytes), as: UTF8.self) }
+    }
+
+    private static func boundedInteger(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber else { return nil }
+        let value = number.doubleValue
+        guard value.isFinite, value >= 0, value <= 100_000 else { return nil }
+        return Int(value)
+    }
+
+    private static func boundedJPEG(_ value: Any?) -> Data? {
+        guard let encoded = value as? String, encoded.utf8.count <= 4 * 1_024 * 1_024,
+              let data = Data(base64Encoded: encoded), data.count <= 3 * 1_024 * 1_024,
+              data.starts(with: [0xFF, 0xD8, 0xFF]) else { return nil }
+        return data
+    }
+
+    private static func webcrackLoadSummary(_ value: Any?) -> String {
+        guard let load = value as? [String: Any] else { return "" }
+        let parts = [
+            boundedString(load["action"], maximumBytes: 80),
+            boundedString(load["reason"], maximumBytes: 240),
+            boundedInteger(load["sampleBytes"]).map { "\($0) bytes sampled" },
+        ].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.joined(separator: " · ")
+    }
+
     private static func jsonString(_ object: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         guard let text = String(data: data, encoding: .utf8) else { throw SandboxLiveSessionError.invalidResponse }
@@ -645,6 +759,7 @@ final class SandboxLiveSession: ObservableObject {
     @Published private(set) var streamURL: URL?
     @Published private(set) var streamWidth = 0
     @Published private(set) var streamHeight = 0
+    @Published private(set) var providerResults: [SandboxLiveProviderResult] = []
 
     private let transport: SandboxLiveSocketTransport
     private var receiveTask: Task<Void, Never>?
@@ -797,6 +912,14 @@ final class SandboxLiveSession: ObservableObject {
                 state = .live
                 serviceMessage = "Viewport updated · \(width) × \(height)"
             } catch { fail(error) }
+        case "tool_capture":
+            guard let result = SandboxLiveProtocol.decodeProviderCapture(payload) else { break }
+            if let index = providerResults.firstIndex(where: { $0.id == result.id }) {
+                providerResults[index] = result
+            } else {
+                providerResults.append(result)
+            }
+            if providerResults.count > 8 { providerResults.removeFirst(providerResults.count - 8) }
         case "status":
             let reason = (payload["state"] as? String) ?? ""
             let message = (payload["message"] as? String) ?? ""
@@ -921,6 +1044,7 @@ final class SandboxLiveSession: ObservableObject {
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
+        providerResults = []
         apiBaseURL = nil
         pageURL = ""
         pageTitle = ""

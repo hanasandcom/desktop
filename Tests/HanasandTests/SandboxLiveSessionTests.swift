@@ -375,6 +375,90 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertThrowsError(try SandboxLiveProtocol.decodeFrame(["type": "frame", "image": jpeg.base64EncodedString(), "width": 9000, "height": 720]))
     }
 
+    func testProviderCaptureDecodesContractAndBoundsUntrustedFields() throws {
+        let payload: [String: Any] = [
+            "type": "tool_capture", "id": "virustotal", "name": "VirusTotal",
+            "url": "https://www.virustotal.com/gui/search/example.test", "target": "https://example.test",
+            "capturedAt": "2026-10-25T10:00:00Z", "error": "",
+            "image": Data([0xFF, 0xD8, 0xFF, 0xD9]).base64EncodedString(),
+            "deobfuscatedCode": "const result = 1;",
+            "webcrackLoad": ["action": "loaded", "reason": "script found", "sampleBytes": 512],
+            "toolAnalysis": [
+                "toolKind": "virustotal", "vendorFlagged": 3, "vendorTotal": 94,
+                "communityCommentCount": 2, "communityComments": ["Suspicious redirect", "Malware lure"],
+                "communitySummary": "Review the redirect chain.", "verdict": "suspicious",
+                "extractedSignals": ["redirect", "credential form"],
+                "threatAssociations": [["name": "Example actor", "category": "actor", "confidence": "medium", "evidence": "Shared landing page"]],
+            ],
+        ]
+
+        let result = try XCTUnwrap(SandboxLiveProtocol.decodeProviderCapture(payload))
+        XCTAssertEqual(result.id, "virustotal")
+        XCTAssertEqual(result.name, "VirusTotal")
+        XCTAssertEqual(result.status, "3/94 vendors")
+        XCTAssertEqual(result.communityComments, ["Suspicious redirect", "Malware lure"])
+        XCTAssertEqual(result.extractedSignals, ["redirect", "credential form"])
+        XCTAssertEqual(result.threatAssociations.first?.name, "Example actor")
+        XCTAssertEqual(result.screenshotData, Data([0xFF, 0xD8, 0xFF, 0xD9]))
+        XCTAssertEqual(result.deobfuscatedCode, "const result = 1;")
+        XCTAssertEqual(result.webcrackLoadSummary, "loaded · script found · 512 bytes sampled")
+
+        let oversized: [String: Any] = [
+            "id": "custom", "name": String(repeating: "n", count: 300),
+            "error": String(repeating: "x", count: 2_000),
+            "toolAnalysis": [
+                "vendorFlagged": -1, "vendorTotal": 100_001,
+                "communityComments": Array(repeating: String(repeating: "c", count: 1_000), count: 20),
+            ],
+        ]
+        let bounded = try XCTUnwrap(SandboxLiveProtocol.decodeProviderCapture(oversized))
+        XCTAssertLessThanOrEqual(bounded.name.utf8.count, 160)
+        XCTAssertLessThanOrEqual(bounded.error.utf8.count, 512)
+        XCTAssertNil(bounded.vendorFlagged)
+        XCTAssertNil(bounded.vendorTotal)
+        XCTAssertEqual(bounded.communityComments.count, 10)
+        XCTAssertTrue(bounded.communityComments.allSatisfy { $0.utf8.count <= 512 })
+        let invalidImage = try XCTUnwrap(SandboxLiveProtocol.decodeProviderCapture(["id": "bad", "name": "No image", "image": "not base64"]))
+        XCTAssertNil(invalidImage.screenshotData)
+        XCTAssertNil(SandboxLiveProtocol.decodeProviderCapture(["id": "bad"]))
+    }
+
+    func testSessionRetainsProviderCapturesAndReplacesSameProvider() async throws {
+        let transport = MockSandboxLiveSocket()
+        let session = SandboxLiveSession(transport: transport)
+        await session.start(SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        ))
+        transport.enqueue(#"{"type":"tool_capture","id":"virustotal","name":"VirusTotal","target":"https://example.test","toolAnalysis":{"toolKind":"virustotal","vendorFlagged":1,"vendorTotal":90}}"#)
+        await waitFor { session.providerResults.count == 1 }
+        XCTAssertEqual(session.providerResults.first?.status, "1/90 vendors")
+
+        transport.enqueue(#"{"type":"tool_capture","id":"virustotal","name":"VirusTotal","target":"https://example.test","toolAnalysis":{"toolKind":"virustotal","vendorFlagged":4,"vendorTotal":90}}"#)
+        await waitFor { session.providerResults.first?.status == "4/90 vendors" }
+        XCTAssertEqual(session.providerResults.count, 1)
+
+        transport.enqueue(#"{"type":"tool_capture","id":"urlquery","name":"urlquery","error":"Provider timed out","toolAnalysis":{"toolKind":"urlquery"}}"#)
+        await waitFor { session.providerResults.count == 2 }
+        XCTAssertEqual(session.providerResults.last?.status, "Provider error")
+        XCTAssertEqual(session.providerResults.last?.error, "Provider timed out")
+        await session.stop()
+        XCTAssertEqual(session.providerResults.count, 2, "Stopping the live session keeps its received results visible for review.")
+    }
+
+    func testSessionBoundsProviderCaptureHistoryToProfileToolLimit() async throws {
+        let transport = MockSandboxLiveSocket()
+        let session = SandboxLiveSession(transport: transport)
+        await session.start(SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        ))
+        for index in 0..<10 {
+            transport.enqueue("{\"type\":\"tool_capture\",\"id\":\"tool-\(index)\",\"name\":\"Tool \(index)\"}")
+        }
+        await waitFor { session.providerResults.count == 8 && session.providerResults.last?.id == "tool-9" }
+        XCTAssertEqual(session.providerResults.map(\.id), (2..<10).map { "tool-\($0)" })
+        await session.stop()
+    }
+
     func testSessionStartsRendersFrameSerializesInputAndStops() async throws {
         let transport = MockSandboxLiveSocket()
         let session = SandboxLiveSession(transport: transport)
