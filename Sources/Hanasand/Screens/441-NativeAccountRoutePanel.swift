@@ -185,6 +185,12 @@ struct NativeAccountRoutePanel: View {
         return NativeAccountRouteKind(path: path)
     }
     private var title: String { kind?.title ?? "Hanasand account" }
+    private var contentMaxWidth: CGFloat {
+        switch kind {
+        case .login, .signup: 448
+        default: 720
+        }
+    }
 
     static func supports(path: String) -> Bool { NativeAccountRouteKind(path: path) != nil }
 
@@ -209,7 +215,7 @@ struct NativeAccountRoutePanel: View {
                     }
                 }
             }
-            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: contentMaxWidth, alignment: .leading)
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .center)
         }
