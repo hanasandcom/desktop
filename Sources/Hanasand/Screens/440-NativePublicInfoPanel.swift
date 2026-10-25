@@ -140,20 +140,12 @@ struct NativePublicInfoPanel: View {
 
     private var aboutContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 14) {
-                    aboutCompanyPanel
-                    aboutFocusPanel
-                }
-                VStack(alignment: .leading, spacing: 14) {
-                    aboutCompanyPanel
-                    aboutFocusPanel
-                }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 400), alignment: .top)], alignment: .leading, spacing: 14) {
+                aboutCompanyPanel
+                aboutFocusPanel
             }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) { aboutPrinciplePanels }
-                VStack(alignment: .leading, spacing: 14) { aboutPrinciplePanels }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), alignment: .top)], alignment: .leading, spacing: 14) {
+                aboutPrinciplePanels
             }
         }
     }
