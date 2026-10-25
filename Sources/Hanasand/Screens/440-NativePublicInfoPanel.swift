@@ -63,7 +63,7 @@ struct NativePublicInfoPanel: View {
 
     private var standardContentBody: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: page.eyebrow, subtitle: "") {
+            NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
                 Text(page.title)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(theme.text)
@@ -375,7 +375,7 @@ struct NativePublicInfoPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), alignment: .top)], alignment: .leading, spacing: 10) {
                 ForEach(NativePublicInfoPage.plans) { plan in
-                    NativeGroupPanel(title: plan.name, subtitle: plan.quota) {
+                    NativeGroupPanel(title: plan.name, subtitle: plan.quota, fillsAvailableWidth: true) {
                         Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
                         Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
                         ForEach(plan.features, id: \.self) { feature in
@@ -388,8 +388,9 @@ struct NativePublicInfoPanel: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(page.sections) { section in
-                NativeGroupPanel(title: section.title, subtitle: "") {
+                NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: true) {
                     ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
                         Text(paragraph).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
                     }
