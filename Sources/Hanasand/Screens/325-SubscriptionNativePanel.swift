@@ -1,6 +1,42 @@
 import AppKit
 import SwiftUI
 
+enum SubscriptionCheckoutReturn: String, Equatable {
+    case success
+    case cancelled
+
+    init?(queryValue: String?) {
+        guard let queryValue else { return nil }
+        self.init(rawValue: queryValue)
+    }
+
+    func acknowledgement(after refreshedData: AccountSubscriptionEnvelope?) -> String {
+        guard let refreshedData else {
+            return "Checkout returned, but subscription status could not be refreshed. Use Refresh to try again."
+        }
+
+        switch self {
+        case .cancelled:
+            return "Checkout was cancelled. Subscription status has been refreshed."
+        case .success:
+            if refreshedData.entitlements.isEmpty {
+                return "Checkout returned successfully, but active plan access is not reported yet."
+            }
+            return "Checkout returned successfully. Refreshed account status reports active plan access."
+        }
+    }
+}
+
+struct SubscriptionCheckoutReturnTracker {
+    private(set) var lastHandled: SubscriptionCheckoutReturn?
+
+    mutating func claim(_ checkoutReturn: SubscriptionCheckoutReturn?) -> Bool {
+        guard let checkoutReturn, checkoutReturn != lastHandled else { return false }
+        lastHandled = checkoutReturn
+        return true
+    }
+}
+
 struct SubscriptionNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -13,6 +49,15 @@ struct SubscriptionNativePanel: View {
     @State private var revision = 0
     @State private var requestID = UUID()
     @State private var checkoutRequestID = UUID()
+    @State private var checkoutReturnTracker = SubscriptionCheckoutReturnTracker()
+
+    private var checkoutReturn: SubscriptionCheckoutReturn? {
+        SubscriptionCheckoutReturn(queryValue: model.selectedNativeDashboardQuery["checkout"])
+    }
+
+    private var refreshTaskID: String {
+        "\(scope)|checkout=\(model.selectedNativeDashboardQuery["checkout"] ?? "")"
+    }
 
     private var scope: String {
         "\(model.settings.apiBaseURL)|\(model.settings.websiteBaseURL)|\(model.userIDForRequests)|\(model.authTokenForRequests.hashValue)|\(model.settings.impersonationToken.hashValue)|\(revision)"
@@ -45,7 +90,11 @@ struct SubscriptionNativePanel: View {
             }
             availablePlansCard
         }
-        .task(id: scope) { await refresh() }
+        .task(id: refreshTaskID) {
+            let requestedCheckoutReturn = checkoutReturn
+            let shouldAcknowledgeReturn = checkoutReturnTracker.claim(requestedCheckoutReturn)
+            await refresh(checkoutReturn: shouldAcknowledgeReturn ? requestedCheckoutReturn : nil)
+        }
         .onDisappear {
             requestID = UUID()
             checkoutRequestID = UUID()
@@ -203,7 +252,7 @@ struct SubscriptionNativePanel: View {
         .font(.system(size: 12))
     }
 
-    private func refresh() async {
+    private func refresh(checkoutReturn: SubscriptionCheckoutReturn? = nil) async {
         let currentRequestID = UUID()
         requestID = currentRequestID
         let requestedScope = scope
@@ -212,6 +261,9 @@ struct SubscriptionNativePanel: View {
         checkoutStatus = ""
         guard model.hasHanasandAuth else {
             error = "Sign in to view subscription information."
+            if let checkoutReturn {
+                checkoutStatus = checkoutReturn.acknowledgement(after: nil)
+            }
             return
         }
         loading = true
@@ -224,9 +276,15 @@ struct SubscriptionNativePanel: View {
             let result = try await client.load()
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
             data = result
+            if let checkoutReturn {
+                checkoutStatus = checkoutReturn.acknowledgement(after: result)
+            }
         } catch let cause {
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
             error = cause.localizedDescription
+            if let checkoutReturn {
+                checkoutStatus = checkoutReturn.acknowledgement(after: nil)
+            }
         }
     }
 

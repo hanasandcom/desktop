@@ -39,6 +39,53 @@ final class AccountSubscriptionClientTests: XCTestCase {
         XCTAssertNil(result.quotas.first?.remaining)
     }
 
+    func testSubscriptionCheckoutReturnRecognizesOnlyExpectedStatuses() {
+        XCTAssertEqual(SubscriptionCheckoutReturn(queryValue: "success"), .success)
+        XCTAssertEqual(SubscriptionCheckoutReturn(queryValue: "cancelled"), .cancelled)
+        XCTAssertNil(SubscriptionCheckoutReturn(queryValue: nil))
+        XCTAssertNil(SubscriptionCheckoutReturn(queryValue: "failed"))
+        XCTAssertNil(SubscriptionCheckoutReturn(queryValue: "SUCCESS"))
+    }
+
+    func testSubscriptionCheckoutReturnRefreshesOncePerStatusAndAllowsNextReturn() {
+        var tracker = SubscriptionCheckoutReturnTracker()
+
+        XCTAssertTrue(tracker.claim(.success))
+        XCTAssertFalse(tracker.claim(.success))
+        XCTAssertTrue(tracker.claim(.cancelled))
+        XCTAssertFalse(tracker.claim(.cancelled))
+        XCTAssertTrue(tracker.claim(.success))
+    }
+
+    func testCheckoutReturnAcknowledgementUsesOnlyFreshSubscriptionResponse() throws {
+        let success = try XCTUnwrap(SubscriptionCheckoutReturn(queryValue: "success"))
+        XCTAssertTrue(success.acknowledgement(after: nil).contains("could not be refreshed"))
+
+        let noActiveAccess = try JSONDecoder().decode(
+            AccountSubscriptionEnvelope.self,
+            from: Data(#"{"subscription":null,"entitlements":[],"quotas":[]}"#.utf8)
+        )
+        XCTAssertTrue(success.acknowledgement(after: noActiveAccess).contains("not reported yet"))
+        XCTAssertFalse(success.acknowledgement(after: noActiveAccess).contains("reports active plan access"))
+
+        let activeAccess = try JSONDecoder().decode(
+            AccountSubscriptionEnvelope.self,
+            from: Data(#"{"subscription":{"planId":"plus","status":"active","currentPeriodStart":null,"currentPeriodEnd":null,"cancelAtPeriodEnd":false},"entitlements":[{"planId":"plus","features":["traffic-map"]}],"quotas":[]}"#.utf8)
+        )
+        XCTAssertTrue(success.acknowledgement(after: activeAccess).contains("Refreshed account status reports active plan access"))
+    }
+
+    func testCancelledCheckoutAcknowledgementWaitsForRefresh() throws {
+        let cancelled = try XCTUnwrap(SubscriptionCheckoutReturn(queryValue: "cancelled"))
+        XCTAssertTrue(cancelled.acknowledgement(after: nil).contains("could not be refreshed"))
+
+        let currentState = try JSONDecoder().decode(
+            AccountSubscriptionEnvelope.self,
+            from: Data(#"{"subscription":null,"entitlements":[],"quotas":[]}"#.utf8)
+        )
+        XCTAssertEqual(cancelled.acknowledgement(after: currentState), "Checkout was cancelled. Subscription status has been refreshed.")
+    }
+
     func testLoadForwardsImpersonationContextWhenPresent() async throws {
         var captured: URLRequest?
         let client = try AccountSubscriptionClient(baseURL: URL(string: "https://api.hanasand.test/api")!, userID: "admin", token: "token", impersonationToken: "scope-token") { request in
