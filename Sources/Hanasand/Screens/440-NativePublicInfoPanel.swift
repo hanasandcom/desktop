@@ -44,6 +44,7 @@ private struct WebsiteWeightedColumns: Layout {
 struct NativePublicInfoPanel: View {
     let page: NativePublicInfoPage
     let onNavigate: (String) -> Void
+    private let homeActivityViewModel: PublicExposureActivityViewModel?
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -62,8 +63,21 @@ struct NativePublicInfoPanel: View {
     @State private var isSubmitting = false
     @State private var search = ""
     @State private var selectedFAQCategory = "All"
-    @State private var faqFeedback = NativeFAQFeedbackStore.load()
+    @State private var faqFeedback: [String: NativeFAQFeedbackVote]
     @StateObject private var planCheckout = NativePlanCheckoutCoordinator()
+
+    @MainActor
+    init(
+        page: NativePublicInfoPage,
+        onNavigate: @escaping (String) -> Void,
+        homeActivityViewModel: PublicExposureActivityViewModel? = nil,
+        initialFAQFeedback: [String: NativeFAQFeedbackVote]? = nil
+    ) {
+        self.page = page
+        self.onNavigate = onNavigate
+        self.homeActivityViewModel = homeActivityViewModel
+        _faqFeedback = State(initialValue: initialFAQFeedback ?? NativeFAQFeedbackStore.load())
+    }
 
     private var filteredFAQs: [NativePublicInfoFAQ] {
         NativePublicInfoPage.faqItems.filter { item in
@@ -143,7 +157,7 @@ struct NativePublicInfoPanel: View {
             }
 
             if page.kind == .home {
-                PublicExposureActivityNativePanel()
+                PublicExposureActivityNativePanel(viewModel: homeActivityViewModel)
                 homeContent
             } else if page.kind == .faq {
                 faqContent

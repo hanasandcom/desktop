@@ -256,6 +256,26 @@ final class DesktopAgentModel: ObservableObject {
         saveSettings()
     }
 
+#if DEBUG
+    /// Creates an unauthenticated model for deterministic visual tests without
+    /// consulting persistent preferences, Keychain credentials, or services.
+    init(visualFixture: Void) {
+        var fixtureSettings = HanasandDesktopSettings()
+        fixtureSettings.websiteBaseURL = "https://visual-fixture.invalid"
+        fixtureSettings.apiBaseURL = "https://visual-fixture.invalid/api"
+        fixtureSettings.internalAPIBaseURL = "https://visual-fixture.invalid/api"
+        fixtureSettings.cdnBaseURL = "https://visual-fixture.invalid/api"
+        fixtureSettings.aiAPIURL = "https://visual-fixture.invalid/api/tools/ai"
+        fixtureSettings.authToken = ""
+        fixtureSettings.userID = ""
+        fixtureSettings.impersonationToken = ""
+        fixtureSettings.impersonatingUserID = ""
+        fixtureSettings.impersonatingUserName = ""
+        self.appearancePreference = .light
+        self.settings = fixtureSettings
+    }
+#endif
+
     var quickAppActions: [DesktopAction] {
         [
             .route("Hanasand", "Open the native public home screen.", "house", "/"),
