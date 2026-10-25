@@ -392,13 +392,24 @@ struct DesktopCronJob: Decodable, Identifiable {
     let logExcerpt: String?
     let controls: [String]
     let controlMode: String
+    let assumptions: [String]
     let resourceUsage: DesktopCronResourceUsage?
     let costEstimate: DesktopCronCostEstimate?
+
+    var controlSummary: String {
+        switch controlMode {
+        case "observable_only": "Audit only"
+        case "run_only": "Run now supported"
+        case "editable": "Pause/resume and schedule edit"
+        case "safe_control": controls.contains("run_now") ? "Safe pause/resume and run now" : "Safe pause/resume"
+        default: controls.contains("run_now") ? "Run now supported" : "No controls available"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id, name, description, category, source, service, schedule, cadenceSeconds, enabled, running, status
         case lastRunAt, lastSuccessAt, nextRunAt, averageRuntimeMs, failureCount, lastError, logExcerpt
-        case controls, controlMode, resourceUsage, costEstimate
+        case controls, controlMode, assumptions, resourceUsage, costEstimate
     }
 
     init(from decoder: Decoder) throws {
@@ -423,6 +434,7 @@ struct DesktopCronJob: Decodable, Identifiable {
         logExcerpt = try values.decodeIfPresent(String.self, forKey: .logExcerpt)
         controls = try values.decodeIfPresent([String].self, forKey: .controls) ?? []
         controlMode = try values.decodeIfPresent(String.self, forKey: .controlMode) ?? "observable_only"
+        assumptions = (try? values.decode([String].self, forKey: .assumptions)) ?? []
         resourceUsage = try values.decodeIfPresent(DesktopCronResourceUsage.self, forKey: .resourceUsage)
         costEstimate = try values.decodeIfPresent(DesktopCronCostEstimate.self, forKey: .costEstimate)
     }

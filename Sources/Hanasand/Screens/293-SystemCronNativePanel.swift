@@ -245,10 +245,24 @@ struct SystemCronNativePanel: View {
                         requestUpdate(job, payload: DesktopCronUpdatePayload(action: "run_now"))
                     }.disabled(busyID == job.id || job.running)
                 }
-                if job.controlMode == "observable_only" {
-                    Text("View only").font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                labeled("Control", value: job.controlSummary)
+                Text("Why these controls apply")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.text)
+                if job.assumptions.isEmpty {
+                    Text("No control assumptions were supplied by the service.")
+                        .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
+                } else {
+                    ForEach(job.assumptions.indices, id: \.self) { index in
+                        Text("• \(job.assumptions[index])")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
+            .accessibilityIdentifier("system-cron-control-assumptions")
 
             if let usage = job.resourceUsage {
                 Divider().overlay(theme.divider)
