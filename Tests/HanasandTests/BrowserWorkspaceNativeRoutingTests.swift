@@ -71,8 +71,12 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/about")?.path, "/about")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/developers")?.path, "/developers")
         let destinations = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/actions?org=org-22")
-        XCTAssertEqual(destinations?.path, "/findings/actions")
+        XCTAssertEqual(destinations?.path, "/integrations")
         XCTAssertEqual(destinations?.query["org"], "org-22")
+        let deliveryManager = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/findings/actions?organizationId=org-24")
+        XCTAssertEqual(deliveryManager?.path, "/integrations")
+        XCTAssertEqual(deliveryManager?.query["organizationId"], "org-24")
+        XCTAssertTrue(BrowserWorkspaceModel.hasNativeDestination(for: deliveryManager?.path ?? ""))
         let organizationCases = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/findings/alerts?organizationId=org-23")
         XCTAssertEqual(organizationCases?.path, "/cases")
         XCTAssertEqual(organizationCases?.query["organizationId"], "org-23")
@@ -259,10 +263,10 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(model.events.last?.kind, .error)
     }
 
-    func testCanonicalMobileNavigationPathsResolveToTheirNativeWorkflows() {
+    func testCanonicalWebsiteNavigationPathsResolveToTheirNativeWorkflows() {
         let routes: [(String, String)] = [
             ("https://hanasand.com/findings/actors", "/ti/profiles"),
-            ("https://hanasand.com/findings/actions", "/findings/actions"),
+            ("https://hanasand.com/findings/actions", "/integrations"),
             ("https://hanasand.com/findings/delivery", "/integrations"),
             ("https://hanasand.com/organizations/privacy", "/organization-privacy"),
             ("https://hanasand.com/organizations/api-keys", "/organization-api-keys"),
@@ -421,12 +425,12 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(reset?.query["token"], "reset-token-abc")
     }
 
-    func testEveryCanonicalDashboardNavigationRouteResolvesToANativeScreenRoute() {
+    func testEveryCanonicalWebsiteNavigationRouteResolvesToANativeScreenRoute() {
         let routes: [(String, String)] = [
             ("/cases", "/cases"), ("/ti", "/ti"), ("/ti/activity", "/ti/activity"),
             ("/findings/actors", "/ti/profiles"), ("/ti/profiles", "/ti/enrichment"),
             ("/watchlists", "/watchlists"), ("/findings", "/findings"),
-            ("/findings/actions", "/findings/actions"),
+            ("/findings/actions", "/integrations"),
             ("/system/virtual-machines", "/vms"), ("/repositories", "/repositories"),
             ("/ti/sources", "/ti/sources"), ("/ti/runs", "/ti/runs"),
             ("/ti/timeliness", "/ti/timeliness"), ("/sandbox", "/sandbox"),
