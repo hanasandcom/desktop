@@ -50,8 +50,8 @@ final class DeveloperOnboardingTests: XCTestCase {
       "servers": [{"url": "https://api.example.test/api/v1"}],
       "security": [{"ApiKey": []}, {"SessionBearer": [], "SessionId": []}],
       "paths": {
-        "/0-api-key-only": {"get": {"security": [{"ApiKey": []}], "responses": {"200": {"description": "OK"}}}},
-        "/actors": {"get": {"summary": "List actors", "parameters": [{"$ref": "#/components/parameters/Page"}, {"$ref": "#/components/parameters/Limit"}], "responses": {"200": {"description": "OK"}}}},
+        "/0-session-only": {"get": {"security": [{"SessionBearer": [], "SessionId": []}], "responses": {"200": {"description": "OK"}}}},
+        "/actors": {"get": {"summary": "List actors", "security": [{"ApiKey": []}, {"SessionBearer": [], "SessionId": []}], "parameters": [{"$ref": "#/components/parameters/Page"}, {"$ref": "#/components/parameters/Limit"}], "responses": {"200": {"description": "OK"}}}},
         "/public-search": {"get": {"security": [], "responses": {"200": {"description": "OK"}}}}
       },
       "components": {"parameters": {"Page": {"name": "page", "in": "query", "schema": {"type": "integer"}}, "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer"}}}, "securitySchemes": {"ApiKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"}, "SessionBearer": {"type": "http", "scheme": "bearer"}, "SessionId": {"type": "apiKey", "in": "header", "name": "id"}}}
@@ -64,37 +64,35 @@ final class DeveloperOnboardingTests: XCTestCase {
 
         XCTAssertEqual(details.openAPIURL.absoluteString, "https://hanasand.com/api/openapi/ti")
         XCTAssertEqual(details.serverURL.absoluteString, "https://api.example.test/api/v1")
-        XCTAssertEqual(details.sessionIDHeader, "id")
-        XCTAssertEqual(details.firstSessionGETPath, "/actors")
+        XCTAssertEqual(details.apiKeyHeader, "X-API-Key")
+        XCTAssertEqual(details.firstAPIKeyGETPath, "/actors")
+        XCTAssertEqual(details.firstAPIKeyGETScope, "GET /api/v1/actors")
         XCTAssertTrue(details.supportsPageAndLimit)
-        XCTAssertEqual(details.eventIntakeURL?.absoluteString, "https://api.example.test/mill")
 
         let typeGeneration = NativeDeveloperOnboardingContent.typeGenerationCommand(details: details)
         XCTAssertTrue(typeGeneration.contains(details.openAPIURL.absoluteString))
         XCTAssertTrue(typeGeneration.contains("openapi-typescript"))
         XCTAssertEqual(NativeDeveloperOnboardingContent.clientInstallCommand, "npm install openapi-fetch")
 
-        let eventCommand = try XCTUnwrap(NativeDeveloperOnboardingContent.eventIntakeCommand(details: details))
-        XCTAssertTrue(eventCommand.contains("https://api.example.test/mill"))
-        XCTAssertTrue(eventCommand.contains("Authorization: Bearer $HANASAND_API_KEY"))
-        XCTAssertTrue(eventCommand.contains("$HANASAND_EVENT_JSON"))
-        XCTAssertFalse(eventCommand.contains("YOUR_API_KEY"))
+        let curlExample = try XCTUnwrap(NativeDeveloperOnboardingContent.apiKeyCurlExample(details: details))
+        XCTAssertTrue(curlExample.contains("https://api.example.test/api/v1/actors?page=1&limit=20"))
+        XCTAssertTrue(curlExample.contains("X-API-Key: $HANASAND_API_KEY"))
+        XCTAssertFalse(curlExample.contains("Authorization: Bearer"))
+        XCTAssertFalse(curlExample.contains("YOUR_API_KEY"))
 
         let typedClient = NativeDeveloperOnboardingContent.typedClientExample(details: details)
         XCTAssertTrue(typedClient.contains("baseUrl: \"https://api.example.test/api/v1\""))
-        XCTAssertTrue(typedClient.contains("Authorization: `Bearer ${process.env.HANASAND_SESSION_BEARER!}`"))
-        XCTAssertTrue(typedClient.contains("\"id\": process.env.HANASAND_SESSION_ID!"))
+        XCTAssertTrue(typedClient.contains("\"X-API-Key\": process.env.HANASAND_API_KEY!"))
         XCTAssertTrue(typedClient.contains("api.GET(\"/actors\""))
         XCTAssertTrue(typedClient.contains("page: 1, limit: 20"))
         XCTAssertFalse(typedClient.contains("YOUR_API_KEY"))
-        XCTAssertFalse(typedClient.contains("HANASAND_API_KEY"), "A GET sample must not imply the POST /mill-only organization key can read actors.")
-        XCTAssertFalse(typedClient.contains("HANASAND_EVENT_JSON"))
+        XCTAssertFalse(typedClient.contains("HANASAND_SESSION_BEARER"))
     }
 
-    func testSelectsAGetSupportingBothSessionRequirementsInsteadOfApiKeyOnlyOrAnonymous() async throws {
+    func testSelectsFirstGETWhoseSecurityRequirementCanBeSatisfiedByTheOrganizationKey() async throws {
         let client = DeveloperAPIReferenceClient(transport: DeveloperOnboardingStubTransport(data: Data(contract.utf8), status: 200))
         let details = try await client.load(websiteBaseURL: "https://hanasand.com")
-        XCTAssertEqual(details.firstSessionGETPath, "/actors")
+        XCTAssertEqual(details.firstAPIKeyGETPath, "/actors")
     }
 
     func testContractLoadCanBeRetriedAfterTransientFailure() async throws {
@@ -106,7 +104,7 @@ final class DeveloperOnboardingTests: XCTestCase {
         } catch { XCTAssertTrue(error is DeveloperAPIReferenceError) }
 
         let details = try await client.load(websiteBaseURL: "https://hanasand.com")
-        XCTAssertEqual(details.firstSessionGETPath, "/actors")
+        XCTAssertEqual(details.firstAPIKeyGETPath, "/actors")
         XCTAssertEqual(transport.requestCount, 2)
     }
 
@@ -119,20 +117,29 @@ final class DeveloperOnboardingTests: XCTestCase {
         XCTAssertFalse(NativeDeveloperOnboardingContent.typedClientExample(details: details).contains("params: { query:"))
     }
 
-    func testRejectsContractsWithInsecureServersOrNoSessionAuthorizedGet() async {
+    func testRejectsContractsWithInsecureServersOrNoAPIKeyAuthorizedGet() async {
         let insecure = contract.replacingOccurrences(of: "https://api.example.test/api/v1", with: "http://api.example.test/api/v1")
-        let noSessionGet = contract.replacingOccurrences(
-            of: "\"security\": [{\"ApiKey\": []}, {\"SessionBearer\": [], \"SessionId\": []}]",
-            with: "\"security\": [{\"ApiKey\": []}]"
-        )
+        let noAPIKeyGet = contract.replacingOccurrences(of: "{\"ApiKey\": []}, ", with: "")
 
-        for value in [insecure, noSessionGet] {
+        for value in [insecure, noAPIKeyGet] {
             let client = DeveloperAPIReferenceClient(transport: DeveloperOnboardingStubTransport(data: Data(value.utf8), status: 200))
             do {
                 _ = try await client.load(websiteBaseURL: "https://hanasand.com")
                 XCTFail("Expected an invalid contract to be rejected")
             } catch { XCTAssertTrue(error is DeveloperAPIReferenceError) }
         }
+    }
+
+    func testDoesNotUseRouteThatAlsoRequiresASession() async {
+        let keyAndSessionRequired = contract.replacingOccurrences(
+            of: "\"security\": [{\"ApiKey\": []}, {\"SessionBearer\": [], \"SessionId\": []}]",
+            with: "\"security\": [{\"ApiKey\": [], \"SessionBearer\": [], \"SessionId\": []}]"
+        )
+        let client = DeveloperAPIReferenceClient(transport: DeveloperOnboardingStubTransport(data: Data(keyAndSessionRequired.utf8), status: 200))
+        do {
+            _ = try await client.load(websiteBaseURL: "https://hanasand.com")
+            XCTFail("A route requiring a key and session should not be used in a key-only example")
+        } catch { XCTAssertTrue(error is DeveloperAPIReferenceError) }
     }
 
     func testPaginationGuidanceDocumentsBoundsAndEndCondition() {

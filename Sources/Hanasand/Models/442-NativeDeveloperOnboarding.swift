@@ -3,16 +3,15 @@ import Foundation
 struct DeveloperAPIReferenceDetails: Equatable {
     let openAPIURL: URL
     let serverURL: URL
-    let sessionIDHeader: String
-    let firstSessionGETPath: String
+    let apiKeyHeader: String
+    let firstAPIKeyGETPath: String
     let supportsPageAndLimit: Bool
 
-    var eventIntakeURL: URL? {
-        guard var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false) else { return nil }
-        components.path = "/mill"
-        components.query = nil
-        components.fragment = nil
-        return components.url
+    var firstAPIKeyGETScope: String {
+        let serverPath = serverURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let routePath = firstAPIKeyGETPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let path = serverPath.isEmpty ? "/\(routePath)" : "/\(serverPath)/\(routePath)"
+        return "GET \(path)"
     }
 }
 
@@ -24,13 +23,12 @@ enum NativeDeveloperOnboardingContent {
         "npx openapi-typescript \(shellString(details.openAPIURL.absoluteString)) -o src/hanasand-api.d.ts"
     }
 
-    static func eventIntakeCommand(details: DeveloperAPIReferenceDetails) -> String? {
-        guard let url = details.eventIntakeURL else { return nil }
+    static func apiKeyCurlExample(details: DeveloperAPIReferenceDetails) -> String? {
+        guard let url = apiKeyRequestURL(details: details) else { return nil }
+        let query = details.supportsPageAndLimit ? "?page=1&limit=20" : ""
         return [
-            "curl \(shellString(url.absoluteString)) \\",
-            "  -H 'Authorization: Bearer $HANASAND_API_KEY' \\",
-            "  -H 'Content-Type: application/json' \\",
-            "  --data \"$HANASAND_EVENT_JSON\"",
+            "curl \(shellString(url.absoluteString + query)) \\",
+            "  -H \(shellString("\(details.apiKeyHeader): $HANASAND_API_KEY"))",
         ].joined(separator: "\n")
     }
 
@@ -39,8 +37,8 @@ enum NativeDeveloperOnboardingContent {
             ? "\n  params: { query: { page: 1, limit: 20 } }\n"
             : ""
         let serverLiteral = javaScriptStringLiteral(details.serverURL.absoluteString)
-        let headerLiteral = javaScriptStringLiteral(details.sessionIDHeader)
-        let pathLiteral = javaScriptStringLiteral(details.firstSessionGETPath)
+        let headerLiteral = javaScriptStringLiteral(details.apiKeyHeader)
+        let pathLiteral = javaScriptStringLiteral(details.firstAPIKeyGETPath)
         return """
         import createClient from 'openapi-fetch'
         import type { paths } from './hanasand-api'
@@ -48,14 +46,23 @@ enum NativeDeveloperOnboardingContent {
         const api = createClient<paths>({
           baseUrl: \(serverLiteral),
           headers: {
-            Authorization: `Bearer ${process.env.HANASAND_SESSION_BEARER!}`,
-            \(headerLiteral): process.env.HANASAND_SESSION_ID!
+            \(headerLiteral): process.env.HANASAND_API_KEY!
           }
         })
 
         const { data, error } = await api.GET(\(pathLiteral), {\(requestOptions)})
         if (error) throw new Error(error.error.message)
         """
+    }
+
+    private static func apiKeyRequestURL(details: DeveloperAPIReferenceDetails) -> URL? {
+        guard var components = URLComponents(url: details.serverURL, resolvingAgainstBaseURL: false) else { return nil }
+        let serverPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let routePath = details.firstAPIKeyGETPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = serverPath.isEmpty ? "/\(routePath)" : "/\(serverPath)/\(routePath)"
+        components.query = nil
+        components.fragment = nil
+        return components.url
     }
 
     private static func javaScriptStringLiteral(_ value: String) -> String {

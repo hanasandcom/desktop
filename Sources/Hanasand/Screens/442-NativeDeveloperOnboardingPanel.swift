@@ -12,7 +12,7 @@ struct NativeDeveloperOnboardingPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: "Build with the Hanasand API", subtitle: "Native developer setup") {
-                Text("Create an organization API key, send an authenticated request, then inspect the live API contract below.")
+                Text("Choose an organization, create a key, and make your first request against a route allowed by the published API contract.")
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
@@ -31,13 +31,13 @@ struct NativeDeveloperOnboardingPanel: View {
                         apiKeyActions
                     }
                 }
-                Text("Organization keys created here are scoped to event intake (POST /mill). Treat the secret like a password; it is shown once when created.")
+                Text("Keys are scoped to the organization’s server-defined public API routes, expire after 90 days, and are shown only once. Choose an owner or admin organization in the API key manager.")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
             }
-            NativeGroupPanel(title: "First request", subtitle: "Send a real JSON event using the organization key") {
-                if let referenceDetails, let command = NativeDeveloperOnboardingContent.eventIntakeCommand(details: referenceDetails) {
+            NativeGroupPanel(title: "First request", subtitle: "Call a GET route supported by an organization API key") {
+                if let referenceDetails, let command = NativeDeveloperOnboardingContent.apiKeyCurlExample(details: referenceDetails) {
                     developerCode(command)
-                    Text("Set HANASAND_EVENT_JSON to a JSON event produced by your integration. The organization key grants POST /mill event-intake access; it does not grant GET /actors access.")
+                    Text("This example uses the \(referenceDetails.firstAPIKeyGETScope) grant and \(referenceDetails.apiKeyHeader) header from the published contract. The API key manager shows the organization’s active keys and grants. If the request returns 401, check the key and environment variable. For 403, select an organization with access or use a route included in the key’s grants.")
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
                 } else {
                     onboardingContractStatus
@@ -55,11 +55,11 @@ struct NativeDeveloperOnboardingPanel: View {
                     onboardingContractStatus
                 }
             }
-            NativeGroupPanel(title: "Typed TypeScript client", subtitle: "Install openapi-fetch and use the documented user session contract") {
+            NativeGroupPanel(title: "Typed TypeScript client", subtitle: "Install openapi-fetch and authenticate with the organization API key") {
                 developerCode(NativeDeveloperOnboardingContent.clientInstallCommand)
                 if let referenceDetails {
                     developerCode(NativeDeveloperOnboardingContent.typedClientExample(details: referenceDetails))
-                    Text("This GET example uses the contract's Hanasand user-session requirements, not the organization event-ingest key. Set HANASAND_SESSION_BEARER and HANASAND_SESSION_ID in your own runtime; the app never inserts its live session credentials here.")
+                    Text("Set HANASAND_API_KEY in your own runtime. The app never inserts a live key or session credential into this example.")
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
                 } else {
                     onboardingContractStatus

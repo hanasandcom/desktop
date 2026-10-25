@@ -51,16 +51,16 @@ struct DeveloperAPIReferenceClient {
         let document = try APIReferenceDocument.decode(data)
         guard let rawServer = document.servers?.first?.url,
               let serverURL = Self.validServerURL(rawServer),
-              let operation = Self.firstSessionGET(in: document),
+              let operation = Self.firstAPIKeyGET(in: document),
               operation.row.path.hasPrefix("/"),
-              let header = Self.sessionIDHeader(in: document) else {
+              let header = Self.apiKeyHeader(in: document) else {
             throw DeveloperAPIReferenceError.invalidContract
         }
         return DeveloperAPIReferenceDetails(
             openAPIURL: openAPIURL,
             serverURL: serverURL,
-            sessionIDHeader: header,
-            firstSessionGETPath: operation.row.path,
+            apiKeyHeader: header,
+            firstAPIKeyGETPath: operation.row.path,
             supportsPageAndLimit: operation.queryNames.contains("page") && operation.queryNames.contains("limit")
         )
     }
@@ -89,15 +89,12 @@ struct DeveloperAPIReferenceClient {
         return url
     }
 
-    private static func firstSessionGET(in document: APIReferenceDocument) -> (row: APIReferenceOperationRow, queryNames: Set<String>)? {
+    private static func firstAPIKeyGET(in document: APIReferenceDocument) -> (row: APIReferenceOperationRow, queryNames: Set<String>)? {
         let getRows = document.operations.filter { $0.method == "GET" }
-        let selected = getRows.first { row in
+        guard let selected = getRows.first(where: { row in
             let requirements = row.operation.security ?? document.security ?? []
-            return allowsSession(requirements)
-        } ?? getRows.first
-        guard let selected,
-              let requirements = selected.operation.security ?? document.security,
-              allowsSession(requirements) else { return nil }
+            return allowsAPIKey(requirements)
+        }) else { return nil }
         let queryNames = (selected.operation.parameters ?? []).compactMap { parameter -> String? in
             guard case .object(let values) = document.resolvingComponentReferences(in: parameter),
                   case .string("query")? = values["in"],
@@ -107,32 +104,31 @@ struct DeveloperAPIReferenceClient {
         return (selected, Set(queryNames))
     }
 
-    private static func allowsSession(_ requirements: [APIReferenceJSONValue]) -> Bool {
-        let sessionSchemes: Set<String> = ["SessionBearer", "SessionId"]
+    private static func allowsAPIKey(_ requirements: [APIReferenceJSONValue]) -> Bool {
         return requirements.contains { requirement in
             guard case .object(let schemes) = requirement else { return false }
-            return Set(schemes.keys) == sessionSchemes
+            return Set(schemes.keys) == ["ApiKey"]
         }
     }
 
-    private static func sessionIDHeader(in document: APIReferenceDocument) -> String? {
+    private static func apiKeyHeader(in document: APIReferenceDocument) -> String? {
         guard let components = document.components,
               case .object(let schemes)? = components["securitySchemes"],
-              case .object(let bearer)? = schemes["SessionBearer"],
-              case .string("http")? = bearer["type"],
-              case .string("bearer")? = bearer["scheme"],
-              case .object(let sessionID)? = schemes["SessionId"],
-              case .string("apiKey")? = sessionID["type"],
-              case .string("header")? = sessionID["in"],
-              case .string(let name)? = sessionID["name"],
-              !name.isEmpty,
-              name.unicodeScalars.allSatisfy({ scalar in
-                  let value = scalar.value
-                  return (value >= 48 && value <= 57)
-                      || (value >= 65 && value <= 90)
-                      || (value >= 97 && value <= 122)
-                      || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar)
-              }) else { return nil }
+              case .object(let apiKey)? = schemes["ApiKey"],
+              case .string("apiKey")? = apiKey["type"],
+              case .string("header")? = apiKey["in"],
+              case .string(let name)? = apiKey["name"],
+              !name.isEmpty, Self.isValidHTTPHeaderName(name) else { return nil }
         return name
+    }
+
+    private static func isValidHTTPHeaderName(_ name: String) -> Bool {
+        name.unicodeScalars.allSatisfy { scalar in
+            let value = scalar.value
+            return (value >= 48 && value <= 57)
+                || (value >= 65 && value <= 90)
+                || (value >= 97 && value <= 122)
+                || "!#$%&'*+-.^_`|~".unicodeScalars.contains(scalar)
+        }
     }
 }
