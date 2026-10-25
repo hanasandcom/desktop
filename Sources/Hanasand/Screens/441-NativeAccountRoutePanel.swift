@@ -265,17 +265,17 @@ struct NativeAccountRoutePanel: View {
                 SecureField("Password", text: $model.loginPassword)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await signIn() } }
-                HStack(spacing: 8) {
-                    ActionButton(title: model.isLoggingIn ? "Signing in…" : "Sign in", icon: "person.crop.circle") { Task { await signIn() } }
+                VStack(alignment: .leading, spacing: 8) {
+                    ActionButton(title: model.isLoggingIn ? "Signing in…" : "Sign in", icon: "person.crop.circle", expands: true) { Task { await signIn() } }
                         .disabled(model.isLoggingIn || model.loginUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.loginPassword.isEmpty)
-                    ActionButton(title: "Create account", icon: "person.badge.plus") { openRoute("/signup", label: "Create account", query: filteredReturnQuery) }
+                    ActionButton(title: "Create account", icon: "person.badge.plus", expands: true) { openRoute("/signup", label: "Create account", query: filteredReturnQuery) }
                         .disabled(model.isLoggingIn)
                 }
-                HStack(spacing: 8) {
-                    ActionButton(title: "Continue with Google", icon: "globe") { Task { await model.beginGoogleSignIn() } }.disabled(model.isLoggingIn)
-                    ActionButton(title: "Continue with SSO", icon: "person.badge.key") { model.beginHanasandSso() }.disabled(model.isLoggingIn)
+                VStack(alignment: .leading, spacing: 8) {
+                    ActionButton(title: "Continue with Google", icon: "globe", expands: true) { Task { await model.beginGoogleSignIn() } }.disabled(model.isLoggingIn)
+                    ActionButton(title: "Continue with SSO", icon: "person.badge.key", expands: true) { model.beginHanasandSso() }.disabled(model.isLoggingIn)
                 }
-                ActionButton(title: "Forgot password?", icon: "key") {
+                ActionButton(title: "Forgot password?", icon: "key", expands: true) {
                     model.loginUsername = model.loginUsername.trimmingCharacters(in: .whitespacesAndNewlines)
                     model.beginPasswordReset()
                     message = "Enter your username and use the recovery form on the sign-in screen."
@@ -293,14 +293,14 @@ struct NativeAccountRoutePanel: View {
             Text("Enter your username and request a one-time reset code.")
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
             TextField("Username", text: $model.passwordResetUsername).textFieldStyle(.roundedBorder)
-            ActionButton(title: model.isResettingPassword ? "Sending…" : "Send code", icon: "envelope") { Task { await model.requestPasswordResetCode() } }
+            ActionButton(title: model.isResettingPassword ? "Sending…" : "Send code", icon: "envelope", expands: true) { Task { await model.requestPasswordResetCode() } }
                 .disabled(model.isResettingPassword)
             TextField("Six-digit code", text: Binding(get: { model.passwordResetCode }, set: { model.updatePasswordResetCode($0) }))
                 .textFieldStyle(.roundedBorder)
             if !model.passwordResetStatus.isEmpty {
                 Text(model.passwordResetStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
             }
-            ActionButton(title: "Back to sign in", icon: "arrow.left") { model.cancelPasswordReset() }
+            ActionButton(title: "Back to sign in", icon: "arrow.left", expands: true) { model.cancelPasswordReset() }
         }
     }
 
@@ -329,11 +329,8 @@ struct NativeAccountRoutePanel: View {
                     Text("The code expires after 10 minutes. Keep the same signup details while you verify.")
                         .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
                 }
-                ViewThatFits(in: .horizontal) {
-                    signupActionButtons(vertical: false)
-                    signupActionButtons(vertical: true)
-                }
-                ActionButton(title: "Back to sign in", icon: "arrow.left") { openRoute("/login", label: "Sign in", query: filteredReturnQuery) }
+                signupActionButtons()
+                ActionButton(title: "Back to sign in", icon: "arrow.left", expands: true) { openRoute("/login", label: "Sign in", query: filteredReturnQuery) }
             }
         }
     }
@@ -489,25 +486,19 @@ struct NativeAccountRoutePanel: View {
         ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername(signupUsername))
     }
 
-    @ViewBuilder private func signupActionButtons(vertical: Bool) -> some View {
-        if vertical {
-            VStack(alignment: .leading, spacing: 8) {
-                signupActionButtonsContent
-            }
-        } else {
-            HStack(spacing: 8) {
-                signupActionButtonsContent
-            }
+    @ViewBuilder private func signupActionButtons() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            signupActionButtonsContent
         }
     }
 
     @ViewBuilder private var signupActionButtonsContent: some View {
-        ActionButton(title: isBusy && !signupWaitingForCode ? "Sending…" : signupWaitingForCode ? "Verify and create account" : "Send verification code", icon: "envelope.badge") { Task { await submitSignup() } }
+        ActionButton(title: isBusy && !signupWaitingForCode ? "Sending…" : signupWaitingForCode ? "Verify and create account" : "Send verification code", icon: "envelope.badge", expands: true) { Task { await submitSignup() } }
             .disabled(isBusy || !canSubmitSignup)
         if signupWaitingForCode {
-            ActionButton(title: isBusy && isResendingSignupCode ? "Sending…" : "Send new code", icon: "envelope") { Task { await submitSignup(resendCode: true) } }
+            ActionButton(title: isBusy && isResendingSignupCode ? "Sending…" : "Send new code", icon: "envelope", expands: true) { Task { await submitSignup(resendCode: true) } }
                 .disabled(isBusy)
-            ActionButton(title: "Start over", icon: "arrow.counterclockwise") {
+            ActionButton(title: "Start over", icon: "arrow.counterclockwise", expands: true) {
                 signupWaitingForCode = false; signupChallengeID = nil; signupCode = ""; message = ""
             }.disabled(isBusy)
         }

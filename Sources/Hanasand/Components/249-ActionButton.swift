@@ -15,6 +15,7 @@ struct ActionButton: View {
     let title: String
     let icon: String
     var tone: ActionTone = .normal
+    var expands: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -23,6 +24,7 @@ struct ActionButton: View {
                 Image(systemName: icon)
                 Text(title)
             }
+            .frame(maxWidth: expands ? .infinity : nil, alignment: expands ? .leading : .center)
             .font(.system(size: 13, weight: .black))
             .foregroundStyle(tone == .danger ? theme.danger : theme.text)
             .padding(.horizontal, 13)
