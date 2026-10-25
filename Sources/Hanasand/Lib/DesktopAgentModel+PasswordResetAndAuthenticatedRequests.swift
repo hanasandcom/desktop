@@ -10,6 +10,52 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum DesktopAuthenticatedRequestProof {
+    static func enrichIfAuthenticated(
+        _ request: URLRequest,
+        authenticated: Bool,
+        sessionToken: String,
+        configuredAPIBaseURL: String,
+        signer: (any DesktopDeviceProofSigning)? = nil
+    ) throws -> URLRequest {
+        guard authenticated else { return request }
+        guard let requestURL = request.url,
+              requestURL.scheme?.lowercased() == "https",
+              let requestHost = requestURL.host?.lowercased() else {
+            throw DesktopDeviceProofError.untrustedTarget
+        }
+        let configuredHost: Set<String>
+        if let configured = URL(string: configuredAPIBaseURL),
+           configured.scheme?.lowercased() == "https",
+           let host = configured.host?.lowercased() {
+            if !isHanasandHost(requestHost) {
+                guard requestHost == host,
+                      effectivePort(requestURL) == effectivePort(configured) else {
+                    throw DesktopDeviceProofError.untrustedTarget
+                }
+            }
+            configuredHost = [host]
+        } else {
+            guard isHanasandHost(requestHost) else { throw DesktopDeviceProofError.untrustedTarget }
+            configuredHost = []
+        }
+        if let signer {
+            return try DesktopDeviceProof.enrich(request, sessionToken: sessionToken,
+                                                 customAllowedHosts: configuredHost, signer: signer)
+        }
+        return try DesktopDeviceProof.enrich(request, sessionToken: sessionToken,
+                                             customAllowedHosts: configuredHost)
+    }
+
+    private static func isHanasandHost(_ host: String) -> Bool {
+        host == "hanasand.com" || host.hasSuffix(".hanasand.com")
+    }
+
+    private static func effectivePort(_ url: URL) -> Int? {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : nil)
+    }
+}
+
 extension DesktopAgentModel {
 
     func completePasswordReset() async {
@@ -162,20 +208,21 @@ extension DesktopAgentModel {
     }
 
     func requestJSON<T: Decodable>(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request(url, method: method, body: body, authenticated: authenticated))
+        let outgoing = try outgoingRequest(url, method: method, body: body, authenticated: authenticated)
+        let (data, response) = try await URLSession.shared.data(for: outgoing)
         try validateHTTP(response)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     func accountCredentialJSON<T: Decodable>(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false) async throws -> T {
-        let accountRequest = request(url, method: method, body: body, authenticated: authenticated)
+        let accountRequest = try outgoingRequest(url, method: method, body: body, authenticated: authenticated)
         let (data, response) = try await AccountCredentialTransport.shared.data(for: accountRequest)
         try validateHTTP(response)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     func accountCredentialText(_ url: URL, method: String = "GET", body: Data? = nil, authenticated: Bool = false) async throws -> String {
-        let accountRequest = request(url, method: method, body: body, authenticated: authenticated)
+        let accountRequest = try outgoingRequest(url, method: method, body: body, authenticated: authenticated)
         let (data, response) = try await AccountCredentialTransport.shared.data(for: accountRequest)
         try validateHTTP(response)
         return String(data: data, encoding: .utf8) ?? ""
@@ -187,7 +234,8 @@ extension DesktopAgentModel {
     }
 
     func requestText(_ url: URL, method: String = "GET", authenticated: Bool = false) async throws -> String {
-        let (data, response) = try await URLSession.shared.data(for: request(url, method: method, authenticated: authenticated))
+        let outgoing = try outgoingRequest(url, method: method, authenticated: authenticated)
+        let (data, response) = try await URLSession.shared.data(for: outgoing)
         try validateHTTP(response)
         return String(data: data, encoding: .utf8) ?? ""
     }
@@ -200,7 +248,7 @@ extension DesktopAgentModel {
         userAgent: String? = nil,
         idempotencyKey: String? = nil
     ) async throws -> String {
-        var outgoing = request(url, method: method, body: body, authenticated: authenticated, userAgent: userAgent)
+        var outgoing = try outgoingRequest(url, method: method, body: body, authenticated: authenticated, userAgent: userAgent)
         if let idempotencyKey {
             guard (16...200).contains(idempotencyKey.utf8.count), !idempotencyKey.contains("\r"), !idempotencyKey.contains("\n") else {
                 throw MailSendIdempotencyKeyError.invalid
@@ -215,6 +263,15 @@ extension DesktopAgentModel {
             return pretty
         }
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func outgoingRequest(_ url: URL, method: String = "GET", body: Data? = nil,
+                                 authenticated: Bool, userAgent: String? = nil) throws -> URLRequest {
+        let base = request(url, method: method, body: body, authenticated: authenticated, userAgent: userAgent)
+        return try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            base, authenticated: authenticated, sessionToken: authTokenForRequests,
+            configuredAPIBaseURL: settings.apiBaseURL
+        )
     }
 }
 

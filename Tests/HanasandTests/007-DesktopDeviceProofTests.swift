@@ -57,6 +57,66 @@ final class DesktopDeviceProofTests: XCTestCase {
         XCTAssertNotNil(enriched.value(forHTTPHeaderField: "dpop"))
     }
 
+    func testSharedAuthenticatedRequestPolicySignsConfiguredAPIHost() throws {
+        let signer = try EphemeralCryptoKitSigner()
+        let token = "desktop-session"
+        var request = URLRequest(url: URL(string: "https://staging.example.test/api/hosts")!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let enriched = try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            request, authenticated: true, sessionToken: token,
+            configuredAPIBaseURL: "https://staging.example.test/api", signer: signer
+        )
+
+        XCTAssertNotNil(enriched.value(forHTTPHeaderField: "x-device-public-jwk"))
+        XCTAssertNotNil(enriched.value(forHTTPHeaderField: "dpop"))
+        XCTAssertEqual(enriched.value(forHTTPHeaderField: "x-device-proof-url"), "https://staging.example.test/api/hosts")
+        XCTAssertEqual(enriched.value(forHTTPHeaderField: "x-device-proof-method"), "GET")
+        let parts = try XCTUnwrap(enriched.value(forHTTPHeaderField: "dpop")).split(separator: ".").map(String.init)
+        XCTAssertEqual(parts.count, 3)
+        let claims = try XCTUnwrap(try json(parts[1]) as? [String: Any])
+        XCTAssertEqual(claims["htm"] as? String, "GET")
+        XCTAssertEqual(claims["htu"] as? String, "https://staging.example.test/api/hosts")
+        XCTAssertEqual(claims["ath"] as? String, base64URL(Data(SHA256.hash(data: Data(token.utf8)))))
+        let signature = try P256.Signing.ECDSASignature(rawRepresentation: XCTUnwrap(decodeBase64URL(parts[2])))
+        XCTAssertTrue(signer.privateKey.publicKey.isValidSignature(signature, for: Data("\(parts[0]).\(parts[1])".utf8)))
+    }
+
+    func testSharedAuthenticatedRequestPolicyPreservesPublicAndRejectsUntrustedOrServiceCredentials() throws {
+        let signer = try EphemeralCryptoKitSigner()
+        let publicRequest = URLRequest(url: URL(string: "https://public.example.test/status")!)
+        let unchanged = try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            publicRequest, authenticated: false, sessionToken: "",
+            configuredAPIBaseURL: "https://api.example.test/api", signer: signer
+        )
+        XCTAssertEqual(unchanged.allHTTPHeaderFields, publicRequest.allHTTPHeaderFields)
+        XCTAssertNil(unchanged.value(forHTTPHeaderField: "dpop"))
+
+        let token = "desktop-session"
+        var foreignRequest = URLRequest(url: URL(string: "https://attacker.example.test/api/hosts")!)
+        foreignRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        XCTAssertThrowsError(try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            foreignRequest, authenticated: true, sessionToken: token,
+            configuredAPIBaseURL: "https://api.example.test/api", signer: signer
+        ))
+
+        var foreignPortRequest = URLRequest(url: URL(string: "https://api.example.test:8443/api/hosts")!)
+        foreignPortRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        XCTAssertThrowsError(try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            foreignPortRequest, authenticated: true, sessionToken: token,
+            configuredAPIBaseURL: "https://api.example.test/api", signer: signer
+        ))
+
+        let serviceKey = "hsk_0123456789ab_\(String(repeating: "a", count: 48))"
+        var serviceRequest = URLRequest(url: URL(string: "https://api.example.test/api/hosts")!)
+        serviceRequest.setValue("Bearer \(serviceKey)", forHTTPHeaderField: "Authorization")
+        XCTAssertThrowsError(try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            serviceRequest, authenticated: true, sessionToken: serviceKey,
+            configuredAPIBaseURL: "https://api.example.test/api", signer: signer
+        ))
+    }
+
     func testUntrustedTargetsAndServiceAccountCredentialsAreRejected() throws {
         let signer = try EphemeralCryptoKitSigner()
         let jti = "f42c1742-8f64-4a7c-9d99-7f4c5d3c8221"
