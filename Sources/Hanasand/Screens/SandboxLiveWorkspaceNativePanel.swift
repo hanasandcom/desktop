@@ -206,12 +206,22 @@ struct SandboxLiveWorkspaceNativePanel: View {
                 NativeGroupPanel(title: session.pageTitle.isEmpty ? "Browser viewport" : session.pageTitle,
                                  subtitle: "Live WebRTC browser stream") {
                     NativeSandboxWebRTCStreamView(url: streamURL, failureMessage: $streamFailure)
+                        .onDiagnostics { payload in
+                            session.updateStreamDiagnostics(payload)
+                        }
                         .aspectRatio(CGFloat(max(session.streamWidth, 1)) / CGFloat(max(session.streamHeight, 1)), contentMode: .fit)
                         .frame(maxWidth: .infinity)
                         .frame(maxHeight: 720)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(theme.divider, lineWidth: 1))
                         .accessibilityLabel("Live interactive Sandbox browser viewport")
+                    if !session.streamDiagnostics.isEmpty {
+                        Text(session.streamDiagnostics.summary)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(theme.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel("Browser stream health: \(session.streamDiagnostics.summary)")
+                    }
                 }
             } else if let frameData = session.frameData, let image = NSImage(data: frameData) {
                 NativeGroupPanel(title: session.pageTitle.isEmpty ? "Browser viewport" : session.pageTitle,
@@ -876,9 +886,10 @@ struct SandboxLiveWorkspaceNativePanel: View {
 private struct NativeSandboxWebRTCStreamView: NSViewRepresentable {
     let url: URL
     @Binding var failureMessage: String
+    var onDiagnostics: ([String: Any]) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(url: url, failureMessage: $failureMessage)
+        Coordinator(url: url, failureMessage: $failureMessage, onDiagnostics: onDiagnostics)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -886,6 +897,12 @@ private struct NativeSandboxWebRTCStreamView: NSViewRepresentable {
         configuration.websiteDataStore = .nonPersistent()
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.userContentController.add(context.coordinator, name: "hanasandBrowserStream")
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Coordinator.diagnosticsBridge,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
@@ -905,18 +922,33 @@ private struct NativeSandboxWebRTCStreamView: NSViewRepresentable {
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.stopLoading()
         webView.navigationDelegate = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "hanasandBrowserStream")
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let allowedHost: String
         let allowedPort: Int
         var failureMessage: Binding<String>
+        var onDiagnostics: ([String: Any]) -> Void
 
-        init(url: URL, failureMessage: Binding<String>) {
+        init(url: URL, failureMessage: Binding<String>, onDiagnostics: @escaping ([String: Any]) -> Void) {
             allowedHost = url.host?.lowercased() ?? ""
             allowedPort = url.port ?? 443
             self.failureMessage = failureMessage
+            self.onDiagnostics = onDiagnostics
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "hanasandBrowserStream",
+                  message.frameInfo.isMainFrame,
+                  let pageURL = message.frameInfo.request.url,
+                  pageURL.scheme?.lowercased() == "https",
+                  pageURL.host?.lowercased() == allowedHost,
+                  (pageURL.port ?? 443) == allowedPort,
+                  let payload = message.body as? [String: Any],
+                  SandboxLiveStreamDiagnostics.decode(payload) != nil else { return }
+            onDiagnostics(payload)
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -945,6 +977,30 @@ private struct NativeSandboxWebRTCStreamView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             failureMessage.wrappedValue = "Live video was interrupted. Showing frame updates instead."
         }
+
+        static let diagnosticsBridge = #"""
+        (() => {
+          const allowed = ['state', 'width', 'height', 'fps', 'latencyMs', 'peerConnectionState', 'iceConnectionState', 'signalingState',
+            'candidatePairState', 'localCandidateType', 'remoteCandidateType', 'videoPacketsReceived',
+            'videoBytesReceived', 'videoFramesDecoded', 'videoFramesPerSecond'];
+          window.addEventListener('message', event => {
+            if (event.origin !== location.origin || (event.source !== window && !Array.from(window.frames).includes(event.source))) return;
+            const data = event.data;
+            if (!data || data.type !== 'hanasand-browser-stream') return;
+            const payload = { type: data.type };
+            for (const key of allowed) if (Object.prototype.hasOwnProperty.call(data, key)) payload[key] = data[key];
+            window.webkit.messageHandlers.hanasandBrowserStream.postMessage(payload);
+          });
+        })();
+        """#
+    }
+}
+
+private extension NativeSandboxWebRTCStreamView {
+    func onDiagnostics(_ action: @escaping ([String: Any]) -> Void) -> NativeSandboxWebRTCStreamView {
+        var copy = self
+        copy.onDiagnostics = action
+        return copy
     }
 }
 

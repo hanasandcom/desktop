@@ -330,6 +330,9 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertEqual(session.streamURL?.host, "browsers.hanasand.com")
         XCTAssertFalse(session.serviceMessage.contains(secret))
 
+        transport.enqueue(#"{"type":"stream_metrics","fps":30,"latencyMs":80}"#)
+        await waitFor { session.streamDiagnostics.fps == 30 && session.streamDiagnostics.latencyMs == 80 }
+
         transport.enqueue(#"{"type":"stream_ready","streamUrl":"https://attacker.example.test/api/browser-stream/\#(runID)/\#(secret)/index.html"}"#)
         await waitFor { session.streamURL == nil && session.serviceMessage.contains("could not be verified") }
         XCTAssertTrue(session.isActive, "An unsafe optional video URL should leave the authenticated frame session running.")
@@ -340,6 +343,85 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertNil(session.streamURL)
         XCTAssertEqual(session.streamWidth, 0)
         XCTAssertEqual(session.streamHeight, 0)
+        XCTAssertTrue(session.streamDiagnostics.isEmpty)
+    }
+
+    func testStreamDiagnosticsDecodeWebsiteFieldsWithinBounds() throws {
+        let diagnostics = try XCTUnwrap(SandboxLiveStreamDiagnostics.decode([
+            "type": "hanasand-browser-stream",
+            "state": "ready",
+            "width": 1_280,
+            "height": 720,
+            "fps": 29.6,
+            "latencyMs": 83.4,
+            "peerConnectionState": "connected",
+            "iceConnectionState": "connected",
+            "signalingState": "stable",
+            "candidatePairState": "succeeded",
+            "localCandidateType": "host",
+            "remoteCandidateType": "srflx",
+            "videoPacketsReceived": 1_234,
+            "videoBytesReceived": 56_789,
+            "videoFramesDecoded": 987,
+            "videoFramesPerSecond": 29.5,
+        ]))
+
+        XCTAssertEqual(diagnostics.streamState, "ready")
+        XCTAssertEqual(diagnostics.width, 1_280)
+        XCTAssertEqual(diagnostics.height, 720)
+        XCTAssertEqual(diagnostics.fps, 29.6)
+        XCTAssertEqual(diagnostics.latencyMs, 83.4)
+        XCTAssertEqual(diagnostics.peerConnectionState, "connected")
+        XCTAssertEqual(diagnostics.iceConnectionState, "connected")
+        XCTAssertEqual(diagnostics.signalingState, "stable")
+        XCTAssertEqual(diagnostics.candidatePairState, "succeeded")
+        XCTAssertEqual(diagnostics.localCandidateType, "host")
+        XCTAssertEqual(diagnostics.remoteCandidateType, "srflx")
+        XCTAssertEqual(diagnostics.videoPacketsReceived, 1_234)
+        XCTAssertEqual(diagnostics.videoBytesReceived, 56_789)
+        XCTAssertEqual(diagnostics.videoFramesDecoded, 987)
+        XCTAssertEqual(diagnostics.videoFramesPerSecond, 29.5)
+        XCTAssertTrue(diagnostics.summary.contains("30 FPS"))
+        XCTAssertTrue(diagnostics.summary.contains("ready · 1280×720"))
+        XCTAssertTrue(diagnostics.summary.contains("83 ms"))
+        XCTAssertTrue(diagnostics.summary.contains("WebRTC connected"))
+
+        let partial = try XCTUnwrap(SandboxLiveStreamDiagnostics.decode([
+            "type": "hanasand-browser-stream", "fps": 30,
+        ]))
+        let merged = diagnostics.merging(partial)
+        XCTAssertEqual(merged.fps, 30)
+        XCTAssertEqual(merged.peerConnectionState, "connected")
+        XCTAssertEqual(merged.videoFramesDecoded, 987)
+
+        let socketMetrics = try XCTUnwrap(SandboxLiveStreamDiagnostics.decode([
+            "type": "stream_metrics", "fps": 0, "latencyMs": 0,
+        ], messageType: "stream_metrics"))
+        XCTAssertEqual(socketMetrics.fps, 0)
+        XCTAssertEqual(socketMetrics.latencyMs, 0)
+        XCTAssertEqual(merged.merging(socketMetrics).peerConnectionState, "connected")
+    }
+
+    func testStreamDiagnosticsRejectWrongTypeBooleansAndOutOfRangeValues() throws {
+        XCTAssertNil(SandboxLiveStreamDiagnostics.decode(["type": "other", "fps": 30]))
+
+        let diagnostics = try XCTUnwrap(SandboxLiveStreamDiagnostics.decode([
+            "type": "hanasand-browser-stream",
+            "state": String(repeating: "x", count: 33),
+            "width": 8_193,
+            "height": -1,
+            "fps": true,
+            "latencyMs": Double.nan,
+            "peerConnectionState": String(repeating: "x", count: 33),
+            "iceConnectionState": "",
+            "videoPacketsReceived": -1,
+            "videoBytesReceived": 1_000_000_000_000_001.0,
+            "videoFramesDecoded": Double.infinity,
+            "videoFramesPerSecond": 121,
+        ]))
+
+        XCTAssertTrue(diagnostics.isEmpty)
+        XCTAssertEqual(diagnostics.summary, "")
     }
 
     func testEncodesSupportedNativeInputAndRejectsUnsupportedInput() throws {

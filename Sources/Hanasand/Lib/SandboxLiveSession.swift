@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreFoundation
 import Foundation
 
 enum SandboxLiveSessionState: Equatable {
@@ -97,6 +98,106 @@ struct SandboxLiveProviderResult: Equatable, Identifiable {
         if let alertCount { return "\(alertCount) alerts" }
         if !verdict.isEmpty { return verdict }
         return "Captured"
+    }
+}
+
+struct SandboxLiveStreamDiagnostics: Equatable {
+    var streamState: String?
+    var width: Double?
+    var height: Double?
+    var fps: Double?
+    var latencyMs: Double?
+    var peerConnectionState: String?
+    var iceConnectionState: String?
+    var signalingState: String?
+    var candidatePairState: String?
+    var localCandidateType: String?
+    var remoteCandidateType: String?
+    var videoPacketsReceived: Double?
+    var videoBytesReceived: Double?
+    var videoFramesDecoded: Double?
+    var videoFramesPerSecond: Double?
+
+    var isEmpty: Bool {
+        streamState == nil && width == nil && height == nil && fps == nil && latencyMs == nil
+            && peerConnectionState == nil && iceConnectionState == nil
+            && signalingState == nil && candidatePairState == nil && localCandidateType == nil
+            && remoteCandidateType == nil && videoPacketsReceived == nil && videoBytesReceived == nil
+            && videoFramesDecoded == nil && videoFramesPerSecond == nil
+    }
+
+    private var dimensions: String? {
+        guard let width, let height else { return nil }
+        return "\(Int(width))×\(Int(height))"
+    }
+
+    var summary: String {
+        [
+            streamState,
+            dimensions,
+            fps.map { "\(Int($0.rounded())) FPS" },
+            videoFramesPerSecond.map { "inbound \(String(format: "%.1f", $0)) FPS" },
+            latencyMs.map { "\(Int($0.rounded())) ms" },
+            peerConnectionState.map { "WebRTC \($0)" },
+            iceConnectionState.map { "ICE \($0)" },
+            candidatePairState.map { "pair \($0)" },
+            localCandidateType.flatMap { local in remoteCandidateType.map { "\(local)→\($0)" } },
+            videoPacketsReceived.map { "\(Int($0)) packets" },
+            videoFramesDecoded.map { "\(Int($0)) frames" },
+        ].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    static func decode(_ value: Any?, messageType: String = "hanasand-browser-stream") -> SandboxLiveStreamDiagnostics? {
+        guard let payload = value as? [String: Any], payload["type"] as? String == messageType else { return nil }
+        return SandboxLiveStreamDiagnostics(
+            streamState: boundedString(payload["state"]),
+            width: boundedNumber(payload["width"], maximum: 8_192),
+            height: boundedNumber(payload["height"], maximum: 8_192),
+            fps: boundedNumber(payload["fps"], maximum: 120),
+            latencyMs: boundedNumber(payload["latencyMs"], maximum: 1_000_000),
+            peerConnectionState: boundedString(payload["peerConnectionState"]),
+            iceConnectionState: boundedString(payload["iceConnectionState"]),
+            signalingState: boundedString(payload["signalingState"]),
+            candidatePairState: boundedString(payload["candidatePairState"]),
+            localCandidateType: boundedString(payload["localCandidateType"]),
+            remoteCandidateType: boundedString(payload["remoteCandidateType"]),
+            videoPacketsReceived: boundedNumber(payload["videoPacketsReceived"], maximum: 1_000_000_000_000),
+            videoBytesReceived: boundedNumber(payload["videoBytesReceived"], maximum: 1_000_000_000_000_000),
+            videoFramesDecoded: boundedNumber(payload["videoFramesDecoded"], maximum: 1_000_000_000_000),
+            videoFramesPerSecond: boundedNumber(payload["videoFramesPerSecond"], maximum: 120)
+        )
+    }
+
+    func merging(_ update: SandboxLiveStreamDiagnostics) -> SandboxLiveStreamDiagnostics {
+        SandboxLiveStreamDiagnostics(
+            streamState: update.streamState ?? streamState,
+            width: update.width ?? width,
+            height: update.height ?? height,
+            fps: update.fps ?? fps,
+            latencyMs: update.latencyMs ?? latencyMs,
+            peerConnectionState: update.peerConnectionState ?? peerConnectionState,
+            iceConnectionState: update.iceConnectionState ?? iceConnectionState,
+            signalingState: update.signalingState ?? signalingState,
+            candidatePairState: update.candidatePairState ?? candidatePairState,
+            localCandidateType: update.localCandidateType ?? localCandidateType,
+            remoteCandidateType: update.remoteCandidateType ?? remoteCandidateType,
+            videoPacketsReceived: update.videoPacketsReceived ?? videoPacketsReceived,
+            videoBytesReceived: update.videoBytesReceived ?? videoBytesReceived,
+            videoFramesDecoded: update.videoFramesDecoded ?? videoFramesDecoded,
+            videoFramesPerSecond: update.videoFramesPerSecond ?? videoFramesPerSecond
+        )
+    }
+
+    private static func boundedString(_ value: Any?) -> String? {
+        guard let value = value as? String, !value.isEmpty, value.utf8.count <= 32 else { return nil }
+        return value
+    }
+
+    private static func boundedNumber(_ value: Any?, maximum: Double) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let value = number.doubleValue
+        guard value.isFinite, value >= 0, value <= maximum else { return nil }
+        return value
     }
 }
 
@@ -759,6 +860,7 @@ final class SandboxLiveSession: ObservableObject {
     @Published private(set) var streamURL: URL?
     @Published private(set) var streamWidth = 0
     @Published private(set) var streamHeight = 0
+    @Published private(set) var streamDiagnostics = SandboxLiveStreamDiagnostics()
     @Published private(set) var providerResults: [SandboxLiveProviderResult] = []
 
     private let transport: SandboxLiveSocketTransport
@@ -844,6 +946,7 @@ final class SandboxLiveSession: ObservableObject {
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
+        streamDiagnostics = SandboxLiveStreamDiagnostics()
         apiBaseURL = nil
         resumeToken = nil
         connectionRequest = nil
@@ -862,6 +965,11 @@ final class SandboxLiveSession: ObservableObject {
             do { try await transport.send(message) }
             catch { fail(error) }
         }
+    }
+
+    func updateStreamDiagnostics(_ value: Any, messageType: String = "hanasand-browser-stream") {
+        guard let diagnostics = SandboxLiveStreamDiagnostics.decode(value, messageType: messageType) else { return }
+        streamDiagnostics = streamDiagnostics.merging(diagnostics)
     }
 
     private func receiveMessages() async {
@@ -920,6 +1028,8 @@ final class SandboxLiveSession: ObservableObject {
                 providerResults.append(result)
             }
             if providerResults.count > 8 { providerResults.removeFirst(providerResults.count - 8) }
+        case "stream_metrics":
+            updateStreamDiagnostics(payload, messageType: "stream_metrics")
         case "status":
             let reason = (payload["state"] as? String) ?? ""
             let message = (payload["message"] as? String) ?? ""
@@ -939,6 +1049,7 @@ final class SandboxLiveSession: ObservableObject {
             streamURL = nil
             streamWidth = 0
             streamHeight = 0
+            streamDiagnostics = SandboxLiveStreamDiagnostics()
             apiBaseURL = nil
             state = .ended
             serviceMessage = "Sandbox session ended."
@@ -1019,6 +1130,7 @@ final class SandboxLiveSession: ObservableObject {
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
+        streamDiagnostics = SandboxLiveStreamDiagnostics()
         apiBaseURL = nil
         resumeToken = nil
         connectionRequest = nil
@@ -1044,6 +1156,7 @@ final class SandboxLiveSession: ObservableObject {
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
+        streamDiagnostics = SandboxLiveStreamDiagnostics()
         providerResults = []
         apiBaseURL = nil
         pageURL = ""
