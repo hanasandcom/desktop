@@ -152,7 +152,7 @@ extension UsersNativePanel {
                 selectedUserProfilePanel
             }
         }
-        .task(id: model.selectedUserID) {
+        .task(id: model.selectedUserRolesTaskKey) {
             await model.loadSelectedUserRoles()
         }
         .task(id: model.selectedUserProfileID) {

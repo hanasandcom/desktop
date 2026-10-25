@@ -10,29 +10,45 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
-struct SelectedDashboardUserRolesRequestContext: Equatable {
-    let requestID: UUID
+struct SelectedDashboardUserRolesTaskKey: Equatable {
+    let selectionGeneration: UUID
     let userID: String
     let actorID: String
     let authToken: String
     let impersonationToken: String
+    let apiBaseURL: String
+}
+
+struct SelectedDashboardUserRolesRequestContext: Equatable {
+    let requestID: UUID
+    let taskKey: SelectedDashboardUserRolesTaskKey
 
     func matches(
         requestID: UUID?,
-        userID: String,
-        actorID: String,
-        authToken: String,
-        impersonationToken: String
+        taskKey: SelectedDashboardUserRolesTaskKey
     ) -> Bool {
         self.requestID == requestID
-            && self.userID == userID
-            && self.actorID == actorID
-            && self.authToken == authToken
-            && self.impersonationToken == impersonationToken
+            && self.taskKey == taskKey
     }
 }
 
 extension DesktopAgentModel {
+
+    var selectedUserRolesTaskKey: SelectedDashboardUserRolesTaskKey {
+        SelectedDashboardUserRolesTaskKey(
+            selectionGeneration: selectedUserRolesSelectionGeneration,
+            userID: selectedUserID,
+            actorID: userIDForRequests,
+            authToken: authTokenForRequests,
+            impersonationToken: settings.impersonationToken,
+            apiBaseURL: settings.apiBaseURL.normalizedBaseURL.absoluteString
+        )
+    }
+
+    var hasCurrentSelectedUserRoles: Bool {
+        guard let context = selectedUserRolesRequestContext else { return false }
+        return context.matches(requestID: context.requestID, taskKey: selectedUserRolesTaskKey)
+    }
 
     func deleteSelectedArticle(_ article: DashboardArticle) async {
         let requestContext = articleWorkspaceRequestContext(organizationID: selectedOrganizationID)
@@ -108,7 +124,9 @@ extension DesktopAgentModel {
 
     func selectDashboardUser(_ user: DashboardUser) {
         selectedUserID = user.id
+        selectedUserRolesSelectionGeneration = UUID()
         selectedUserRoles = []
+        didLoadSelectedUserRoles = false
         selectedUserRolesRequestContext = nil
         isLoadingSelectedUserRoles = true
     }
@@ -200,23 +218,28 @@ extension DesktopAgentModel {
         Task { await loadNativeDashboardData() }
     }
 
-    func loadSelectedUserRoles() async {
-        guard !selectedUserID.isEmpty else {
+    func loadSelectedUserRoles(forceReload: Bool = false) async {
+        let taskKey = selectedUserRolesTaskKey
+        guard !taskKey.userID.isEmpty else {
             selectedUserRoles = []
+            didLoadSelectedUserRoles = false
             selectedUserRolesRequestContext = nil
             isLoadingSelectedUserRoles = false
             return
         }
 
+        if !forceReload, let currentContext = selectedUserRolesRequestContext,
+           currentContext.matches(requestID: currentContext.requestID, taskKey: taskKey) {
+            return
+        }
+
         let requestContext = SelectedDashboardUserRolesRequestContext(
             requestID: UUID(),
-            userID: selectedUserID,
-            actorID: userIDForRequests,
-            authToken: authTokenForRequests,
-            impersonationToken: settings.impersonationToken
+            taskKey: taskKey
         )
         selectedUserRolesRequestContext = requestContext
         selectedUserRoles = []
+        didLoadSelectedUserRoles = false
         isLoadingSelectedUserRoles = true
         defer {
             if selectedUserRolesRequestContext == requestContext {
@@ -226,27 +249,23 @@ extension DesktopAgentModel {
 
         do {
             let roles: [DashboardUserRoleAssignment] = try await requestJSON(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("roles/user/\(requestContext.userID)"),
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("roles/user/\(taskKey.userID)"),
                 authenticated: true
             )
             guard requestContext.matches(
                 requestID: selectedUserRolesRequestContext?.requestID,
-                userID: selectedUserID,
-                actorID: userIDForRequests,
-                authToken: authTokenForRequests,
-                impersonationToken: settings.impersonationToken
+                taskKey: selectedUserRolesTaskKey
             ) else { return }
             selectedUserRoles = roles
-            nativeDashboardStatus = "Loaded roles for \(requestContext.userID)"
+            didLoadSelectedUserRoles = true
+            nativeDashboardStatus = "Loaded roles for \(taskKey.userID)"
         } catch {
             guard requestContext.matches(
                 requestID: selectedUserRolesRequestContext?.requestID,
-                userID: selectedUserID,
-                actorID: userIDForRequests,
-                authToken: authTokenForRequests,
-                impersonationToken: settings.impersonationToken
+                taskKey: selectedUserRolesTaskKey
             ) else { return }
             selectedUserRoles = []
+            didLoadSelectedUserRoles = false
             nativeDashboardStatus = error.localizedDescription
         }
     }
@@ -300,7 +319,7 @@ extension DesktopAgentModel {
             selectedUserID = user.id
             nativeDashboardStatus = assigned ? "Assigned \(role.id)" : "Removed \(role.id)"
             append(meta: assigned ? "Role assigned" : "Role removed", body: "\(role.id) · \(user.id)", kind: .change)
-            await loadSelectedUserRoles()
+            await loadSelectedUserRoles(forceReload: true)
             await loadNativeDashboardData()
         } catch {
             nativeDashboardStatus = error.localizedDescription

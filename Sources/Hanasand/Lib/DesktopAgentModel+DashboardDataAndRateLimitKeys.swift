@@ -160,7 +160,9 @@ extension DesktopAgentModel {
                 await loadDashboardUsersForOwnerPicker()
             } else if path == "/users" || path == "/management" {
                 await loadDashboardRolesForUserManagement()
-                await loadSelectedUserRoles()
+                if !hasCurrentSelectedUserRoles {
+                    await loadSelectedUserRoles()
+                }
             }
         } catch {
             let thoughtsUserIsCurrent = thoughtsRefreshTicket.map { $0.userID == userIDForRequests } ?? true

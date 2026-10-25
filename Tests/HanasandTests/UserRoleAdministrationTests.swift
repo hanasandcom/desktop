@@ -23,46 +23,89 @@ final class UserRoleAdministrationTests: XCTestCase {
         let requestID = UUID()
         let context = SelectedDashboardUserRolesRequestContext(
             requestID: requestID,
-            userID: "target-user",
-            actorID: "admin-user",
-            authToken: "session-token",
-            impersonationToken: ""
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: UUID(),
+                userID: "target-user",
+                actorID: "admin-user",
+                authToken: "session-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.example.test"
+            )
         )
 
         XCTAssertTrue(context.matches(
             requestID: requestID,
-            userID: "target-user",
-            actorID: "admin-user",
-            authToken: "session-token",
-            impersonationToken: ""
+            taskKey: context.taskKey
         ))
         XCTAssertFalse(context.matches(
             requestID: UUID(),
-            userID: "target-user",
-            actorID: "admin-user",
-            authToken: "session-token",
-            impersonationToken: ""
+            taskKey: context.taskKey
         ))
         XCTAssertFalse(context.matches(
             requestID: requestID,
-            userID: "another-user",
-            actorID: "admin-user",
-            authToken: "session-token",
-            impersonationToken: ""
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: context.taskKey.selectionGeneration,
+                userID: "another-user",
+                actorID: "admin-user",
+                authToken: "session-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.example.test"
+            )
         ))
         XCTAssertFalse(context.matches(
             requestID: requestID,
-            userID: "target-user",
-            actorID: "admin-user",
-            authToken: "refreshed-token",
-            impersonationToken: ""
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: context.taskKey.selectionGeneration,
+                userID: "target-user",
+                actorID: "admin-user",
+                authToken: "refreshed-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.example.test"
+            )
         ))
         XCTAssertFalse(context.matches(
             requestID: requestID,
-            userID: "target-user",
-            actorID: "admin-user",
-            authToken: "session-token",
-            impersonationToken: "new-impersonation-token"
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: context.taskKey.selectionGeneration,
+                userID: "target-user",
+                actorID: "another-admin",
+                authToken: "session-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.example.test"
+            )
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: context.taskKey.selectionGeneration,
+                userID: "target-user",
+                actorID: "admin-user",
+                authToken: "session-token",
+                impersonationToken: "new-impersonation-token",
+                apiBaseURL: "https://api.example.test"
+            )
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: context.taskKey.selectionGeneration,
+                userID: "target-user",
+                actorID: "admin-user",
+                authToken: "session-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.other.test"
+            )
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            taskKey: SelectedDashboardUserRolesTaskKey(
+                selectionGeneration: UUID(),
+                userID: "target-user",
+                actorID: "admin-user",
+                authToken: "session-token",
+                impersonationToken: "",
+                apiBaseURL: "https://api.example.test"
+            )
         ))
     }
 

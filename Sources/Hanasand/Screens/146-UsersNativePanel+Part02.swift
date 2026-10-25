@@ -14,12 +14,21 @@ extension UsersNativePanel {
 
     func userRolesPanel(_ user: DashboardUser) -> some View {
         NativeGroupPanel(title: "Roles for \(user.displayName)", subtitle: user.id) {
-            if model.isLoadingSelectedUserRoles || model.selectedUserRolesRequestContext?.userID != user.id {
+            if model.isLoadingSelectedUserRoles || !model.hasCurrentSelectedUserRoles {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Loading assigned roles…")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(theme.textSecondary)
+                }
+            } else if !model.didLoadSelectedUserRoles {
+                HStack(spacing: 8) {
+                    Text("Could not load assigned roles.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                    ActionButton(title: "Retry", icon: "arrow.clockwise") {
+                        Task { await model.loadSelectedUserRoles(forceReload: true) }
+                    }
                 }
             } else if model.roles.isEmpty {
                 Text("Load roles before assigning access.")
