@@ -148,7 +148,7 @@ struct AccountSignupClient {
             return .verificationRequired(challengeID: challengeID)
         }
         if (200..<300).contains(http.statusCode), let result, let token = result.token, !token.isEmpty {
-            return .authenticated(HanasandLoginResponse(id: result.id, token: token, expiresAt: result.expiresAt, error: nil, pendingDeletion: nil, deletionScheduledAt: nil, restoreToken: nil))
+            return .authenticated(HanasandLoginResponse(id: result.id, token: token, expiresAt: result.expiresAt, error: nil, pendingDeletion: nil, deletionScheduledAt: nil, restoreToken: nil, resetToken: nil))
         }
         let message = result?.error?.trimmingCharacters(in: .whitespacesAndNewlines)
         throw AccountSignupError.requestFailed(message?.isEmpty == false ? message! : "Account creation failed (HTTP \(http.statusCode)).")
@@ -267,24 +267,27 @@ extension DesktopAgentModel {
             let (data, response) = try await AccountCredentialTransport.shared.data(for: restoreRequest)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
             let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data)
-            guard (200..<300).contains(statusCode), let token = decoded?.token, !token.isEmpty else {
+            guard (200..<300).contains(statusCode) else {
                 pendingDeletionStatus = decoded?.error ?? String(data: data, encoding: .utf8) ?? "Unable to restore account."
+                return
+            }
+            guard let resetToken = decoded?.requiredPasswordResetTokenForRestoration else {
+                pendingDeletionStatus = "Account restored, but the password reset token was missing. Request a new password reset before signing in."
                 return
             }
 
             clearPendingDeletionState()
-            try DesktopCredentialStore.write(token, for: .authToken)
-            try DesktopCredentialStore.write("", for: .impersonationToken)
-            settings.authToken = token
-            settings.userID = decoded?.id ?? userID
-            settings.impersonationToken = ""
-            settings.impersonatingUserID = ""
-            settings.impersonatingUserName = ""
+            passwordResetUsername = decoded?.id ?? userID
+            passwordResetToken = resetToken
+            passwordResetNewPassword = ""
+            passwordResetConfirmPassword = ""
+            passwordResetStatus = ""
+            passwordResetStep = .newPassword
             loginUsername = ""
             loginPassword = ""
             loginStatus = ""
-            append(meta: "Account restored", body: "Signed in as \(settings.userID).", kind: .change)
-            beginDesktopAgentPresence()
+            append(meta: "Account restored", body: "Choose a new password before signing in.", kind: .change)
+            openNativeDashboard(path: "/reset-password", label: "Set new password", query: ["id": passwordResetUsername], loadData: false)
         } catch {
             pendingDeletionStatus = error.localizedDescription
         }

@@ -54,7 +54,7 @@ struct OrganizationApiKeysNativePanel: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: "Organization API keys", subtitle: "Create and revoke organization-scoped API access") {
+        VStack(alignment: .leading, spacing: 14) {
             if organizationID.isEmpty {
                 NativeEmptyState(title: "Select an organization", message: "API keys belong to a selected organization. Choose an active organization in the directory first.")
                 ActionButton(title: "Open organization directory", icon: "building.2") {
@@ -77,6 +77,7 @@ struct OrganizationApiKeysNativePanel: View {
                 keyManagement
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: scopeFingerprint) {
             keys = []
             oneTimeSecret = nil

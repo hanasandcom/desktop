@@ -42,8 +42,8 @@ struct PublicExposureActivityNativePanel: View {
 
             if model.isLoading && model.page == nil {
                 NativeEmptyState(title: "Loading activity", message: "Retrieving the latest public company exposure reports.")
-            } else if model.page == nil, let error = model.errorMessage {
-                NativeEmptyState(title: "Activity unavailable", message: error)
+            } else if model.page == nil, model.errorMessage != nil {
+                NativeEmptyState(title: "Activity unavailable", message: "Review the error above, then retry the request.")
                 Button("Try again") { Task { await model.refresh(filters: appliedFilters) } }
             } else if let page = model.page, model.items.isEmpty {
                 NativeEmptyState(title: "No activity found", message: "No public company mentions match the current filters.")

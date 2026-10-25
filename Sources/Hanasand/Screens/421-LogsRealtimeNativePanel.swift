@@ -97,6 +97,11 @@ struct LogsRealtimeNativePanel: View {
             }
           }
         }
+      } else if events.isEmpty && !errorMessage.isEmpty {
+        NativeEmptyState(
+          title: "Events unavailable",
+          message: "Refresh to try loading high or critical events again."
+        )
       } else if events.isEmpty {
         NativeEmptyState(
           title: isRefreshing ? "Loading recent events" : "No high severity events",
@@ -145,7 +150,9 @@ struct LogsRealtimeNativePanel: View {
       Text("30 days").tag(720)
       Text("90 days").tag(2_160)
     }
-    .frame(maxWidth: 160, alignment: .leading)
+    .pickerStyle(.menu)
+    .tint(theme.textSecondary)
+    .frame(minWidth: 180, idealWidth: 190, maxWidth: 200, alignment: .leading)
   }
 
   private var tablePicker: some View {
@@ -155,6 +162,8 @@ struct LogsRealtimeNativePanel: View {
         Text(table).tag(table)
       }
     }
+    .pickerStyle(.menu)
+    .tint(theme.textSecondary)
     .disabled(filters.advanced)
     .frame(maxWidth: 190, alignment: .leading)
   }

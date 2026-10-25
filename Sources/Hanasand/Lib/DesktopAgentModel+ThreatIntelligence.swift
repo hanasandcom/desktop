@@ -47,7 +47,6 @@ extension DesktopAgentModel {
     @discardableResult
     func searchThreatIntelligence(refresh: Bool = false, expectedScope: ThreatIntelligenceSearchScope? = nil) async -> Bool {
         let query = threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hasHanasandAuth else { threatSearchStatus = "Sign in to search threat intelligence."; return false }
         guard (2...200).contains(query.count) else { threatSearchStatus = "Enter a search between 2 and 200 characters."; return false }
         let requestScope = threatIntelligenceSearchScope
         guard expectedScope == nil || expectedScope == requestScope else { return false }
@@ -55,9 +54,15 @@ extension DesktopAgentModel {
         threatSearchStatus = refresh ? "Refreshing threat intelligence" : "Searching threat intelligence"
         defer { if !Task.isCancelled { isLoadingThreatSearch = false } }
         do {
-            var components = URLComponents(url: settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), resolvingAgainstBaseURL: false)
-            components?.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "cached", value: refresh ? "false" : "true")]
-            let result: ThreatIntelSearchResult = try await requestJSON(components?.url ?? settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), authenticated: true)
+            let result: ThreatIntelSearchResult
+            if hasHanasandAuth {
+                var components = URLComponents(url: settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), resolvingAgainstBaseURL: false)
+                components?.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "cached", value: refresh ? "false" : "true")]
+                result = try await requestJSON(components?.url ?? settings.websiteBaseURL.normalizedBaseURL.appendingAPIPath("api/ti/search"), authenticated: true)
+            } else {
+                let client = try ThreatIntelligencePublicSearchClient(websiteBaseURL: settings.websiteBaseURL.normalizedBaseURL)
+                result = try await client.search(query, preferCached: !refresh)
+            }
             guard !Task.isCancelled,
                   threatSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare(query) == .orderedSame,
                   threatIntelligenceSearchScope == requestScope,

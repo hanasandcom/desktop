@@ -73,7 +73,7 @@ struct DatabaseNativePanel: View {
                 sqlSection
             } else {
                 NativeEmptyState(title: isLoading ? "Loading database overview" : "Database overview unavailable",
-                                 message: isLoading ? "Checking access, database health and inventory." : (errorMessage.isEmpty ? "Refresh to load the internal database service." : errorMessage))
+                                 message: isLoading ? "Checking access, database health and inventory." : "Refresh to try again.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

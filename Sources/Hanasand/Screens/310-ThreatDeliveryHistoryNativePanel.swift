@@ -84,7 +84,7 @@ struct ThreatDeliveryHistoryNativePanel: View {
                     findingPicker(history)
                     attemptHistory(history)
                 } else if !isLoading {
-                    NativeEmptyState(title: "Delivery history unavailable", message: status)
+                    NativeEmptyState(title: "Delivery history unavailable", message: "Resolve the notice above, then refresh to try again.")
                 }
             }
         }

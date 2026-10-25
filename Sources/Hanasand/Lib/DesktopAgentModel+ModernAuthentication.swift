@@ -168,6 +168,48 @@ extension DesktopAgentModel {
         }
     }
 
+    @MainActor func beginGoogleAccountLink() async {
+        guard !isLinkingGoogleAccount,
+              hasHanasandAuth,
+              settings.impersonationToken.isEmpty,
+              settings.impersonatingUserID.isEmpty,
+              settings.userID == userIDForRequests else {
+            googleAccountLinkStatus = "Return to your own account to link Google."
+            return
+        }
+        isLinkingGoogleAccount = true
+        googleAccountLinkStatus = "Preparing secure Google account link"
+        do {
+            let client = try SocialConnectionsClient(settings: settings)
+            let verifier = try makeCodeVerifier()
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URLString
+            let url = try await client.beginGoogleLink(codeChallenge: challenge)
+            googleAccountLinkStatus = "Opening secure Google account link"
+            try DesktopGoogleAccountLinkSession.shared.start(url: url, verifier: verifier, model: self)
+        } catch {
+            isLinkingGoogleAccount = false
+            googleAccountLinkStatus = error.localizedDescription
+        }
+    }
+
+    @MainActor func completeGoogleAccountLink(code: String, verifier: String) async {
+        defer { isLinkingGoogleAccount = false }
+        googleAccountLinkStatus = "Verifying Google account link"
+        do {
+            let client = try SocialConnectionsClient(settings: settings)
+            try await client.completeGoogleLink(code: code, verifier: verifier)
+            googleAccountLinkRevision += 1
+            googleAccountLinkStatus = "Google account linked."
+        } catch {
+            googleAccountLinkStatus = error.localizedDescription
+        }
+    }
+
+    @MainActor func failGoogleAccountLink(_ message: String) {
+        isLinkingGoogleAccount = false
+        googleAccountLinkStatus = message
+    }
+
     func completeHanasandGoogleSignIn(code: String, verifier: String) async {
         defer { isLoggingIn = false }
         loginStatus = "Completing Google sign-in"
@@ -398,6 +440,51 @@ private final class DesktopGoogleSignInSession: NSObject, ASWebAuthenticationPre
                 ? "Google sign-in returned an invalid callback."
                 : failure.localizedDescription
             model.completeGoogleSignInWithError(message)
+        }
+    }
+}
+
+@MainActor
+private final class DesktopGoogleAccountLinkSession: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = DesktopGoogleAccountLinkSession()
+
+    private var session: ASWebAuthenticationSession?
+    private weak var model: DesktopAgentModel?
+    private var verifier = ""
+
+    func start(url: URL, verifier: String, model: DesktopAgentModel) throws {
+        self.model = model
+        self.verifier = verifier
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "hanasand") { [weak self] callbackURL, error in
+            Task { @MainActor in self?.finish(callbackURL: callbackURL, error: error) }
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        self.session = session
+        guard session.start() else {
+            self.session = nil
+            self.model = nil
+            self.verifier = ""
+            throw DesktopGoogleOAuthError.couldNotStart
+        }
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first ?? NSWindow()
+    }
+
+    private func finish(callbackURL: URL?, error: Error?) {
+        session = nil
+        let verifier = self.verifier
+        self.verifier = ""
+        guard let model else { return }
+        self.model = nil
+        let wasCancelled = (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin
+        switch DesktopGoogleLinkCallback.sessionOutcome(callbackURL: callbackURL, wasCancelled: wasCancelled) {
+        case .success(let code):
+            Task { await model.completeGoogleAccountLink(code: code, verifier: verifier) }
+        case .failure(let failure):
+            model.failGoogleAccountLink(failure.localizedDescription)
         }
     }
 }

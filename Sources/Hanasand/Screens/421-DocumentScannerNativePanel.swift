@@ -14,7 +14,7 @@ struct DocumentScannerNativePanel: View {
     @State private var exportError: String?
 
     var body: some View {
-        FeatureWorkspace(title: "Document Scanner", subtitle: camera.status.message) {
+        VStack(alignment: .leading, spacing: 14) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     startCameraButton
@@ -100,6 +100,7 @@ struct DocumentScannerNativePanel: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: camera.captureRevision) { _, _ in
             guard let image = camera.capturedImage else { return }
             scans.append(DocumentScanPage(image: image))

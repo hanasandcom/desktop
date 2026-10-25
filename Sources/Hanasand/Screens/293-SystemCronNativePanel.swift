@@ -45,6 +45,7 @@ struct SystemCronNativePanel: View {
                 compactControl(title: isLoading ? "Refreshing" : "Refresh", icon: "arrow.clockwise", label: "Refresh scheduled jobs", isDisabled: isLoading) {
                     Task { await load() }
                 }
+                .disabled(isLoading || !model.hasHanasandAuth)
             }
 
             if !message.isEmpty && !jobs.isEmpty {
@@ -53,6 +54,8 @@ struct SystemCronNativePanel: View {
 
             if isLoading && jobs.isEmpty {
                 NativeEmptyState(title: "Loading system jobs", message: "Reading the managed schedule inventory.")
+            } else if !model.hasHanasandAuth {
+                NativeEmptyState(title: "Sign in to view system jobs", message: "The managed scheduler inventory requires an authenticated Hanasand session.")
             } else if jobs.isEmpty {
                 NativeEmptyState(
                     title: message.isEmpty ? "No system jobs" : (message.hasPrefix("Showing the job registry") ? "Loading system jobs" : "Couldn’t load system jobs"),
@@ -339,6 +342,13 @@ struct SystemCronNativePanel: View {
     private func load() async {
         readinessRetry?.cancel()
         readinessRetry = nil
+        guard model.hasHanasandAuth else {
+            jobs = []
+            selectedID = ""
+            message = ""
+            isLoading = false
+            return
+        }
         isLoading = true
         defer { isLoading = false }
         do {

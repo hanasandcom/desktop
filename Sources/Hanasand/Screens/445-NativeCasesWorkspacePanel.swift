@@ -141,10 +141,7 @@ struct CasesWorkspaceNativePanel: View {
                             .disabled(mergeableRows.count < 2 || isWriting || mutationReview.isLocked)
                     }
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 7) { filterPickers; Spacer(minLength: 0) }
-                    VStack(alignment: .leading, spacing: 8) { filterPickers }
-                }
+                filterPickers
                 HStack(spacing: 8) {
                     Text("\(visibleRows.count) shown · \(allRows.count) loaded")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
@@ -208,33 +205,35 @@ struct CasesWorkspaceNativePanel: View {
         .sheet(isPresented: $pendingCreate) { createCaseSheet }
     }
 
-    @ViewBuilder private var filterPickers: some View {
+    private var filterPickers: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 180), spacing: 8), count: 3), alignment: .leading, spacing: 8) {
         Picker("Status", selection: $filters.status) {
             Text("Active").tag("active"); Text("All statuses").tag("all")
             ForEach(["open", "in_progress", "escalated", "resolved", "closed", "suppressed", "false_positive"], id: \.self) { Text($0.replacingOccurrences(of: "_", with: " ").capitalized).tag($0) }
-        }.frame(maxWidth: 175)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         Picker("Severity", selection: $filters.severity) {
             Text("All severity").tag("all")
             ForEach(["critical", "high", "medium", "low"], id: \.self) { Text($0.capitalized).tag($0) }
-        }.frame(maxWidth: 150)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         Picker("Source", selection: $filters.source) {
             Text("All sources").tag("all")
             ForEach(["monitoring", "security", "intelligence", "manual"], id: \.self) { Text($0.capitalized).tag($0) }
-        }.frame(maxWidth: 155)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         Picker("Owner", selection: $filters.owner) {
             Text("All owners").tag("all"); Text("Unassigned").tag("unassigned")
             ForEach(Array(Set(allRows.map(\.owner).filter { !$0.isEmpty })).sorted(), id: \.self) { Text($0).tag($0) }
-        }.frame(maxWidth: 180)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         Picker("Resolved by", selection: $filters.resolution) {
             Text("All resolvers").tag("all")
             ForEach(["human", "ai", "automation", "unknown"], id: \.self) { Text($0.capitalized).tag($0) }
-        }.frame(maxWidth: 160)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         Picker("Human review", selection: $filters.review) {
             Text("All review states").tag("all"); Text("Pending review").tag("pending"); Text("Confirmed").tag("confirmed")
-        }.frame(maxWidth: 170)
+        }.frame(maxWidth: .infinity, alignment: .leading)
         ActionButton(title: "Reset filters", icon: "arrow.counterclockwise") {
             filters.reset()
         }.disabled(!filters.hasActiveFilters)
+        }
     }
 
     private func caseRow(_ row: CasesWorkspaceRow) -> some View {

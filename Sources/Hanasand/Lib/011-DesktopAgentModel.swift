@@ -19,6 +19,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var prompt = ""; @Published var loginUsername = ""; @Published var loginPassword = ""; @Published var loginStatus = ""
 
     @Published var isLoggingIn = false; @Published var passwordResetUsername = ""; @Published var passwordResetCode = ""; @Published var passwordResetToken = ""
+    @Published var isLinkingGoogleAccount = false; @Published var googleAccountLinkStatus = ""; @Published var googleAccountLinkRevision = 0
 
     @Published var passwordResetNewPassword = ""; @Published var passwordResetConfirmPassword = ""; @Published var passwordResetStatus = ""; @Published var passwordResetStep: PasswordResetStep = .idle
 
@@ -91,6 +92,7 @@ final class DesktopAgentModel: ObservableObject {
     var hostOverviewLoadID = UUID(); var hostUpdatesLoadID = UUID()
 
     @Published var selectedDashboardTitle = "Dashboard"; @Published var selectedNativeDashboardDetailID = ""; @Published var selectedNativeDashboardQuery: [String: String] = [:]; @Published var nativeCaseHandoffContext: BrowserCaseHandoffContext?; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
+    var isVisualFixture = false
     var nativeDashboardLoadID = UUID()
 
     @Published var backupServices: [DashboardBackupService] = []; @Published var backupFiles: [DashboardBackupFile] = []; @Published var notes: [DashboardNote] = []; @Published var selectedNoteID = ""
@@ -273,6 +275,7 @@ final class DesktopAgentModel: ObservableObject {
         fixtureSettings.impersonatingUserName = ""
         self.appearancePreference = .light
         self.settings = fixtureSettings
+        self.isVisualFixture = true
     }
 #endif
 

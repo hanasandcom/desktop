@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct GalleryAlbumsNativePanel: View {
+    private let embedded: Bool
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var albums: [GalleryAlbum] = []
@@ -29,26 +30,20 @@ struct GalleryAlbumsNativePanel: View {
     @State private var memberToRemove: GalleryAlbumMember?
     @State private var sessionRevision = 0
 
+    init(embedded: Bool = false) {
+        self.embedded = embedded
+    }
+
     private var canManage: Bool { album.map { GalleryAlbumAccess.canManage($0, currentUserId: model.userIDForRequests) } ?? false }
     private var canAddItems: Bool { album.map(GalleryAlbumAccess.canAddItems) ?? false }
 
     var body: some View {
-        FeatureWorkspace(title: "Albums", subtitle: status) {
-            if !model.hasHanasandAuth {
-                NativeEmptyState(title: "Sign in to manage albums", message: "Albums use your CDN account to organize and share files already in your library.")
+        Group {
+            if embedded {
+                albumWorkspaceContent
             } else {
-                if !error.isEmpty {
-                    NativeGroupPanel(title: "Album request failed", subtitle: "") {
-                        Text(error).foregroundStyle(theme.danger).textSelection(.enabled)
-                    }
-                }
-                if !notice.isEmpty {
-                    NativeNotice(message: notice, title: "Album updated", tone: .success)
-                }
-                if let album {
-                    albumDetail(album)
-                } else {
-                    albumList
+                FeatureWorkspace(title: "Albums", subtitle: status) {
+                    albumWorkspaceContent
                 }
             }
         }
@@ -114,6 +109,27 @@ struct GalleryAlbumsNativePanel: View {
             Button("Cancel", role: .cancel) { memberToRemove = nil }
         } message: {
             Text("This account will lose its invitation to the album.")
+        }
+    }
+
+    @ViewBuilder
+    private var albumWorkspaceContent: some View {
+        if !model.hasHanasandAuth {
+            NativeEmptyState(title: "Sign in to manage albums", message: "Albums use your CDN account to organize and share files already in your library.")
+        } else {
+            if !error.isEmpty {
+                NativeGroupPanel(title: "Album request failed", subtitle: "") {
+                    Text(error).foregroundStyle(theme.danger).textSelection(.enabled)
+                }
+            }
+            if !notice.isEmpty {
+                NativeNotice(message: notice, title: "Album updated", tone: .success)
+            }
+            if let album {
+                albumDetail(album)
+            } else {
+                albumList
+            }
         }
     }
 

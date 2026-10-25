@@ -660,7 +660,9 @@ struct NativeAccountRoutePanel: View {
 
     @MainActor private func restoreAccount() async {
         await model.restorePendingDeletionAccount()
-        if model.hasHanasandAuth {
+        if model.passwordResetStep == .newPassword, !model.passwordResetToken.isEmpty {
+            message = "Account restored. Choose a new password before signing in."
+        } else if model.hasHanasandAuth {
             restored = true
             message = "Account restored and signed in."
         } else {

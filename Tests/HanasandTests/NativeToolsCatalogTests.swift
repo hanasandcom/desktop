@@ -88,6 +88,7 @@ final class NativeToolsCatalogTests: XCTestCase {
             DesktopAction.route("Service Status", "View public checks and incidents.", "heart.text.square", "/status"),
             DesktopAction.route("Security Scanner", "Run organization scans.", "stethoscope", "/scanner"),
             DesktopAction.route("CDN Image Library", "Browse private images.", "photo", "/images/library"),
+            DesktopAction.route("Document Scanner", "Capture pages and export them as a PDF.", "viewfinder", "/scan"),
         ]
         let administration = [
             DesktopAction.route("OpenAPI JSON", "View raw API contract.", "curlybraces", "/api/openapi"),
@@ -104,7 +105,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         let sections = NativeToolsCatalog.sections(dashboard: dashboard, administration: administration)
         let routesBySection = Dictionary(uniqueKeysWithValues: sections.map { ($0.title, Set($0.actions.compactMap(\.routePath))) })
 
-        XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron", "/images/library"]))
+        XCTAssertEqual(routesBySection["Workspace & content"], Set(["/automation/health", "/automation/cron", "/images/library", "/scan"]))
         XCTAssertEqual(routesBySection["Infrastructure"], Set(["/status"]))
         XCTAssertEqual(routesBySection["Security & intelligence"], Set(["/sandbox", "/scanner"]))
         XCTAssertEqual(routesBySection["Administration"], Set(["/logs/realtime", "/logs/search", "/logs/errors"]))
@@ -112,6 +113,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         XCTAssertEqual(routesBySection["Organization"], Set([
             "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity",
         ]))
+        XCTAssertTrue(NativeDashboardDetail.hasNativePanel(for: "/scan"))
     }
 
     func testAuthenticatorIsDiscoverableInTheNativeToolsCatalog() {

@@ -578,7 +578,7 @@ private struct NativeGoogleConnectionStatus: View {
     private var accountScope: String {
         let scope = [model.settings.apiBaseURL, model.userIDForRequests, model.authTokenForRequests,
                      model.settings.impersonationToken, model.settings.impersonatingUserID,
-                     model.profile?.id ?? ""].joined(separator: "\n")
+                     model.profile?.id ?? "", String(model.googleAccountLinkRevision)].joined(separator: "\n")
         return SHA256.hash(data: Data(scope.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -635,9 +635,18 @@ private struct NativeGoogleConnectionStatus: View {
                 Text("No Google sign-in account is connected.")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                ActionButton(title: model.isLinkingGoogleAccount ? "Linking Google…" : "Link Google account", icon: "link") {
+                    Task { await model.beginGoogleAccountLink() }
+                }
+                .disabled(model.isLinkingGoogleAccount || !canReadOwnConnections)
             } else if isLoading {
                 Text("Loading connection status…")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+            }
+            if !model.googleAccountLinkStatus.isEmpty {
+                NativeNotice(message: model.googleAccountLinkStatus,
+                             title: model.googleAccountLinkStatus == "Google account linked." ? "Account linked" : "Google account link",
+                             tone: model.googleAccountLinkStatus == "Google account linked." ? .success : .info)
             }
         }
         .padding(10)

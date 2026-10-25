@@ -108,6 +108,38 @@ enum DesktopGoogleOAuthCallback {
     }
 }
 
+enum DesktopGoogleLinkCallback {
+    static func sessionOutcome(callbackURL: URL?, wasCancelled: Bool) -> Result<String, DesktopGoogleOAuthError> {
+        if wasCancelled { return .failure(.canceled) }
+        guard let callbackURL, let result = result(from: callbackURL) else {
+            return .failure(.invalidResponse)
+        }
+        return result
+    }
+
+    static func result(from callbackURL: URL) -> Result<String, DesktopGoogleOAuthError>? {
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "hanasand",
+              components.host?.lowercased() == "social-link",
+              components.path.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.fragment == nil,
+              let queryItems = components.queryItems,
+              queryItems.count == 1 else { return nil }
+        let item = queryItems[0]
+        if item.name == "code",
+           let code = item.value,
+           code.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil {
+            return .success(code)
+        }
+        if item.name == "error", let error = item.value, !error.isEmpty {
+            return .failure(.provider(error))
+        }
+        return nil
+    }
+}
+
 enum DesktopGoogleOAuthError: LocalizedError, Equatable {
     case insecureEndpoint
     case invalidChallenge

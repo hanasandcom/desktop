@@ -14,6 +14,8 @@ The package requires macOS 14 or later. The app starts its embedded Swift HTTPS 
 
 The **Albums** section manages private-by-default CDN photo albums, including album names, contents, and invited viewer or contributor access. The **Images** workspace includes the private CDN file library, image previews and favorites, and local image review. CDN file uploads accept images, videos, and other files through the native upload panel. Supported video files up to 50 MiB can be previewed in Desktop. Album thumbnails are loaded through the authenticated CDN session and kept out of the shared URL cache.
 
+Share workspaces support collaborative file editing, GitHub import and synchronization, staged commits and push, and text search and replace across workspace files. Their browser terminal connects to the Website service and currently supports only `pwd`, `ls`, `clear`, and `help`; it is not a general-purpose shell or PTY.
+
 ### Embedded Swift bridge routes
 
 The bridge exposes these HTTPS routes:

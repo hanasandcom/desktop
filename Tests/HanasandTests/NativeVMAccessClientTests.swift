@@ -167,6 +167,27 @@ final class NativeVMAccessClientTests: XCTestCase {
         catch { XCTAssertEqual(error as? NativeVMAccessError, .invalidResponse) }
     }
 
+    func testContainerBillingSnapshotIsAuthenticatedAndValidatesOwnedItemsAndPlan() async throws {
+        let client = try makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/billing/container-products")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-token")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "id"), "fixture-user")
+            XCTAssertFalse(request.httpShouldHandleCookies)
+            return (Data(#"{"plans":[{"id":"failover","name":"Failover","priceNok":49,"currency":"NOK","interval":"month"}],"containers":[{"name":"vm-18","failover_premium":true},{"name":"vm-17","failover_premium":false}]}"#.utf8), try Self.response(for: request, status: 200))
+        }
+
+        let snapshot = try await client.loadContainerBillingSnapshot()
+        XCTAssertEqual(snapshot.plans, [NativeContainerPurchasePlan(id: "failover", name: "Failover", priceNok: 49, currency: "NOK", interval: "month")])
+        XCTAssertEqual(snapshot.containers, [NativeContainerPurchase(name: "vm-17", failoverPremium: false), NativeContainerPurchase(name: "vm-18", failoverPremium: true)])
+
+        let duplicate = try makeClient { request in
+            (Data(#"{"plans":[{"id":"failover","name":"Failover","priceNok":49,"currency":"NOK","interval":"month"}],"containers":[{"name":"vm-17","failover_premium":false},{"name":"vm-17","failover_premium":true}]}"#.utf8), try Self.response(for: request, status: 200))
+        }
+        do { _ = try await duplicate.loadContainerBillingSnapshot(); XCTFail("Duplicate container rows must be rejected.") }
+        catch { XCTAssertEqual(error as? NativeVMAccessError, .invalidResponse) }
+    }
+
     func testImpersonationInvalidEndpointAndHTTPFailureAreRejected() async throws {
         XCTAssertThrowsError(try NativeVMAccessClient(apiBaseURL: base, userID: "fixture-user", token: "fixture-token", impersonationToken: "impersonation")) {
             XCTAssertEqual($0 as? NativeVMAccessError, .impersonationUnsupported)

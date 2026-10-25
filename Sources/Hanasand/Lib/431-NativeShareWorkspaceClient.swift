@@ -162,16 +162,20 @@ struct NativeShareWorkspaceClient {
               path.utf8.count <= NativeShareWorkspaceLimits.fieldBytes,
               content.utf8.count <= NativeShareWorkspaceLimits.contentBytes,
               ["file", "folder"].contains(type) else { throw NativeShareWorkspaceError.invalidRoute }
-        let created: NativeShareWorkspaceFile = try await request("share", method: "POST", body: [
+        let created: NativeShareWorkspaceFile = try await mutationRequest("create", "share", method: "POST", body: [
             "id": id, "name": name, "path": path, "content": content, "parent": parent,
             "type": type, "includeTree": false,
         ])
+        guard created.id == id, created.name == name, created.path == path,
+              created.type == type, created.parent == parent else {
+            throw NativeShareWorkspaceError.mutationUncertain("create")
+        }
         try created.validate()
         return created
     }
 
     private func createWorkspace(alias: String) async throws -> NativeShareWorkspace {
-        let created: CreatedWorkspaceResponse = try await request("share", method: "POST", body: [
+        let created: CreatedWorkspaceResponse = try await mutationRequest("create workspace", "share", method: "POST", body: [
             "id": alias, "name": alias, "path": alias, "content": "", "type": "folder", "includeTree": true,
         ])
         try created.share.validate()

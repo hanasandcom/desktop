@@ -107,7 +107,7 @@ struct VMsNativePanel: View {
                 }
             }
 
-            if !inventoryError.isEmpty {
+            if !inventoryError.isEmpty && model.hasHanasandAuth {
                 Text(inventoryError).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.danger).textSelection(.enabled)
             }
             if showProvisioning || provisioningResumeName != nil {
@@ -709,7 +709,7 @@ struct VMsNativePanel: View {
     private func loadWorkspaceInventory() async {
         guard model.hasHanasandAuth else {
             inventorySnapshot = nil
-            inventoryError = "Sign in to load VM inventory."
+            inventoryError = ""
             return
         }
         let currentScope = inventoryScope

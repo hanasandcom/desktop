@@ -856,19 +856,12 @@ struct NativePublicInfoPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            NativeContainerHostPlansPanel(onNavigate: onNavigate)
             if !model.settings.impersonationToken.isEmpty {
                 NativeNotice(message: AccountSubscriptionClientError.impersonationUnsupported.localizedDescription)
             }
             if !planCheckout.status.isEmpty {
                 NativeNotice(message: planCheckout.status)
-            }
-            ForEach(page.sections) { section in
-                NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: true) {
-                    ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                        Text(paragraph).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    ActionButton(title: "Manage a container", icon: "shippingbox") { open("/vms") }
-                }
             }
             Text("Secure checkout is handled by Stripe.")
                 .font(.system(size: 10)).foregroundStyle(theme.textTertiary)

@@ -14,6 +14,7 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var draft: OrganizationWorkspaceSettings?
     @State private var events: [OrganizationWorkspaceRecord] = []
     @State private var cases: [OrganizationWorkspaceRecord] = []
+    @State private var eventScope: OrganizationWorkspaceEventScope?
     @State private var activityPage = OrganizationWorkspaceActivityPage.summaryUnavailable
     @State private var warnings: [String] = []
     @State private var isLoading = false
@@ -73,11 +74,29 @@ struct OrganizationWorkspaceNativePanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "Organization workspace", subtitle: "Settings, scoped monitoring records, and recent activity") {
+            NativeGroupPanel(title: "Organization workspace", subtitle: "Settings, scoped monitoring records, and recent activity", fillsAvailableWidth: true) {
                 HStack(spacing: 10) {
-                    Picker("Organization section", selection: $section) {
-                        ForEach(OrganizationWorkspaceSection.allCases) { item in Text(item.rawValue).tag(item) }
-                    }.pickerStyle(.segmented).labelsHidden()
+                    HStack(spacing: 6) {
+                        ForEach(OrganizationWorkspaceSection.allCases) { item in
+                            Button {
+                                section = item
+                            } label: {
+                                Text(item.rawValue)
+                                    .font(.system(size: 12, weight: section == item ? .semibold : .medium))
+                                    .foregroundStyle(section == item ? theme.accent : theme.text)
+                                    .frame(maxWidth: .infinity, minHeight: 34)
+                                    .padding(.horizontal, 8)
+                                    .background(section == item ? theme.accentSoft : theme.cardRaised,
+                                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(section == item ? theme.accent.opacity(0.3) : theme.divider.opacity(0.6), lineWidth: 1))
+                                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(section == item ? .isSelected : [])
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                     ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await refresh() } }
                         .disabled(isLoading || (organizationID.isEmpty && requestedOrganizationID == nil))
                 }
@@ -104,6 +123,8 @@ struct OrganizationWorkspaceNativePanel: View {
                 overviewContent
             } else if section == .activity {
                 activityContent
+            } else if section == .events {
+                eventsContent
             } else {
                 recordsContent
             }
@@ -241,8 +262,7 @@ struct OrganizationWorkspaceNativePanel: View {
     }
 
     @ViewBuilder private var recordsContent: some View {
-        NativeGroupPanel(title: section == .events ? "Events and cases" : "Recent organization activity",
-                         subtitle: section == .events ? "Latest organization-scoped records" : "Activity is derived from the available event and case feeds") {
+        NativeGroupPanel(title: "Recent organization activity", subtitle: "Activity is derived from the available event and case feeds") {
             SearchFieldRow(placeholder: "Search records", text: $search)
             if visibleRecords.isEmpty && !isLoading {
                 NativeEmptyState(title: error.isEmpty ? "No records found" : "Records could not be loaded",
@@ -251,6 +271,86 @@ struct OrganizationWorkspaceNativePanel: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12, alignment: .top)], alignment: .leading, spacing: 10) {
                 ForEach(visibleRecords) { record in
                     recordCard(record)
+                }
+            }
+        }
+    }
+
+    private var eventsContent: some View {
+        let scope = eventScope
+        return VStack(alignment: .leading, spacing: 12) {
+            NativeGroupPanel(title: "Event, case, and destination records", subtitle: "Matched records and delivery context for this organization") {
+                HStack(spacing: 8) {
+                    scopeCount("Terms", value: scope?.termCount)
+                    scopeCount("Events", value: scope?.eventCount)
+                    scopeCount("Cases", value: scope?.caseCount)
+                    scopeCount("Destinations", value: scope?.destinationCount)
+                    scopeCount("Failures", value: scope?.failureCount)
+                }
+                SearchFieldRow(placeholder: "Search events, cases, terms, or destinations", text: $search)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                scopeSection("Watchlist terms", empty: "No active organization terms were reported.", rows: scope?.terms)
+                scopeSection("Events", empty: "Events appear after a live capture matches an active organization term.", rows: scope?.events)
+                scopeSection("Cases", empty: "Cases appear after an organization event is opened as a case.", rows: scope?.cases)
+                scopeSection("Visibility", empty: "Visibility decisions were not reported.", rows: scope?.visibility)
+                scopeSection("Destinations", empty: "No configured destinations were reported.", rows: scope?.destinations)
+                scopeSection("Delivery failures", empty: "No failed deliveries were reported.", rows: scope?.failures)
+            }
+        }
+    }
+
+    private func scopeCount(_ title: String, value: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            Text(value.map { $0.formatted() } ?? "Unavailable").font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(theme.text)
+        }
+        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+        .padding(9)
+        .background(theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    @ViewBuilder private func scopeSection(_ title: String, empty: String, rows: [OrganizationWorkspaceScopeRow]?) -> some View {
+        NativeGroupPanel(title: title, subtitle: rows.map { "\($0.count) reported" } ?? "Source unavailable", fillsAvailableWidth: true) {
+            if rows == nil {
+                NativeEmptyState(title: "Source unavailable", message: "Refresh to retry this organization-scoped source.")
+            } else {
+                let visible = (rows ?? []).filter { row in
+                    search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || "\(row.title) \(row.detail) \(row.updatedAt)".localizedCaseInsensitiveContains(search)
+                }
+                if visible.isEmpty {
+                    NativeEmptyState(title: (rows ?? []).isEmpty ? "No records" : "No matching records",
+                                     message: (rows ?? []).isEmpty ? empty : "Change the search text to see matching records.")
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(visible) { row in
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(row.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    if !row.detail.isEmpty {
+                                        Text(row.detail).font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    if !row.updatedAt.isEmpty {
+                                        Text(formatDateText(row.updatedAt, fallback: row.updatedAt)).font(.system(size: 9)).foregroundStyle(theme.textTertiary)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                                if let path = row.contextPath {
+                                    ActionButton(title: "Open", icon: "arrow.up.right.square") {
+                                        model.openNativeDashboard(path: path, label: title, detailID: row.id, query: row.contextQuery)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(9)
+                            .background(theme.backgroundElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
                 }
             }
         }
@@ -379,6 +479,7 @@ struct OrganizationWorkspaceNativePanel: View {
             draft = nil
             events = []
             cases = []
+            eventScope = nil
             activityPage = .summaryUnavailable
             warnings = []
             loadedOrganizationID = requestedOrganization
@@ -388,26 +489,41 @@ struct OrganizationWorkspaceNativePanel: View {
         do {
             let client = try OrganizationWorkspaceClient(settings: model.settings, organizationID: requestedOrganization)
             async let settingsResult = captureOrganizationWorkspaceScreenResult { try await client.loadSettings() }
-            async let loadedRecords = client.loadRecords()
-            let (pageResult, recordResult) = await (settingsResult, loadedRecords)
+            let loadedEvents: [OrganizationWorkspaceRecord]?
+            let loadedCases: [OrganizationWorkspaceRecord]?
+            let sourceWarnings: [String]
+            if section == .events {
+                let result = await client.loadEventScope()
+                eventScope = result.scope
+                loadedEvents = result.eventRecords
+                loadedCases = result.caseRecords
+                sourceWarnings = result.warnings
+            } else {
+                let result = await client.loadRecords()
+                eventScope = nil
+                loadedEvents = result.events
+                loadedCases = result.cases
+                sourceWarnings = result.warnings
+            }
+            let pageResult = await settingsResult
             guard requestedOrganization == organizationID,
                   requestedUser == model.userIDForRequests, requestedToken == model.authTokenForRequests,
                   !impersonating else { return }
 
-            var sourceWarnings = recordResult.warnings
+            var allWarnings = sourceWarnings
             switch pageResult {
             case let .success(page):
                 guard page.organization.id == requestedOrganization else {
-                    sourceWarnings.append("Settings could not be loaded: the response organization did not match the selected workspace.")
+                    allWarnings.append("Settings could not be loaded: the response organization did not match the selected workspace.")
                     break
                 }
                 settingsPage = page
                 draft = page.settings
             case let .failure(failure):
-                sourceWarnings.append("Settings could not be loaded: \(failure.localizedDescription)")
+                allWarnings.append("Settings could not be loaded: \(failure.localizedDescription)")
             }
-            if let loadedEvents = recordResult.events { events = loadedEvents }
-            if let loadedCases = recordResult.cases { cases = loadedCases }
+            if let loadedEvents { events = loadedEvents }
+            if let loadedCases { cases = loadedCases }
 
             let canViewInvites = ["owner", "admin"].contains(settingsPage?.organization.role?.lowercased() ?? "")
             if section == .activity || section == .overview {
@@ -423,13 +539,13 @@ struct OrganizationWorkspaceNativePanel: View {
                     activityPage = canViewInvites ? mergedPage : OrganizationWorkspaceActivityPage(
                         entries: mergedPage.entries.filter { $0.kind != .invite }, warnings: mergedPage.warnings
                     )
-                    sourceWarnings.append(contentsOf: page.warnings)
+                    allWarnings.append(contentsOf: page.warnings)
                 case let .failure(failure):
-                    sourceWarnings.append("Organization activity could not be loaded: \(failure.localizedDescription)")
+                    allWarnings.append("Organization activity could not be loaded: \(failure.localizedDescription)")
                 }
             }
             var seenWarnings = Set<String>()
-            warnings = sourceWarnings.filter { seenWarnings.insert($0).inserted }
+            warnings = allWarnings.filter { seenWarnings.insert($0).inserted }
             if warnings.isEmpty {
                 status = "Loaded settings, \(events.count) events, and \(cases.count) cases."
             } else {

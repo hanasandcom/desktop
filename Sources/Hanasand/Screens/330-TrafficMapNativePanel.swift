@@ -99,7 +99,7 @@ struct TrafficMapNativePanel: View {
                     title: isLoading && records.isEmpty ? "Loading traffic snapshot" : (status.hasPrefix("Could not") && records.isEmpty ? "Traffic snapshot unavailable" : (records.isEmpty ? "No traffic snapshot" : "No located requests")),
                     message: isLoading && records.isEmpty
                         ? "Fetching the latest retained requests and traffic metrics."
-                        : (status.hasPrefix("Could not") && records.isEmpty ? "\(status) Use Refresh to try again." : (records.isEmpty ? "Refresh to load the latest retained traffic records." : "The current snapshot has no requests with a supported country code."))
+                        : (status.hasPrefix("Could not") && records.isEmpty ? "Refresh to try again." : (records.isEmpty ? "Refresh to load the latest retained traffic records." : "The current snapshot has no requests with a supported country code."))
                 )
             }
             mapView
@@ -243,6 +243,7 @@ struct TrafficMapNativePanel: View {
             ForEach(domains, id: \.self) { Text($0).tag($0) }
         }
         .pickerStyle(.menu)
+        .tint(theme.textSecondary)
         .frame(minWidth: 190, maxWidth: 360, alignment: .leading)
     }
 
@@ -253,6 +254,7 @@ struct TrafficMapNativePanel: View {
             Label(isLoading ? "Loading" : "Refresh", systemImage: "arrow.clockwise")
         }
         .buttonStyle(.bordered)
+        .tint(theme.textSecondary)
         .disabled(isLoading)
     }
 
@@ -293,6 +295,7 @@ struct TrafficMapNativePanel: View {
                 .disabled(mapZoom == 1 && mapOffset == .zero)
         }
         .buttonStyle(.bordered)
+        .tint(theme.textSecondary)
         .controlSize(.small)
     }
 
@@ -644,6 +647,9 @@ private extension Result where Failure == Error {
 
     func failureDescription(_ endpoint: String) -> String? {
         guard case let .failure(error) = self else { return nil }
-        return "\(endpoint): \(error.localizedDescription)"
+        if let trafficError = error as? TrafficRecentError {
+            return "\(endpoint): \(trafficError.errorDescription ?? "Traffic is temporarily unavailable.")"
+        }
+        return "\(endpoint): Traffic is temporarily unavailable. Refresh to try again."
     }
 }

@@ -128,6 +128,91 @@ final class OrganizationWorkspaceTests: XCTestCase {
         XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("cases could not be loaded") }))
     }
 
+    func testEventsScopeLoadsTermsVisibilityCorrelationsAndDeliverySummaryForSelectedOrganization() async throws {
+        let recorder = OrganizationWorkspaceRequestRecorder()
+        var eventSettings = settings
+        eventSettings.selectedOrganizationID = "org-one"
+        let client = try OrganizationWorkspaceClient(settings: eventSettings, organizationID: "org-one") { request in
+            recorder.append(request)
+            let path = request.url?.path ?? ""
+            let body: String
+            if path.hasSuffix("/api/findings/alerts") {
+                body = #"{"organization":{"id":"org-one"},"visibilityDecision":{"allowed":true},"alerts":[{"id":"event-1","tenantId":"org-one","organizationId":"org-one","company":"Example Co","matchedTerm":{"value":"example.test"},"severity":"high","reviewState":"new","deliveryState":"failed","firstSeenAt":"2026-10-24T12:00:00Z","evidence":[]}],"total":1,"nextCursor":null}"#
+            } else if path.hasSuffix("/api/cases") {
+                body = #"{"organizationId":"org-one","cases":[{"id":"case-1","organizationId":"org-one","title":"Example case","status":"open","assignedOwner":"member-1","createdAt":"2026-10-24T11:00:00Z"}],"warnings":[]}"#
+            } else if path.hasSuffix("/watchlists/alert-terms") {
+                body = #"{"organization":{"id":"org-one"},"alertTermsExport":{"organizationId":"org-one","tenantId":"org-one","activeTerms":[{"organizationId":"org-one","watchlistItemId":"watch-1","kind":"domain","term":"example.test","matchReason":"domain match"}]}}"#
+            } else if path.hasSuffix("/alert-case-visibility") {
+                body = #"{"organization":{"id":"org-one"},"alertCaseVisibility":{"organizationId":"org-one","visibility":{"alertReadAllowed":true,"caseAssignmentAllowed":false},"caseWorkflow":{"casePathTemplate":"/cases/:id"}}}"#
+            } else if path.hasSuffix("/webhooks") {
+                body = #"{"organization":{"id":"org-one"},"destinations":[{"id":"dest-1","organizationId":"org-one","name":"Alerts","status":"active","endpointHash":"hash-1"}]}"#
+            } else if path.hasSuffix("/deliveries") {
+                body = #"{"deliveries":[{"id":"delivery-1","organizationId":"org-one","alertId":"event-1","caseId":"case-1","destinationId":"dest-1","status":"failed","attemptedAt":"2026-10-24T13:00:00Z","sanitizedPayloadPreview":{"context":{"matchReason":"matched domain evidence"}}}]}"#
+            } else if path.hasSuffix("/watchlists") {
+                body = #"{"organization":{"id":"org-one"},"watchlistItems":[{"id":"watch-1","organizationId":"org-one","value":"example.test","status":"active","webhookDestinationId":"dest-1"},{"id":"watch-2","organizationId":"org-one","value":"other.example","status":"paused","webhookEndpointHint":"hooks.example.test/opaque"}]}"#
+            } else {
+                body = #"{"members":[{"userId":"member-1","organizationId":"org-one","name":"Analyst One","status":"active"}]}"#
+            }
+            return self.http(body, request: request)
+        }
+
+        let result = await client.loadEventScope()
+
+        XCTAssertEqual(result.eventRecords?.map(\.id), ["event-1"])
+        XCTAssertEqual(result.caseRecords?.map(\.id), ["case-1"])
+        XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertEqual(result.scope.termCount, 1)
+        XCTAssertEqual(result.scope.eventCount, 1)
+        XCTAssertEqual(result.scope.caseCount, 1)
+        XCTAssertEqual(result.scope.destinationCount, 2)
+        XCTAssertEqual(result.scope.failureCount, 1)
+        XCTAssertTrue(result.scope.events?.first?.detail.contains("Term: example.test") == true)
+        XCTAssertTrue(result.scope.events?.first?.detail.contains("Match: matched domain evidence") == true)
+        XCTAssertTrue(result.scope.cases?.first?.detail.contains("Owner: Analyst One") == true)
+        XCTAssertTrue(result.scope.cases?.first?.detail.contains("Match: matched domain evidence") == true)
+        XCTAssertEqual(result.scope.visibility?.first(where: { $0.title == "Event visibility" })?.detail, "true")
+        XCTAssertEqual(result.scope.failures?.first?.title, "Alerts delivery")
+        let watchlistDestination = result.scope.destinations?.first(where: { $0.title == "other.example" })
+        XCTAssertTrue(watchlistDestination?.detail.contains("Watchlist route") == true)
+        XCTAssertEqual(watchlistDestination?.contextPath, "/organizations/watchlists")
+        XCTAssertFalse(watchlistDestination?.detail.contains("hooks.example.test") ?? true)
+        XCTAssertEqual(recorder.requests.count, 8)
+        XCTAssertTrue(recorder.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token_abc-123" })
+        XCTAssertTrue(recorder.requests.allSatisfy { $0.value(forHTTPHeaderField: "Cache-Control") == "no-store" })
+        let deliveries = recorder.requests.first { $0.url?.path.hasSuffix("/deliveries") == true }!
+        XCTAssertEqual(URLComponents(url: deliveries.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org-one")
+    }
+
+    func testEventsScopeRejectsCrossOrganizationDataAndWarnsForUnavailableSources() async throws {
+        let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
+            let path = request.url?.path ?? ""
+            if path.hasSuffix("/api/findings/alerts") {
+                return self.http(#"{"organization":{"id":"org/a"},"visibilityDecision":{"allowed":true},"alerts":[],"total":0,"nextCursor":null}"#, request: request)
+            }
+            if path.hasSuffix("/api/cases") {
+                return self.http(#"{"organizationId":"org/a","cases":[],"warnings":[]}"#, request: request)
+            }
+            if path.hasSuffix("/watchlists/alert-terms") {
+                return self.http(#"{"organization":{"id":"org/other"},"alertTermsExport":{"organizationId":"org/other","activeTerms":[]}}"#, request: request)
+            }
+            if path.hasSuffix("/deliveries") {
+                return self.http(#"{"deliveries":[{"id":"foreign-delivery","organizationId":"org/other","alertId":"foreign-event","status":"failed"}]}"#, request: request)
+            }
+            return self.http(#"{"error":{"message":"Source unavailable."}}"#, request: request, status: 503)
+        }
+
+        let result = await client.loadEventScope()
+
+        XCTAssertEqual(result.eventRecords?.count, 0)
+        XCTAssertEqual(result.caseRecords?.count, 0)
+        XCTAssertNil(result.scope.terms)
+        XCTAssertNil(result.scope.failures)
+        XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("watchlist terms") }))
+        XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("outside the selected organization") }))
+        XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("destinations could not be loaded") }))
+        XCTAssertNil(result.scope.destinationCount)
+    }
+
     func testActivityLoadIncludesOrganizationSourcesAndProducesNativeContextRows() async throws {
         let recorder = OrganizationWorkspaceRequestRecorder()
         let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in

@@ -23,9 +23,6 @@ private final class VisualFixtureRequestRecorder: @unchecked Sendable {
 @MainActor
 final class DesktopVisualFixtureRendererTests: XCTestCase {
     func testRenderHomeAndUnauthenticatedAccountRoutesAtReferenceWidths() throws {
-        let app = NSApplication.shared
-        app.setActivationPolicy(.prohibited)
-
         let output = URL(fileURLWithPath: "/private/tmp/hanasand-desktop-visual-fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let requestRecorder = VisualFixtureRequestRecorder()
@@ -92,31 +89,56 @@ final class DesktopVisualFixtureRendererTests: XCTestCase {
         let root = content
             .environmentObject(model)
             .environment(\.desktopTheme, theme)
+            .environment(\.displayScale, 1)
+            .preferredColorScheme(theme.isLight ? .light : .dark)
             .frame(width: CGFloat(width), height: 900)
             .background(theme.background)
+        // A hidden host lets the real SwiftUI view hierarchy settle while keeping
+        // the review offscreen. This window is never ordered or activated.
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: 900)
-        hosting.wantsLayer = true
         let window = NSWindow(contentRect: hosting.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
-        window.orderFrontRegardless()
         window.displayIfNeeded()
-
-        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         hosting.layoutSubtreeIfNeeded()
         hosting.displayIfNeeded()
-
+        XCTAssertFalse(window.isVisible, "Visual review must never order a window on screen.")
         let rect = NSRect(x: 0, y: 0, width: width, height: 900)
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: rect) else {
-            window.orderOut(nil)
-            XCTFail("Could not allocate screenshot for \(label) at \(width)pt")
+            window.close()
+            XCTFail("Could not render \(label) at \(width)pt")
             return
         }
         hosting.cacheDisplay(in: rect, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        window.close()
+        let normalized = try XCTUnwrap(normalizedBitmap(bitmap, width: width, height: 900))
+        let png = try XCTUnwrap(normalized.representation(using: .png, properties: [:]))
         XCTAssertGreaterThan(png.count, 1_000, "Expected a nonempty \(label) screenshot at \(width)pt")
         XCTAssertEqual(Array(png.prefix(8)), [137, 80, 78, 71, 13, 10, 26, 10])
+        XCTAssertEqual(pngInteger(png, offset: 16), width)
+        XCTAssertEqual(pngInteger(png, offset: 20), 900)
         try png.write(to: output.appendingPathComponent("\(label)-\(width).png"), options: .atomic)
-        window.orderOut(nil)
+    }
+
+    private func normalizedBitmap(_ source: NSBitmapImageRep, width: Int, height: Int) -> NSBitmapImageRep? {
+        guard let image = source.cgImage,
+              let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let normalized = context.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: normalized)
+    }
+
+    private func pngInteger(_ data: Data, offset: Int) -> Int {
+        data[offset..<(offset + 4)].reduce(0) { ($0 << 8) | Int($1) }
     }
 }

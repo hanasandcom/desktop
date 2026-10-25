@@ -37,7 +37,7 @@ struct NativeDashboardDetail: View {
         if path == "/authenticator" || path == "/findings/actions" { return true }
         switch path {
         case "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings", "/privacy", "/terms", "/reserved-usernames", "/pricing", "/solutions/scanner", "/solutions/security-monitoring", "/security.txt",
-             "/dashboard", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/monitor", "/ti/darkweb/index", "/activity", "/ai/workspace", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/organizations", "/organizations/team", "/ti", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/organization-api-keys", "/api", "/api/openapi", "/developers", "/public-profile", "/sandbox", "/sandbox/result", "/sandbox/report", "/pwned", "/support", "/thesis", "/tools", "/authenticator", "/traffic/map", "/images/library", "/cdn/files", "/shared/album", "/scanner", "/dashboard/scanner", "/organization-privacy", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/system/hosts", "/system/updates", "/g", "/dashboard/tests", "/load-testing", "/test", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron", "/mail", "/system", "/system/containers", "/traffic/blocklist", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/system/ai", "/system/rates", "/profile", "/management", "/users", "/role", "/s", "/repositories", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/notes", "/db", "/db/backups", "/db/restore", "/vulnerability-findings", "/traffic", "/upload", "/dashboard/files":
+             "/dashboard", "/cases", "/cases/intelligence", "/documents/scanner", "/scan", "/status", "/monitor", "/ti/darkweb/index", "/activity", "/ai/workspace", "/organization-workspace", "/organizations/settings", "/organizations/events", "/organizations/activity", "/organizations", "/organizations/team", "/ti", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/watchlists", "/organization-api-keys", "/api", "/api/openapi", "/developers", "/public-profile", "/sandbox", "/sandbox/result", "/sandbox/report", "/pwned", "/support", "/thesis", "/tools", "/authenticator", "/traffic/map", "/images/library", "/cdn/files", "/shared/album", "/scanner", "/dashboard/scanner", "/organization-privacy", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/system/hosts", "/system/updates", "/g", "/dashboard/tests", "/load-testing", "/test", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/system/cron", "/mail", "/system", "/system/containers", "/traffic/blocklist", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/system/ai", "/system/rates", "/profile", "/management", "/users", "/role", "/s", "/repositories", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/notes", "/db", "/db/backups", "/db/restore", "/vulnerability-findings", "/traffic", "/upload", "/dashboard/files":
             return true
         default:
             return false
@@ -70,7 +70,7 @@ struct NativeDashboardDetail: View {
         }
         .task(id: model.selectedDashboardPath) {
             let path = model.selectedDashboardPath ?? ""
-            let ownedByPanel = ["/activity", "/ai/workspace", "/sandbox/result", "/sandbox/report", "/images/library", "/cdn/files", "/shared/album"].contains(path)
+            let ownedByPanel = ["/activity", "/ai/workspace", "/sandbox/result", "/sandbox/report", "/images/library", "/cdn/files", "/shared/album", "/db", "/db/backups", "/db/restore", "/automation/cron", "/logs/realtime", "/logs/search", "/logs/errors"].contains(path)
                 || (path == "/s" && !model.selectedNativeDashboardDetailID.isEmpty)
                 || path == "/public-articles" || path == "/public-article"
             guard !ownedByPanel else { return }
@@ -83,11 +83,18 @@ struct NativeDashboardDetail: View {
     }
 
     private var hasPanelRefresh: Bool {
-        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/sandbox/result", "/sandbox/report", "/activity", "/ai/workspace", "/monitor", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/cdn/files", "/shared/album", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/cases/intelligence", "/documents/scanner", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/s", "/repositories", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/vulnerability-findings", "/db/backups"].contains(model.selectedDashboardPath ?? "")
+        ["/dashboard", "/dashboard/automations", "/dashboard/automation", "/automation/health", "/automation/cron", "/dashboard/tests", "/system/cron", "/api", "/api/openapi", "/sandbox", "/sandbox/result", "/sandbox/report", "/activity", "/ai/workspace", "/monitor", "/pwned", "/support", "/thesis", "/tools", "/mail", "/traffic", "/traffic/map", "/traffic/blocklist", "/system/containers", "/images/library", "/cdn/files", "/shared/album", "/organization-api-keys", "/organization-privacy", "/organizations", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity", "/cases", "/cases/intelligence", "/documents/scanner", "/scan", "/status", "/watchlists", "/dashboard/delivery-history", "/traffic/recent", "/subscription", "/system", "/system/hosts", "/system/updates", "/system/rates", "/vms", "/vms/console", "/logs", "/logs/realtime", "/logs/search", "/logs/errors", "/findings", "/rules/match", "/rules/detail", "/rules/analysis", "/rules/detection", "/rules/tuning", "/integrations", "/dashboard/management/service-accounts", "/scanner", "/dashboard/scanner", "/load-testing", "/test", "/role", "/content/articles", "/content/thoughts", "/public-articles", "/public-article", "/s", "/repositories", "/ti/overview", "/ti/workbench", "/ti/enrichment", "/ti/activity", "/ti/profiles", "/ti/sources", "/ti/runs", "/ti/captures", "/ti/timeliness", "/vulnerability-findings", "/db", "/db/backups", "/db/restore"].contains(model.selectedDashboardPath ?? "")
     }
 
     private var statusSubtitle: String {
-        ["Ready", "Native controls"].contains(model.nativeDashboardStatus) ? "" : model.nativeDashboardStatus
+        if ["/db", "/db/backups", "/db/restore", "/system", "/vms", "/logs", "/system/rates", "/automation/cron", "/logs/realtime", "/logs/search", "/logs/errors"].contains(model.selectedDashboardPath ?? "") { return "" }
+        let status = model.nativeDashboardStatus
+        if ["Ready", "Native controls"].contains(status) { return "" }
+        let lowered = status.lowercased()
+        if lowered.contains("hanasand.") || lowered.contains("nsurlerrordomain") || lowered.contains("nscocoaerrordomain") {
+            return "Some dashboard data could not be loaded. Refresh to try again."
+        }
+        return status
     }
 
     private func publicArticlePanel(articleID: String?) -> some View {
@@ -123,7 +130,7 @@ struct NativeDashboardDetail: View {
             CasesWorkspaceNativePanel(initialCaseID: model.selectedNativeDashboardDetailID)
         case "/cases/intelligence":
             IntelligenceCasesNativePanel(initialCaseID: model.selectedNativeDashboardDetailID)
-        case "/documents/scanner":
+        case "/documents/scanner", "/scan":
             DocumentScannerNativePanel()
         case "/monitor":
             NativeDomainMonitorPanel()
@@ -355,6 +362,8 @@ struct NativeDashboardDetail: View {
                     isProject: model.selectedNativeDashboardQuery["workspace"] == "project",
                     initialChatOpen: model.selectedNativeDashboardQuery["chat"] == "1",
                     createIfMissing: model.selectedNativeDashboardQuery["new"] == "1",
+                    initialSearchOpen: model.selectedNativeDashboardQuery["search"] == "1",
+                    initialTerminalOpen: model.selectedNativeDashboardQuery["terminal"] == "1",
                     onOpenChat: {
                         var query = ["shareID": model.selectedNativeDashboardDetailID, "new": "1"]
                         if let fileID = model.selectedNativeDashboardQuery["file"] { query["file"] = fileID }

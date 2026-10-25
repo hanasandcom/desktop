@@ -87,6 +87,13 @@ struct SubscriptionNativePanel: View {
                 NativeEmptyState(title: "Subscription unavailable", message: "Refresh to try again.")
             }
             availablePlansCard
+            NativeContainerHostPlansPanel(onNavigate: { path in
+                if path.hasPrefix("/login") {
+                    model.openNativeDashboard(path: "/login", label: "Sign in", query: ["next": "/subscription"])
+                } else {
+                    model.openNativeDashboard(path: path, label: "Container host options")
+                }
+            })
         }
         .task(id: refreshTaskID) {
             let requestedCheckoutReturn = checkoutReturn

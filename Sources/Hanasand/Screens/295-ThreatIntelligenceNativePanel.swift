@@ -111,38 +111,46 @@ struct ThreatIntelligenceNativePanel: View {
             }
 
             NativeGroupPanel(title: "Saved searches", subtitle: "Saved to your Hanasand account") {
-                if !model.threatSavedSearchStatus.isEmpty { Text(model.threatSavedSearchStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary) }
-                if model.threatSavedSearches.isEmpty {
-                    Text("Save a search to find it on your account later.").font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
-                }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(model.threatSavedSearches) { item in
-                            HStack(spacing: 6) {
-                                Button(item.query) {
-                                    beginSearch(query: item.query)
+                if !model.hasHanasandAuth {
+                    Text("Public searches are available without an account. Sign in to save searches to your account.")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    ActionButton(title: "Sign in to manage saved searches", icon: "person.crop.circle", expands: true) {
+                        model.openNativeDashboard(path: "/login", label: "Sign in", query: ["next": "/ti"])
+                    }
+                } else {
+                    if !model.threatSavedSearchStatus.isEmpty { Text(model.threatSavedSearchStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary) }
+                    if model.threatSavedSearches.isEmpty {
+                        Text("Save a search to find it on your account later.").font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(model.threatSavedSearches) { item in
+                                HStack(spacing: 6) {
+                                    Button(item.query) {
+                                        beginSearch(query: item.query)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button { removingSearch = item.query } label: { Image(systemName: "xmark.circle") }
+                                        .buttonStyle(.plain).help("Remove saved search")
+                                        .disabled(model.isMutatingThreatSavedSearch || !model.settings.impersonationToken.isEmpty)
                                 }
-                                .buttonStyle(.bordered)
-                                Button { removingSearch = item.query } label: { Image(systemName: "xmark.circle") }
-                                    .buttonStyle(.plain).help("Remove saved search")
-                                    .disabled(model.isMutatingThreatSavedSearch || !model.settings.impersonationToken.isEmpty)
                             }
                         }
                     }
-                }
-                HStack(spacing: 8) {
-                    ActionButton(title: model.isMutatingThreatSavedSearch ? "Saving…" : "Save current search", icon: "bookmark") {
-                        Task { await model.changeThreatSavedSearch(result?.query ?? model.threatSearchQuery, save: true) }
+                    HStack(spacing: 8) {
+                        ActionButton(title: model.isMutatingThreatSavedSearch ? "Saving…" : "Save current search", icon: "bookmark") {
+                            Task { await model.changeThreatSavedSearch(result?.query ?? model.threatSearchQuery, save: true) }
+                        }
+                        .disabled(model.isMutatingThreatSavedSearch || model.isLoadingThreatSearch || result == nil || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty)
+                        ActionButton(title: "Refresh saved searches", icon: "arrow.clockwise") { Task { await model.loadThreatSavedSearches() } }
+                            .disabled(model.isMutatingThreatSavedSearch)
                     }
-                    .disabled(model.isMutatingThreatSavedSearch || model.isLoadingThreatSearch || result == nil || !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty)
-                    ActionButton(title: "Refresh saved searches", icon: "arrow.clockwise") { Task { await model.loadThreatSavedSearches() } }
-                        .disabled(model.isMutatingThreatSavedSearch)
                 }
             }
 
             if let result { resultView(result) }
             else if !model.hasHanasandAuth {
-                NativeEmptyState(title: "Sign in required", message: "Sign in to search and manage account-saved queries.")
+                NativeEmptyState(title: "Search public threat intelligence", message: "Enter a query above to search source-backed activity without an account.")
             } else if !model.isLoadingThreatSearch {
                 NativeEmptyState(title: "Search for threat intelligence", message: "Search the Hanasand intelligence catalogue and review source-backed activity.")
             }

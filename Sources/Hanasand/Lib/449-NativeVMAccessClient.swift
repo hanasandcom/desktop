@@ -145,6 +145,38 @@ struct NativeVMAccessClient {
         return NativeVMFailoverReceipt(hostOptions: hostOptions, message: message)
     }
 
+    func loadContainerBillingSnapshot() async throws -> NativeContainerBillingSnapshot {
+        let result = try await request(path: "billing/container-products", method: "GET")
+        guard let object = try Self.object(result.data),
+              let rawPlans = object["plans"] as? [[String: Any]], rawPlans.count <= 20,
+              let rawContainers = object["containers"] as? [[String: Any]], rawContainers.count <= 1_000 else {
+            throw NativeVMAccessError.invalidResponse
+        }
+        let plans = try rawPlans.map { raw -> NativeContainerPurchasePlan in
+            guard let id = raw["id"] as? String, id == "failover",
+                  let name = raw["name"] as? String, name == "Failover",
+                  let price = raw["priceNok"] as? Int, (1...100_000).contains(price),
+                  let currency = raw["currency"] as? String, currency == "NOK",
+                  let interval = raw["interval"] as? String, interval == "month" else {
+                throw NativeVMAccessError.invalidResponse
+            }
+            return NativeContainerPurchasePlan(id: id, name: name, priceNok: price, currency: currency, interval: interval)
+        }
+        guard plans.count == 1, Set(plans.map(\.id)).count == plans.count else { throw NativeVMAccessError.invalidResponse }
+        let containers = try rawContainers.map { raw -> NativeContainerPurchase in
+            guard let name = raw["name"] as? String,
+                  Self.validatedContainerName(name),
+                  let premium = raw["failover_premium"] as? Bool else {
+                throw NativeVMAccessError.invalidResponse
+            }
+            return NativeContainerPurchase(name: name, failoverPremium: premium)
+        }
+        guard Set(containers.map(\.name)).count == containers.count else { throw NativeVMAccessError.invalidResponse }
+        return NativeContainerBillingSnapshot(plans: plans, containers: containers.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        })
+    }
+
     func loadFailoverCheckoutURL(for rawName: String) async throws -> URL {
         let name = try Self.validatedName(rawName)
         let body = try JSONSerialization.data(withJSONObject: ["vmName": name, "feature": "failover"])
@@ -232,6 +264,12 @@ struct NativeVMAccessClient {
             throw NativeVMAccessError.invalidVMName
         }
         return raw
+    }
+
+    private static func validatedContainerName(_ raw: String) -> Bool {
+        raw.count <= 100
+            && raw.range(of: #"^[A-Za-z0-9][A-Za-z0-9_.-]*$"#, options: .regularExpression) != nil
+            && raw != "." && raw != ".." && raw.lowercased() != "root" && raw.lowercased() != "nobody"
     }
 
     private static func pathSegment(_ value: String) -> String {

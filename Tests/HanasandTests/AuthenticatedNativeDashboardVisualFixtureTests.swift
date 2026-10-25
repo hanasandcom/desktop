@@ -68,11 +68,13 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
         "/switch-account", "/terms", "/test", "/ti", "/ti/darkweb/index", "/upload",
     ]
 
+    private let expoDestinationPaths = ["/scan"]
+
     // These are the unique native destination values in WebsitePageRouteCoverageTests.
     // Context variants are appended below when they materially change the destination panel.
     private var routes: [DashboardVisualFixtureRoute] {
         let safeDestinations = websiteDestinationPaths.filter { $0 != "/switch-account" }
-        var routes = safeDestinations.map { DashboardVisualFixtureRoute(path: $0) }
+        var routes = (safeDestinations + expoDestinationPaths).map { DashboardVisualFixtureRoute(path: $0) }
         routes.append(contentsOf: [
             .init(path: "/cases", detailID: "HA-2042"),
             .init(path: "/status", query: ["section": "incidents"]),
@@ -88,7 +90,12 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
             .init(path: "/public-article", detailID: "fixture-article"),
             .init(path: "/sandbox/report", detailID: "fixture-run"),
             .init(path: "/s", detailID: "fixture-share"),
+            .init(path: "/s", detailID: "fixture-share", query: ["search": "1"]),
+            .init(path: "/s", detailID: "fixture-share", query: ["terminal": "1"]),
             .init(path: "/s", detailID: "fixture-project", query: ["workspace": "project"]),
+            .init(path: "/images/library", query: ["section": "albums"]),
+            .init(path: "/images/library", query: ["section": "upload"]),
+            .init(path: "/images/library", query: ["section": "deviceReview"]),
         ])
         return routes
     }
@@ -101,9 +108,6 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
             }
         }
 
-        let app = NSApplication.shared
-        app.setActivationPolicy(.prohibited)
-
         let output = URL(fileURLWithPath: "/private/tmp/hanasand-desktop-auth-visual-fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for oldFile in try FileManager.default.contentsOfDirectory(at: output, includingPropertiesForKeys: nil) {
@@ -114,9 +118,9 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
         XCTAssertEqual(websiteDestinationPaths.count, 104, "Update this fixture when the website destination crosswalk changes.")
         XCTAssertTrue(websiteDestinationPaths.contains("/switch-account"))
         XCTAssertFalse(routes.contains { $0.path == "/switch-account" }, "Saved account profiles are Keychain-backed and must not be read by this fixture.")
-        XCTAssertEqual(routes.count, 118, "Update this fixture when unique website destinations or meaningful native route contexts change.")
+        XCTAssertEqual(routes.count, 124, "Update this fixture when unique website/Expo destinations or meaningful native route contexts change.")
         XCTAssertEqual(Set(routes.map(\.identity)).count, routes.count, "Every base destination and route-context variant must render once per width.")
-        XCTAssertEqual(Set(routes.map(\.path)), Set(websiteDestinationPaths.filter { $0 != "/switch-account" }))
+        XCTAssertEqual(Set(routes.map(\.path)), Set(websiteDestinationPaths.filter { $0 != "/switch-account" } + expoDestinationPaths))
 
         for route in routes {
             if route.path == "/ai" { continue }
@@ -128,8 +132,11 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
         for width in [1080, 1512] {
             for route in routes {
                 let model = DesktopAgentModel(visualFixture: ())
+                model.selectedSection = .dashboard
                 model.selectedDashboardPath = route.path
-                model.selectedDashboardTitle = route.path == "/" ? "Hanasand" : route.path
+                let fixtureURL = URL(string: route.path, relativeTo: URL(string: model.settings.websiteBaseURL))?.absoluteString
+                model.selectedDashboardTitle = route.path == "/" ? "Hanasand" :
+                    fixtureURL.flatMap { BrowserWorkspaceModel.nativeRoute(for: $0, configuredWebsiteBaseURL: model.settings.websiteBaseURL)?.label } ?? route.path
                 model.selectedNativeDashboardDetailID = route.detailID
                 model.selectedNativeDashboardQuery = route.query
 
@@ -147,6 +154,11 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
             .filter { $0.pathExtension == "png" }
         XCTAssertEqual(screenshots.count, routes.count * 2)
         XCTAssertEqual(Set(screenshots.map(\.lastPathComponent)).count, routes.count * 2)
+        let representativeImages = try ["dashboard", "traffic-map", "logs-realtime", "cases"].map { label in
+            try Data(contentsOf: output.appendingPathComponent("\(label)-1080.png"))
+        }
+        XCTAssertEqual(Set(representativeImages).count, representativeImages.count,
+                       "The offscreen renderer must include each route's distinct panel content.")
     }
 
     private func fixtureView(for route: DashboardVisualFixtureRoute, model: DesktopAgentModel) throws -> AnyView {
@@ -171,9 +183,6 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
             return AnyView(NativeAccountRoutePanel(path: route.path, query: route.query))
         } else {
             XCTAssertTrue(NativeDashboardDetail.hasNativePanel(for: route.path))
-            // NativeDashboardDetail owns its own FeatureWorkspace. Keep it as a
-            // real SwiftUI child so EnvironmentObject values are resolved by
-            // SwiftUI instead of eagerly reading the computed panel body here.
             return AnyView(NativeDashboardDetail())
         }
 
@@ -193,31 +202,57 @@ final class AuthenticatedNativeDashboardVisualFixtureTests: XCTestCase {
         let root = content
             .environmentObject(model)
             .environment(\.desktopTheme, theme)
+            .environment(\.displayScale, 1)
+            .preferredColorScheme(theme.isLight ? .light : .dark)
             .frame(width: CGFloat(width), height: 900)
             .background(theme.background)
+        // Attach the view to a never-ordered window so ScrollViewReader, SwiftUI
+        // tasks and AppKit text controls receive a real host. The window is always
+        // checked invisible and cannot cover or activate over the user's app.
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(x: 0, y: 0, width: width, height: 900)
-        hosting.wantsLayer = true
         let window = NSWindow(contentRect: hosting.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = hosting
-        window.orderFrontRegardless()
         window.displayIfNeeded()
-
-        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         hosting.layoutSubtreeIfNeeded()
         hosting.displayIfNeeded()
-
+        XCTAssertFalse(window.isVisible, "Visual review must never order a window on screen.")
         let rect = NSRect(x: 0, y: 0, width: width, height: 900)
         guard let bitmap = hosting.bitmapImageRepForCachingDisplay(in: rect) else {
-            window.orderOut(nil)
+            window.close()
             XCTFail("Could not allocate screenshot for \(label) at \(width)pt")
             return
         }
         hosting.cacheDisplay(in: rect, to: bitmap)
-        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        window.close()
+        let normalized = try XCTUnwrap(normalizedBitmap(bitmap, width: width, height: 900))
+        let png = try XCTUnwrap(normalized.representation(using: .png, properties: [:]))
         XCTAssertGreaterThan(png.count, 1_000, "Expected a nonempty \(label) screenshot at \(width)pt")
         XCTAssertEqual(Array(png.prefix(8)), [137, 80, 78, 71, 13, 10, 26, 10])
+        XCTAssertEqual(pngInteger(png, offset: 16), width)
+        XCTAssertEqual(pngInteger(png, offset: 20), 900)
         try png.write(to: output.appendingPathComponent("\(label)-\(width).png"), options: .atomic)
-        window.orderOut(nil)
+    }
+
+    private func normalizedBitmap(_ source: NSBitmapImageRep, width: Int, height: Int) -> NSBitmapImageRep? {
+        guard let image = source.cgImage,
+              let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let normalized = context.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: normalized)
+    }
+
+    private func pngInteger(_ data: Data, offset: Int) -> Int {
+        data[offset..<(offset + 4)].reduce(0) { ($0 << 8) | Int($1) }
     }
 }

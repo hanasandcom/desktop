@@ -1,4 +1,18 @@
+import CryptoKit
 import SwiftUI
+
+private enum NativeShareGitSyncMode: Equatable {
+    case `import`
+    case pull
+}
+
+private enum NativeShareWorkspaceSearchPanelError: LocalizedError {
+    case accountChanged
+
+    var errorDescription: String? {
+        "The signed-in account changed. Refresh the workspace and search again."
+    }
+}
 
 struct NativeShareWorkspacePanel: View {
     let context: NativeShareWorkspaceContext
@@ -27,15 +41,47 @@ struct NativeShareWorkspacePanel: View {
     @State private var isPreviewVisible = false
     @State private var pendingCreateType: String?
     @State private var newItemName = ""
+    @State private var gitSource = ""
+    @State private var gitHubToken = ""
+    @State private var gitHasCredential = false
+    @State private var gitRepository: NativeShareGitRepository?
+    @State private var gitStatus: NativeShareGitStatus?
+    @State private var gitProgress: NativeShareGitWorkspaceProgress?
+    @State private var gitError = ""
+    @State private var gitMessage = ""
+    @State private var gitCommitMessage = ""
+    @State private var gitSelectedPaths = Set<String>()
+    @State private var gitAutoPullMinutes = 0
+    @State private var gitPending = false
+    @State private var gitOperation = ""
+    @State private var isTerminalOpen = false
+    @State private var isSearchOpen = false
+    @State private var searchQuery = ""
+    @State private var searchReplacement = ""
+    @State private var searchOptions = NativeShareWorkspaceSearchOptions()
+    @State private var searchFiles: [NativeShareWorkspaceSearchFile] = []
+    @State private var searchCacheScope = ""
+    @State private var searchResponse: NativeShareWorkspaceSearchResponse?
+    @State private var searchQuerySnapshot = ""
+    @State private var searchOptionsSnapshot: NativeShareWorkspaceSearchOptions?
+    @State private var searchError = ""
+    @State private var searchStatus = ""
+    @State private var isSearching = false
+    @State private var isReplacing = false
+    @State private var isReplaceConfirmationPresented = false
 
     init(alias: String, fileID: String? = nil, initialPath: String? = nil, isProject: Bool = false,
          initialChatOpen: Bool = false, createIfMissing: Bool = false,
+         initialSearchOpen: Bool = false,
+         initialTerminalOpen: Bool = false,
          onOpenChat: (() -> Void)? = nil) {
         context = NativeShareWorkspaceContext(alias: alias, fileID: fileID, isProject: isProject,
                                               initialChatOpen: initialChatOpen, createIfMissing: createIfMissing)
         self.initialPath = initialPath
         self.onOpenChat = onOpenChat
         _selectedFileID = State(initialValue: fileID ?? "")
+        _isSearchOpen = State(initialValue: initialSearchOpen)
+        _isTerminalOpen = State(initialValue: initialTerminalOpen)
     }
 
     private var selectedFile: NativeShareWorkspaceFile? { workspace?.selectedFile }
@@ -55,6 +101,22 @@ struct NativeShareWorkspacePanel: View {
     }
     private var canSaveSelectedFileContent: Bool {
         NativeShareWorkspaceEditorPolicy.canSaveContent(isFolder: selectedFile?.type == "folder")
+    }
+    private var searchResultsAreCurrent: Bool {
+        searchResponse != nil && searchQuerySnapshot == searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            && searchOptionsSnapshot == searchOptions
+    }
+    private var searchCacheIdentity: String {
+        func fingerprint(_ value: String) -> String {
+            Data(SHA256.hash(data: Data(value.utf8))).base64EncodedString()
+        }
+        return [
+            context.alias,
+            model.userIDForRequests,
+            model.settings.impersonatingUserID,
+            fingerprint(model.authTokenForRequests),
+            fingerprint(model.settings.impersonationToken),
+        ].joined(separator: "\u{1f}")
     }
     private var loadIdentity: String {
         [context.alias, context.fileID ?? "", context.isProject ? "project" : "share",
@@ -79,6 +141,15 @@ struct NativeShareWorkspacePanel: View {
                     if let onOpenChat {
                         ActionButton(title: "Open chat", icon: "bubble.left.and.bubble.right") { onOpenChat() }
                             .disabled(!interactionPolicy.allowsNavigationAndTreeMutations)
+                    }
+                    if !context.isProject {
+                        ActionButton(title: isSearchOpen ? "Hide search" : "Search files", icon: "magnifyingglass") {
+                            isSearchOpen.toggle()
+                            if !isSearchOpen { searchError = ""; searchStatus = "" }
+                        }
+                        ActionButton(title: isTerminalOpen ? "Hide terminal" : "Terminal", icon: "terminal") {
+                            isTerminalOpen.toggle()
+                        }
                     }
                     if previewURL != nil {
                         ActionButton(title: isPreviewVisible ? "Hide preview" : "Show preview", icon: "rectangle.on.rectangle") {
@@ -108,6 +179,11 @@ struct NativeShareWorkspacePanel: View {
                     editorPanel.frame(maxWidth: .infinity)
                 }
             }
+            if !context.isProject {
+                if isSearchOpen { searchPanel }
+                gitPanel
+                if isTerminalOpen { terminalPanel }
+            }
             if isPreviewVisible, let previewURL {
                 NativeGroupPanel(title: "Live preview", subtitle: previewURL.host ?? "Share preview") {
                     NativeSharePreviewView(target: previewURL)
@@ -115,7 +191,13 @@ struct NativeShareWorkspacePanel: View {
             }
         }
         .task(id: loadIdentity) { await load() }
+        .task(id: context.isProject ? "project" : "git-\(context.alias)") { await loadGitWorkspaceState() }
+        .task(id: "git-autopull-\(context.alias)-\(gitAutoPullMinutes)") { await runAutomaticGitPulls() }
         .task(id: collaborationIdentityKey) { syncCollaboration() }
+        .onChange(of: searchCacheIdentity) { _, identity in
+            guard identity != searchCacheScope else { return }
+            invalidateSearchCache(scope: identity)
+        }
         .onReceive(collaboration.$session) { changed in
             guard !context.isProject, let changed, changed.identity == collaboration.session?.identity,
                   changed.conflict == nil, let file = selectedFile, file.id == changed.identity.shareID else { return }
@@ -143,6 +225,16 @@ struct NativeShareWorkspacePanel: View {
             Text(pendingDeleteItem?.type == "folder"
                  ? "This removes the folder and every file or folder inside it."
                  : "This permanently removes this file from the share.")
+        }
+        .confirmationDialog(
+            "Replace matches across the workspace?",
+            isPresented: $isReplaceConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Replace All", role: .destructive) { Task { await replaceSearchMatches() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will update \(searchResponse?.totalMatches ?? 0) matches across \(searchResponse?.groups.count ?? 0) files. Each file is checked against its latest server copy before saving.")
         }
     }
 
@@ -226,6 +318,300 @@ struct NativeShareWorkspacePanel: View {
                 NativeEmptyState(title: "Workspace not loaded", message: "Refresh to load this project or share.")
             }
         }
+    }
+
+    private var gitPanel: some View {
+        NativeGroupPanel(title: "Git source", subtitle: gitRepository.map { "\($0.fullName) · \($0.branch)" } ?? "Import or sync a GitHub repository into this share", fillsAvailableWidth: true) {
+            TextField("GitHub repository URL or owner/repo", text: $gitSource)
+                .textFieldStyle(.roundedBorder)
+                .disabled(gitPending || !canEdit)
+            SecureField("GitHub token for a private repository (optional)", text: $gitHubToken)
+                .textFieldStyle(.roundedBorder)
+                .disabled(gitPending || !canEdit)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    ActionButton(title: gitPending && gitOperation == "import" ? "Importing…" : "Import repository", icon: "arrow.down.doc", expands: true) {
+                        Task { await syncGitRepository(mode: .import) }
+                    }
+                    .disabled(gitPending || !canEdit || gitSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ActionButton(title: gitPending && gitOperation == "pull" ? "Pulling…" : "Pull latest", icon: "arrow.down.circle", expands: true) {
+                        Task { await syncGitRepository(mode: .pull) }
+                    }
+                    .disabled(gitPending || !canEdit || gitSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ActionButton(title: gitPending && gitOperation == "status" ? "Checking…" : "Refresh status", icon: "arrow.clockwise", expands: true) {
+                        Task { await refreshGitStatus() }
+                    }
+                    .disabled(gitPending || gitRepository == nil && gitSource.isEmpty)
+                }
+                VStack(spacing: 8) {
+                    ActionButton(title: gitPending && gitOperation == "import" ? "Importing…" : "Import repository", icon: "arrow.down.doc", expands: true) {
+                        Task { await syncGitRepository(mode: .import) }
+                    }
+                    .disabled(gitPending || !canEdit || gitSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ActionButton(title: gitPending && gitOperation == "pull" ? "Pulling…" : "Pull latest", icon: "arrow.down.circle", expands: true) {
+                        Task { await syncGitRepository(mode: .pull) }
+                    }
+                    .disabled(gitPending || !canEdit || gitSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    ActionButton(title: gitPending && gitOperation == "status" ? "Checking…" : "Refresh status", icon: "arrow.clockwise", expands: true) {
+                        Task { await refreshGitStatus() }
+                    }
+                    .disabled(gitPending || gitRepository == nil && gitSource.isEmpty)
+                }
+            }
+            if let gitProgress {
+                let label = gitProgress.currentPath.map { "\(gitProgress.completedFiles)/\(gitProgress.totalFiles) · \($0)" }
+                    ?? "Preparing \(gitProgress.totalFiles) files…"
+                ProgressView(value: Double(gitProgress.completedFiles), total: Double(max(gitProgress.totalFiles, 1)))
+                Text(label).font(.system(size: 11)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
+            }
+            if !gitMessage.isEmpty {
+                Text(gitMessage).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.green).textSelection(.enabled)
+            }
+            if !gitError.isEmpty { NativeNotice(message: gitError, title: "Git workspace", tone: .error) }
+            if let gitStatus {
+                HStack(spacing: 10) {
+                    Text(gitStatus.branchSummary ?? "Working tree")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary).lineLimit(2).textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    ActionButton(title: "Stage all", icon: "checkmark.circle") {
+                        gitSelectedPaths = Set(gitStatus.files.map(\.path))
+                    }
+                    .disabled(gitPending || gitStatus.files.isEmpty)
+                }
+                if gitStatus.files.isEmpty {
+                    NativeEmptyState(title: "No Git changes", message: "The repository has no changed files to stage.")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 5) {
+                            ForEach(gitStatus.files) { file in
+                                Toggle(isOn: Binding(get: { gitSelectedPaths.contains(file.path) }, set: { selected in
+                                    if selected { gitSelectedPaths.insert(file.path) }
+                                    else { gitSelectedPaths.remove(file.path) }
+                                })) {
+                                    HStack(spacing: 7) {
+                                        Text("\(file.index)\(file.workingTree)")
+                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(theme.accent).frame(width: 25, alignment: .leading)
+                                        Text(file.path).font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(theme.text).lineLimit(1).truncationMode(.middle)
+                                    }
+                                }
+                                .toggleStyle(.checkbox)
+                                .disabled(gitPending)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 300)
+                    .padding(9)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    TextField("Commit message", text: $gitCommitMessage)
+                        .textFieldStyle(.roundedBorder).disabled(gitPending)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            ActionButton(title: gitPending && gitOperation == "commit" ? "Committing…" : "Commit staged", icon: "checkmark", expands: true) { Task { await commitGitChanges() } }
+                                .disabled(gitPending || gitSelectedPaths.isEmpty || gitCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            ActionButton(title: gitPending && gitOperation == "push" ? "Pushing…" : "Push", icon: "arrow.up.circle", expands: true) { Task { await pushGitChanges() } }
+                                .disabled(gitPending || gitRepository == nil)
+                            if gitHasCredential || gitRepository?.credential.hasCredential == true {
+                                ActionButton(title: "Remove GitHub token", icon: "key.slash", expands: true) { Task { await removeGitHubCredential() } }
+                                    .disabled(gitPending || gitRepository == nil)
+                            } else {
+                                ActionButton(title: "Save GitHub token", icon: "key", expands: true) { Task { await saveGitHubCredential() } }
+                                    .disabled(gitPending || gitRepository == nil || gitHubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                        VStack(spacing: 8) {
+                            ActionButton(title: gitPending && gitOperation == "commit" ? "Committing…" : "Commit staged", icon: "checkmark", expands: true) { Task { await commitGitChanges() } }
+                                .disabled(gitPending || gitSelectedPaths.isEmpty || gitCommitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            ActionButton(title: gitPending && gitOperation == "push" ? "Pushing…" : "Push", icon: "arrow.up.circle", expands: true) { Task { await pushGitChanges() } }
+                                .disabled(gitPending || gitRepository == nil)
+                            if gitHasCredential || gitRepository?.credential.hasCredential == true {
+                                ActionButton(title: "Remove GitHub token", icon: "key.slash", expands: true) { Task { await removeGitHubCredential() } }
+                                    .disabled(gitPending || gitRepository == nil)
+                            } else {
+                                ActionButton(title: "Save GitHub token", icon: "key", expands: true) { Task { await saveGitHubCredential() } }
+                                    .disabled(gitPending || gitRepository == nil || gitHubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Text("Auto-pull")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                if canEdit {
+                    Picker("Auto-pull interval", selection: $gitAutoPullMinutes) {
+                        Text("Off").foregroundStyle(theme.text).tag(0)
+                        Text("5 minutes").foregroundStyle(theme.text).tag(5)
+                        Text("15 minutes").foregroundStyle(theme.text).tag(15)
+                        Text("30 minutes").foregroundStyle(theme.text).tag(30)
+                        Text("60 minutes").foregroundStyle(theme.text).tag(60)
+                    }
+                    .pickerStyle(.menu)
+                    .tint(theme.accent)
+                    .onChange(of: gitAutoPullMinutes) { _, value in
+                        UserDefaults.standard.set(value, forKey: gitAutoPullIntervalKey)
+                    }
+                } else {
+                    Text("Off").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var terminalPanel: some View {
+        let configuredAPIBaseURL = URL(string: model.settings.apiBaseURL)
+        return NativeShareTerminalPanel(
+            apiBaseURL: configuredAPIBaseURL ?? URL(string: "https://visual-fixture.invalid/api")!,
+            alias: context.alias,
+            userID: model.userIDForRequests.isEmpty ? "default" : model.userIDForRequests,
+            connectionEnabled: configuredAPIBaseURL?.host?.hasSuffix(".invalid") == false,
+            onClose: { isTerminalOpen = false }
+        )
+    }
+
+    private var searchPanel: some View {
+        NativeGroupPanel(title: "Search workspace", subtitle: "Find and replace text across share files") {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    TextField("Search files", text: $searchQuery)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await searchWorkspace() } }
+                    ActionButton(title: isSearching ? "Searching…" : "Search", icon: "magnifyingglass", expands: true) {
+                        Task { await searchWorkspace() }
+                    }
+                    .disabled(isSearching || searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace == nil)
+                }
+                VStack(spacing: 8) {
+                    TextField("Search files", text: $searchQuery)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { Task { await searchWorkspace() } }
+                    ActionButton(title: isSearching ? "Searching…" : "Search", icon: "magnifyingglass", expands: true) {
+                        Task { await searchWorkspace() }
+                    }
+                    .disabled(isSearching || searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace == nil)
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    searchToggle("Match case", isOn: $searchOptions.caseSensitive)
+                    searchToggle("Whole word", isOn: $searchOptions.wholeWord)
+                    searchToggle("Regex", isOn: $searchOptions.regex)
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    searchToggle("Match case", isOn: $searchOptions.caseSensitive)
+                    searchToggle("Whole word", isOn: $searchOptions.wholeWord)
+                    searchToggle("Regex", isOn: $searchOptions.regex)
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    TextField("Include files or globs", text: $searchOptions.include)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Exclude files or globs", text: $searchOptions.exclude)
+                        .textFieldStyle(.roundedBorder)
+                }
+                VStack(spacing: 8) {
+                    TextField("Include files or globs", text: $searchOptions.include)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Exclude files or globs", text: $searchOptions.exclude)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            if let response = searchResponse {
+                HStack(spacing: 8) {
+                    Text("\(response.totalMatches) matches in \(response.groups.count) files · scanned \(response.filesScanned)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                    if response.isTruncated {
+                        Text("Narrow search to replace all matches")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                if response.groups.isEmpty {
+                    NativeEmptyState(title: "No matches", message: "Try a broader query or adjust include/exclude filters.")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(response.groups) { group in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(group.file.path)
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(theme.text)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    ForEach(group.matches.prefix(80)) { match in
+                                        Button { Task { await openSearchMatch(match) } } label: {
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Text("\(match.line):\(match.column)")
+                                                    .foregroundStyle(theme.accent)
+                                                    .frame(width: 52, alignment: .leading)
+                                                Text(match.preview)
+                                                    .foregroundStyle(theme.textSecondary)
+                                                    .lineLimit(2)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                            }
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .padding(.vertical, 3)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 260)
+                }
+                if response.totalMatches > 0 {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            TextField("Replace with", text: $searchReplacement)
+                                .textFieldStyle(.roundedBorder)
+                            ActionButton(title: isReplacing ? "Replacing…" : "Replace All", icon: "arrow.left.arrow.right", expands: true) {
+                                isReplaceConfirmationPresented = true
+                            }
+                            .disabled(isSearching || isReplacing || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations || response.isTruncated || !searchResultsAreCurrent)
+                        }
+                        VStack(spacing: 8) {
+                            TextField("Replace with", text: $searchReplacement)
+                                .textFieldStyle(.roundedBorder)
+                            ActionButton(title: isReplacing ? "Replacing…" : "Replace All", icon: "arrow.left.arrow.right", expands: true) {
+                                isReplaceConfirmationPresented = true
+                            }
+                            .disabled(isSearching || isReplacing || !canEdit || !interactionPolicy.allowsNavigationAndTreeMutations || response.isTruncated || !searchResultsAreCurrent)
+                        }
+                    }
+                    if !searchResultsAreCurrent {
+                        Text("Search again to confirm the current query and filters before replacing.")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    }
+                }
+            }
+            if !searchStatus.isEmpty {
+                Text(searchStatus).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.green).textSelection(.enabled)
+            }
+            if !searchError.isEmpty { NativeNotice(message: searchError, title: "Workspace search", tone: .error) }
+        }
+    }
+
+    private func searchToggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(title, isOn: isOn)
+            .toggleStyle(.checkbox)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(theme.textSecondary)
+            .disabled(isSearching || isReplacing)
     }
 
     private var editorPanel: some View {
@@ -320,6 +706,7 @@ struct NativeShareWorkspacePanel: View {
 
     @MainActor private func load() async {
         guard !isLoading, interactionPolicy.allowsNavigationAndTreeMutations else { return }
+        invalidateSearchCache(scope: searchCacheIdentity)
         isLoading = true
         error = ""
         status = "Loading workspace…"
@@ -351,7 +738,13 @@ struct NativeShareWorkspacePanel: View {
                 else { status = "Workspace loaded · chat context received." }
             }
         } catch {
-            self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            if let shareError = error as? NativeShareWorkspaceError {
+                self.error = shareError.errorDescription ?? "The share workspace could not be loaded."
+            } else if error is URLError {
+                self.error = "The share service could not be reached. Check the connection and refresh."
+            } else {
+                self.error = (error as? LocalizedError)?.errorDescription ?? "The share workspace could not be loaded."
+            }
             status = ""
         }
     }
@@ -689,6 +1082,386 @@ struct NativeShareWorkspacePanel: View {
         newItemName = type == "folder" ? "New Folder" : "New File.md"
     }
 
+    @MainActor private func searchWorkspace() async {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let options = searchOptions
+        guard !query.isEmpty, !isSearching, let workspace else { return }
+        let cacheScope = searchCacheIdentity
+        if searchCacheScope != cacheScope { invalidateSearchCache(scope: cacheScope) }
+        isSearching = true
+        searchError = ""
+        searchStatus = ""
+        searchResponse = nil
+        defer { isSearching = false }
+
+        do {
+            _ = try NativeShareWorkspaceSearch.search(files: [], query: query, options: searchOptions)
+            let descriptors = searchDescriptors(in: workspace.tree)
+                .filter { NativeShareWorkspaceSearchFile.isSearchablePath($0.path) }
+                .filter {
+                    NativeShareWorkspaceSearch.shouldSearch(
+                        NativeShareWorkspaceSearchFile(id: $0.id, name: $0.name, path: $0.path, content: ""),
+                        options: options
+                    )
+                }
+            guard descriptors.count <= NativeShareWorkspaceSearchLimits.maximumFiles else {
+                throw NativeShareWorkspaceSearchError.workspaceTooLarge
+            }
+            let activeFileID = selectedFile?.type == "folder" ? "" : (selectedFile?.id ?? "")
+            let activeContent = draftContent
+            let apiBaseURL = model.settings.cdnBaseURL.normalizedBaseURL
+            let userID = model.userIDForRequests
+            let token = model.authTokenForRequests
+            let impersonationToken = model.settings.impersonationToken
+            let impersonatingUserID = model.settings.impersonatingUserID
+            var cachedByID: [String: NativeShareWorkspaceSearchFile] = [:]
+            for cached in searchFiles { cachedByID[cached.id] = cached }
+            var filesByID: [String: NativeShareWorkspaceSearchFile] = [:]
+            for descriptor in descriptors {
+                if descriptor.id == activeFileID {
+                    filesByID[descriptor.id] = NativeShareWorkspaceSearchFile(
+                        id: descriptor.id, name: descriptor.name, path: descriptor.path, content: activeContent
+                    )
+                } else if let cached = cachedByID[descriptor.id] {
+                    filesByID[descriptor.id] = NativeShareWorkspaceSearchFile(
+                        id: descriptor.id, name: descriptor.name, path: descriptor.path, content: cached.content
+                    )
+                }
+            }
+            var totalBytes = filesByID.values.reduce(0) { $0 + $1.content.utf8.count }
+            guard totalBytes <= NativeShareWorkspaceSearchLimits.maximumTotalContentBytes else {
+                throw NativeShareWorkspaceSearchError.workspaceTooLarge
+            }
+            let missing = descriptors.filter { filesByID[$0.id] == nil }
+            let clientConcurrency = 8
+            let fetched = try await withThrowingTaskGroup(of: (String, NativeShareWorkspaceSearchFile).self) { group in
+                var nextIndex = 0
+                let initialCount = min(clientConcurrency, missing.count)
+                while nextIndex < initialCount {
+                    let descriptor = missing[nextIndex]
+                    nextIndex += 1
+                    group.addTask {
+                        let client = try NativeShareWorkspaceClient(
+                            apiBaseURL: apiBaseURL, userID: userID, token: token,
+                            impersonationToken: impersonationToken, impersonatingUserID: impersonatingUserID
+                        )
+                        let file = try await client.loadFile(id: descriptor.id)
+                        return (descriptor.id, NativeShareWorkspaceSearchFile(
+                            id: descriptor.id, name: descriptor.name, path: descriptor.path,
+                            content: file.content ?? ""
+                        ))
+                    }
+                }
+                var indexed: [String: NativeShareWorkspaceSearchFile] = [:]
+                while let (id, file) = try await group.next() {
+                    indexed[id] = file
+                    totalBytes += file.content.utf8.count
+                    guard totalBytes <= NativeShareWorkspaceSearchLimits.maximumTotalContentBytes else {
+                        group.cancelAll()
+                        throw NativeShareWorkspaceSearchError.workspaceTooLarge
+                    }
+                    if nextIndex < missing.count {
+                        let descriptor = missing[nextIndex]
+                        nextIndex += 1
+                        group.addTask {
+                            let client = try NativeShareWorkspaceClient(
+                                apiBaseURL: apiBaseURL, userID: userID, token: token,
+                                impersonationToken: impersonationToken, impersonatingUserID: impersonatingUserID
+                            )
+                            let file = try await client.loadFile(id: descriptor.id)
+                            return (descriptor.id, NativeShareWorkspaceSearchFile(
+                                id: descriptor.id, name: descriptor.name, path: descriptor.path,
+                                content: file.content ?? ""
+                            ))
+                        }
+                    }
+                }
+                return indexed
+            }
+            for (id, file) in fetched { filesByID[id] = file }
+            let loadedFiles = descriptors.compactMap { filesByID[$0.id] }
+            guard searchCacheIdentity == cacheScope,
+                  model.userIDForRequests == userID, model.authTokenForRequests == token else {
+                throw NativeShareWorkspaceSearchPanelError.accountChanged
+            }
+            let response = try NativeShareWorkspaceSearch.search(files: loadedFiles, query: query, options: options)
+            searchFiles = loadedFiles
+            searchCacheScope = cacheScope
+            searchResponse = response
+            searchQuerySnapshot = query
+            searchOptionsSnapshot = options
+            searchStatus = response.isTruncated ? "Results limited to \(response.totalMatches). Narrow the search before replacing." : "Searched \(response.filesScanned) files."
+        } catch {
+            searchError = (error as? LocalizedError)?.errorDescription ?? "Search failed. Check the query, connection, or workspace files."
+        }
+    }
+
+    @MainActor private func replaceSearchMatches() async {
+        guard !isReplacing, !isSearching, canEdit,
+              interactionPolicy.allowsNavigationAndTreeMutations,
+              searchResultsAreCurrent,
+              let response = searchResponse, response.totalMatches > 0, !response.isTruncated else { return }
+        isReplacing = true
+        searchError = ""
+        searchStatus = ""
+        defer { isReplacing = false }
+
+        var savedFiles = 0
+        var replacedMatches = 0
+        do {
+            let userID = model.userIDForRequests
+            let token = model.authTokenForRequests
+            let plans = try NativeShareWorkspaceSearch.replacementPlans(
+                files: searchFiles, query: searchQuery, replacement: searchReplacement, options: searchOptions
+            )
+            guard !plans.isEmpty else {
+                searchStatus = "No files changed."
+                return
+            }
+            let client = try makeClient()
+            for plan in plans {
+                guard model.userIDForRequests == userID, model.authTokenForRequests == token else {
+                    throw NativeShareWorkspaceSearchPanelError.accountChanged
+                }
+                let current = try await client.loadFile(id: plan.fileID)
+                guard (current.content ?? "") == plan.originalContent else {
+                    throw NativeShareWorkspaceError.saveConflict(current)
+                }
+                guard model.userIDForRequests == userID, model.authTokenForRequests == token else {
+                    throw NativeShareWorkspaceSearchPanelError.accountChanged
+                }
+                _ = try await client.saveFile(
+                    id: plan.fileID,
+                    name: current.name ?? searchFiles.first(where: { $0.id == plan.fileID })?.name ?? "",
+                    path: current.path ?? plan.path,
+                    content: plan.replacementContent,
+                    baselineContent: plan.originalContent
+                )
+                savedFiles += 1
+                replacedMatches += plan.matchCount
+                if let index = searchFiles.firstIndex(where: { $0.id == plan.fileID }) {
+                    searchFiles[index] = NativeShareWorkspaceSearchFile(
+                        id: searchFiles[index].id, name: searchFiles[index].name, path: searchFiles[index].path,
+                        content: plan.replacementContent
+                    )
+                }
+                searchResponse = try NativeShareWorkspaceSearch.search(
+                    files: searchFiles, query: searchQuery, options: searchOptions
+                )
+            }
+            let currentContext = NativeShareWorkspaceContext(
+                alias: context.alias, fileID: selectedFileID.isEmpty ? nil : selectedFileID,
+                isProject: false, initialChatOpen: false, createIfMissing: false
+            )
+            apply(try await client.load(context: currentContext))
+            searchStatus = "Replaced \(replacedMatches) matches across \(savedFiles) files."
+        } catch {
+            if savedFiles > 0 {
+                if let refreshed = try? await makeClient().load(context: NativeShareWorkspaceContext(
+                    alias: context.alias, fileID: selectedFileID.isEmpty ? nil : selectedFileID,
+                    isProject: false, initialChatOpen: false, createIfMissing: false
+                )) { apply(refreshed) }
+                searchStatus = "Replaced \(replacedMatches) matches across \(savedFiles) files before stopping."
+            }
+            searchError = (error as? LocalizedError)?.errorDescription ?? "Replace stopped because a workspace file could not be updated."
+        }
+    }
+
+    @MainActor private func openSearchMatch(_ match: NativeShareWorkspaceSearchMatch) async {
+        guard let item = findTreeItem(id: match.fileID, in: workspace?.tree ?? []) else { return }
+        await select(item)
+    }
+
+    private func searchDescriptors(in tree: [NativeShareWorkspaceTreeItem]) -> [(id: String, name: String, path: String)] {
+        func collect(_ items: [NativeShareWorkspaceTreeItem], prefix: String) -> [(id: String, name: String, path: String)] {
+            items.flatMap { item in
+                let path = prefix.isEmpty ? item.name : "\(prefix)/\(item.name)"
+                let descendants = collect(item.children ?? [], prefix: path)
+                guard (item.type ?? "file") == "file" else { return descendants }
+                return [(item.id, item.name, path)] + descendants
+            }
+        }
+        let flattened = collect(tree, prefix: "")
+        guard let firstRoot = flattened.first?.path.split(separator: "/").first.map(String.init),
+              flattened.allSatisfy({ $0.path.hasPrefix("\(firstRoot)/") }) else { return flattened }
+        return flattened.map { file in
+            (file.id, file.name, String(file.path.dropFirst(firstRoot.count + 1)))
+        }
+    }
+
+    @MainActor private func invalidateSearchCache(scope: String) {
+        searchFiles = []
+        searchResponse = nil
+        searchQuerySnapshot = ""
+        searchOptionsSnapshot = nil
+        searchCacheScope = scope
+    }
+
+    private var gitSourceKey: String { "hanasand.desktop.git.source.\(context.alias)" }
+    private var gitAutoPullIntervalKey: String { "hanasand.desktop.git.autoPullMinutes.\(context.alias)" }
+    private var gitCredentialKey: String { "hanasand.desktop.git.hasCredential.\(context.alias)" }
+
+    @MainActor private func loadGitWorkspaceState() async {
+        guard !context.isProject else { return }
+        gitSource = UserDefaults.standard.string(forKey: gitSourceKey) ?? ""
+        gitHasCredential = UserDefaults.standard.bool(forKey: gitCredentialKey)
+        gitAutoPullMinutes = UserDefaults.standard.integer(forKey: gitAutoPullIntervalKey)
+        guard !gitSource.isEmpty, canEdit else { return }
+        await refreshGitStatus(showErrors: false)
+    }
+
+    @MainActor private func runAutomaticGitPulls() async {
+        guard !context.isProject, gitAutoPullMinutes > 0, !gitSource.isEmpty, canEdit else { return }
+        let delay = UInt64(gitAutoPullMinutes) * 60 * 1_000_000_000
+        while !Task.isCancelled {
+            do { try await Task.sleep(nanoseconds: delay) } catch { return }
+            guard !Task.isCancelled else { return }
+            await syncGitRepository(mode: .pull, automatic: true)
+        }
+    }
+
+    @MainActor private func syncGitRepository(mode: NativeShareGitSyncMode, automatic: Bool = false) async {
+        guard canEdit else { gitError = "Sign in to manage Git for this workspace."; return }
+        let source = gitSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { gitError = "Enter a GitHub repository URL or owner/repo."; return }
+        guard !gitPending else { return }
+        gitPending = true
+        gitOperation = mode == .import ? "import" : "pull"
+        gitError = ""
+        gitMessage = automatic ? "Auto-pulling the latest repository files…" : (mode == .import ? "Loading repository into this workspace…" : "Pulling the latest repository files…")
+        gitProgress = nil
+        defer { gitPending = false; gitOperation = "" }
+
+        var attemptedRepository: NativeShareGitRepository?
+        do {
+            let client = try makeGitClient()
+            let existingID = mode == .pull ? context.alias : nil
+            var repository = try await client.importRepository(input: source, existingID: existingID,
+                githubToken: gitHubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : gitHubToken)
+            attemptedRepository = repository
+            try await client.persistRepository(repository.withSyncState(status: "syncing",
+                lastSyncedAt: repository.lastSyncedAt, lastSyncError: nil))
+            if !gitHubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let credential = try await client.attachGitHubCredential(repositoryID: repository.id, githubToken: gitHubToken)
+                repository = repository.withCredential(credential)
+                attemptedRepository = repository
+            }
+
+            let workspace = try await NativeShareGitWorkspaceSync(workspaceClient: makeClient()).sync(
+                repository: repository, alias: repository.id,
+                createIfMissing: mode == .import,
+                progress: { gitProgress = $0 }
+            )
+            let syncedAt = ISO8601DateFormatter().string(from: Date())
+            try await client.persistRepository(repository.withSyncState(status: "ready",
+                lastSyncedAt: syncedAt, lastSyncError: nil))
+            gitRepository = repository
+            gitSource = repository.sourceUrl.isEmpty ? source : repository.sourceUrl
+            UserDefaults.standard.set(gitSource, forKey: "hanasand.desktop.git.source.\(repository.id)")
+            UserDefaults.standard.set(repository.credential.hasCredential, forKey: "hanasand.desktop.git.hasCredential.\(repository.id)")
+            gitHasCredential = repository.credential.hasCredential
+            gitHubToken = ""
+            gitProgress = nil
+            if mode == .pull {
+                apply(workspace)
+                gitMessage = automatic ? "Repository auto-pulled." : "Repository pulled into the share."
+                do {
+                    gitStatus = try await client.loadStatus(repositoryID: context.alias, shareID: context.alias)
+                    gitSelectedPaths = Set(gitStatus?.files.filter(\.selected).map(\.path) ?? [])
+                } catch {
+                    gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
+            } else {
+                gitMessage = "Repository loaded. Opening the new share…"
+                model.openNativeDashboard(path: "/s", label: repository.fullName, detailID: repository.id)
+            }
+        } catch {
+            gitProgress = nil
+            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            gitError = message
+            gitMessage = ""
+            if let repository = attemptedRepository {
+                try? await makeGitClient().persistRepository(repository.withSyncState(status: "error",
+                    lastSyncedAt: repository.lastSyncedAt, lastSyncError: message))
+            }
+        }
+    }
+
+    @MainActor private func refreshGitStatus(showErrors: Bool = true) async {
+        guard canEdit, !gitPending else { return }
+        gitPending = true
+        gitOperation = "status"
+        defer { gitPending = false; gitOperation = "" }
+        do {
+            let status = try await makeGitClient().loadStatus(repositoryID: context.alias, shareID: context.alias)
+            gitStatus = status
+            gitSelectedPaths = Set(status.files.map(\.path))
+            gitError = ""
+            gitMessage = status.files.isEmpty ? "No Git changes in this share." : "\(status.files.count) changed files ready to stage."
+        } catch {
+            if showErrors { gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+        }
+    }
+
+    @MainActor private func commitGitChanges() async {
+        guard gitStatus != nil, !gitSelectedPaths.isEmpty, !gitPending else { return }
+        gitPending = true
+        gitOperation = "commit"
+        defer { gitPending = false; gitOperation = "" }
+        do {
+            let result = try await makeGitClient().commit(repositoryID: context.alias, shareID: context.alias,
+                message: gitCommitMessage, paths: Array(gitSelectedPaths).sorted())
+            gitStatus = result.status
+            gitSelectedPaths = Set(result.status.files.map(\.path))
+            gitCommitMessage = ""
+            gitMessage = "Committed \(result.commit)."
+            gitError = ""
+        } catch { gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+    }
+
+    @MainActor private func pushGitChanges() async {
+        guard !gitPending else { return }
+        gitPending = true
+        gitOperation = "push"
+        defer { gitPending = false; gitOperation = "" }
+        do {
+            gitStatus = try await makeGitClient().push(repositoryID: context.alias)
+            gitSelectedPaths = Set(gitStatus?.files.map(\.path) ?? [])
+            gitMessage = "Pushed repository changes."
+            gitError = ""
+        } catch { gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+    }
+
+    @MainActor private func saveGitHubCredential() async {
+        guard !gitHubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !gitPending else { return }
+        gitPending = true
+        defer { gitPending = false }
+        do {
+            let credential = try await makeGitClient().attachGitHubCredential(repositoryID: context.alias, githubToken: gitHubToken)
+            gitRepository = gitRepository?.withCredential(credential)
+            gitHasCredential = credential.hasCredential
+            UserDefaults.standard.set(gitHasCredential, forKey: gitCredentialKey)
+            gitHubToken = ""
+            gitMessage = "GitHub credential saved."
+            gitError = ""
+        } catch { gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+    }
+
+    @MainActor private func removeGitHubCredential() async {
+        guard !gitPending else { return }
+        gitPending = true
+        defer { gitPending = false }
+        do {
+            try await makeGitClient().removeGitHubCredential(repositoryID: context.alias)
+            gitRepository = gitRepository?.withCredential(.init(provider: "github_pat", hasCredential: false,
+                tokenHint: nil, attachedAt: nil, lastUsedAt: nil, lastValidatedAt: nil))
+            gitHasCredential = false
+            UserDefaults.standard.set(false, forKey: gitCredentialKey)
+            gitMessage = "GitHub credential removed."
+            gitError = ""
+        } catch { gitError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+    }
+
     @MainActor private func createItem(type: String, name: String) async {
         guard interactionPolicy.allowsNavigationAndTreeMutations,
               let root = workspace?.root else { return }
@@ -717,6 +1490,10 @@ struct NativeShareWorkspacePanel: View {
                                        userID: model.userIDForRequests, token: model.authTokenForRequests,
                                        impersonationToken: model.settings.impersonationToken,
                                        impersonatingUserID: model.settings.impersonatingUserID)
+    }
+
+    private func makeGitClient() throws -> NativeShareGitClient {
+        try NativeShareGitClient(settings: model.settings)
     }
 
     @MainActor private func syncCollaboration() {

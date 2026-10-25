@@ -3,6 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ImagesJourneyNativePanel: View {
+    @EnvironmentObject private var model: DesktopAgentModel
+    @Environment(\.desktopTheme) private var theme
     @State private var section: Section = .library
     private let libraryMode: ImagesJourneyLibraryMode
 
@@ -19,27 +21,32 @@ struct ImagesJourneyNativePanel: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                Picker("Images", selection: $section) {
-                    ForEach(Section.allCases) { item in
-                        Text(item.title).tag(item)
+            HStack(spacing: 6) {
+                ForEach(Section.allCases) { item in
+                    Button {
+                        section = item
+                    } label: {
+                        Text(item.title)
+                            .font(.system(size: 12, weight: section == item ? .semibold : .medium))
+                            .foregroundStyle(section == item ? theme.accent : theme.text)
+                            .frame(maxWidth: .infinity, minHeight: 34)
+                            .padding(.horizontal, 8)
+                            .background(section == item ? theme.accentSoft : theme.cardRaised,
+                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(section == item ? theme.accent.opacity(0.3) : theme.divider.opacity(0.6), lineWidth: 1))
+                            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(section == item ? .isSelected : [])
                 }
-                .pickerStyle(.segmented)
-
-                Picker("Images", selection: $section) {
-                    ForEach(Section.allCases) { item in
-                        Text(item.title).tag(item)
-                    }
-                }
-                .pickerStyle(.menu)
             }
             .padding(.horizontal, 20)
             switch section {
             case .library: GalleryLibraryNativePanel(imagesOnly: libraryMode.mediaFilterIsImageOnly)
-            case .albums: GalleryAlbumsNativePanel()
+            case .albums: GalleryAlbumsNativePanel(embedded: true)
             case .upload: GalleryPhotoUploadNativePanel(onLibrary: { section = .library })
-            case .deviceReview: DevicePhotoReviewNativePanel()
+            case .deviceReview: DevicePhotoReviewNativePanel(loadsPhotoLibrary: !model.isVisualFixture)
             }
         }
     }
@@ -91,7 +98,7 @@ private struct GalleryPhotoUploadNativePanel: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: "Upload photos", subtitle: "Select photos from this Mac and add them to your private CDN library") {
+        VStack(alignment: .leading, spacing: 14) {
             if !model.hasHanasandAuth {
                 NativeEmptyState(title: "Sign in to upload photos", message: "Photos are added to the private image library for your signed-in account.")
             } else if impersonating {
@@ -147,6 +154,7 @@ private struct GalleryPhotoUploadNativePanel: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: sessionFingerprint) { _, _ in
             if uploadPending { stopRequested = true }
         }

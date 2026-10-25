@@ -19,7 +19,7 @@ enum NativeToolsCatalog {
                 ["/status", "/system/hosts", "/system/updates", "/traffic", "/traffic/blocklist", "/system/ai", "/system/rates", "/system/cron", "/system", "/system/containers", "/vms"].contains(action.routePath)
             }),
             ("Workspace & content", { action in
-                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/repositories", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts", "/images/library"].contains(action.routePath)
+                ["/dashboard", "/mail", "/support", "/thesis", "/dashboard/automations", "/automation/health", "/automation/cron", "/notes", "/s", "/repositories", "/g", "/dashboard/tests", "/content/articles", "/content/thoughts", "/images/library", "/scan"].contains(action.routePath)
             }),
             ("Organization", { action in
                 ["/organization-privacy", "/subscription", "/organization-api-keys", "/integrations", "/dashboard/management/service-accounts", "/organization-workspace", "/organizations/team", "/organizations/settings", "/organizations/events", "/organizations/activity"].contains(action.routePath)

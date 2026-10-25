@@ -161,6 +161,7 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(deliveries?.query["org"], "org-9")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/findings?panel=actors")?.path, "/ti/profiles")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/documents/scanner")?.path, "/documents/scanner")
+        XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/scan")?.path, "/scan")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-123")?.path, "/cases")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/cases/MON-123")?.detailID, "HA-123")
         XCTAssertEqual(BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/dashboard/cases/MON-123")?.detailID, "HA-123")

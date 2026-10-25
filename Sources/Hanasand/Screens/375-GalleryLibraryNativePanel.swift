@@ -63,7 +63,10 @@ struct GalleryLibraryNativePanel: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: "Images", subtitle: status) {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(status)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
             if !model.hasHanasandAuth {
                 NativeEmptyState(title: "Sign in to view your files", message: "Your private file library uses the authenticated CDN session.")
             } else if impersonating {
@@ -137,6 +140,7 @@ struct GalleryLibraryNativePanel: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: sessionIdentity) { await loadAlbums() }
         .onChange(of: sessionIdentity) { _, _ in
             collection = "all"

@@ -55,6 +55,22 @@ final class DesktopGoogleOAuthTests: XCTestCase {
         }
     }
 
+    func testNativeGoogleLinkCallbackAcceptsOnlyTheSeparateLinkCode() throws {
+        let code = String(repeating: "L", count: 43)
+        guard case .success(let returnedCode)? = DesktopGoogleLinkCallback.result(from: URL(string: "hanasand://social-link?code=\(code)")!),
+              returnedCode == code else {
+            return XCTFail("Expected the native account-link callback code")
+        }
+        for value in [
+            "hanasand://social?code=\(code)",
+            "hanasand://social-link?code=short",
+            "hanasand://social-link?code=\(code)&token=not-allowed",
+            "hanasand://social-link?code=\(code)#fragment",
+        ] {
+            XCTAssertNil(DesktopGoogleLinkCallback.result(from: URL(string: value)!), "Accepted callback: \(value)")
+        }
+    }
+
     func testExchangesPKCECodeAndDecodesDesktopSession() async throws {
         let code = String(repeating: "C", count: 43)
         let verifier = String(repeating: "V", count: 43)

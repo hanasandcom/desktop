@@ -68,9 +68,12 @@ struct SocialConnectionsClient {
     let providersEndpoint: URL
     let userID: String
     let token: String
+    private let identityBaseURL: URL
+    private let proofSigner: (any DesktopDeviceProofSigning)?
     var send: Sender
 
-    init(settings: HanasandDesktopSettings, send: Sender? = nil) throws {
+    init(settings: HanasandDesktopSettings, proofSigner: (any DesktopDeviceProofSigning)? = nil,
+         send: Sender? = nil) throws {
         let rawBase = settings.apiBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let apiBase = URL(string: rawBase), apiBase.scheme?.lowercased() == "https",
               apiBase.host != nil, apiBase.user == nil, apiBase.password == nil,
@@ -105,9 +108,62 @@ struct SocialConnectionsClient {
 
         endpoint = url
         providersEndpoint = identityBase.appendingAPIPath("auth/social/providers")
+        identityBaseURL = identityBase
         userID = user
         token = credential
+        self.proofSigner = proofSigner
         self.send = send ?? { request in try await SocialConnectionsSession.shared.data(for: request) }
+    }
+
+    func beginGoogleLink(codeChallenge: String) async throws -> URL {
+        guard codeChallenge.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
+            throw SocialConnectionsClientError.invalidResponse
+        }
+        let data = try JSONEncoder().encode(NativeLinkStartPayload(codeChallenge: codeChallenge))
+        let ticket: NativeLinkTicket = try await authenticatedPost("auth/social/google/native-link/start", body: data)
+        guard ticket.ticket.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
+            throw SocialConnectionsClientError.invalidResponse
+        }
+        var components = URLComponents(url: identityBaseURL.appendingAPIPath("auth/social/google/native-link/broker/\(ticket.ticket)"), resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        guard let url = components?.url, url.usesSecureHanasandTransport, url.host == identityBaseURL.host else {
+            throw SocialConnectionsClientError.invalidEndpoint
+        }
+        return url
+    }
+
+    func completeGoogleLink(code: String, verifier: String) async throws {
+        guard code.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              verifier.range(of: "^[A-Za-z0-9_-]{43,128}$", options: .regularExpression) != nil else {
+            throw SocialConnectionsClientError.invalidResponse
+        }
+        let body = try JSONEncoder().encode(NativeLinkCompletePayload(code: code, codeVerifier: verifier))
+        let response: NativeLinkCompleteResponse = try await authenticatedPost("auth/social/google/native-link/complete", body: body)
+        guard response.linked else { throw SocialConnectionsClientError.invalidResponse }
+    }
+
+    private func authenticatedPost<Response: Decodable>(_ path: String, body: Data) async throws -> Response {
+        var request = URLRequest(url: identityBaseURL.appendingAPIPath(path))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "id")
+        request.httpBody = body
+        let signedRequest = try signed(request)
+        let (data, response) = try await send(signedRequest)
+        guard data.count <= 16_384,
+              let http = response as? HTTPURLResponse,
+              response.url?.scheme?.lowercased() == "https", response.url?.host == identityBaseURL.host else {
+            throw SocialConnectionsClientError.invalidResponse
+        }
+        guard http.statusCode == 200 else { throw SocialConnectionsClientError.requestFailed(http.statusCode) }
+        do { return try JSONDecoder().decode(Response.self, from: data) }
+        catch { throw SocialConnectionsClientError.invalidResponse }
     }
 
     func load() async throws -> [SocialConnection] {
@@ -121,7 +177,8 @@ struct SocialConnectionsClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(userID, forHTTPHeaderField: "id")
 
-        let (data, response) = try await send(request)
+        let signedRequest = try signed(request)
+        let (data, response) = try await send(signedRequest)
         guard let http = response as? HTTPURLResponse,
               http.url?.scheme?.lowercased() == "https", http.url?.host == endpoint.host else {
             throw SocialConnectionsClientError.invalidResponse
@@ -136,6 +193,13 @@ struct SocialConnectionsClient {
             throw SocialConnectionsClientError.invalidResponse
         }
         return envelope.connections
+    }
+
+    private func signed(_ request: URLRequest) throws -> URLRequest {
+        try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+            request, authenticated: true, sessionToken: token,
+            configuredAPIBaseURL: identityBaseURL.absoluteString, signer: proofSigner
+        )
     }
 
     func isGoogleConfigured() async throws -> Bool {
@@ -171,3 +235,8 @@ struct SocialConnectionsClient {
         return email.count <= 254 && !email.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
     }
 }
+
+private struct NativeLinkStartPayload: Encodable { let codeChallenge: String }
+private struct NativeLinkTicket: Decodable { let ticket: String }
+private struct NativeLinkCompletePayload: Encodable { let code: String; let codeVerifier: String }
+private struct NativeLinkCompleteResponse: Decodable { let linked: Bool }

@@ -52,8 +52,8 @@ struct ThreatIntelligenceOverviewNativePanel: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: "Threat Intelligence overview", subtitle: "Live source operations, collection activity, evidence captures, and delivery timing") {
-            NativeGroupPanel(title: "Operations snapshot", subtitle: "Authenticated live data · read-only overview") {
+        VStack(alignment: .leading, spacing: 14) {
+            NativeGroupPanel(title: "Operations snapshot", subtitle: "Authenticated live data · read-only overview", fillsAvailableWidth: true) {
                 HStack(spacing: 8) {
                     ActionButton(title: isLoading ? "Refreshing…" : "Refresh overview", icon: "arrow.clockwise") {
                         Task { await refresh() }
@@ -75,6 +75,7 @@ struct ThreatIntelligenceOverviewNativePanel: View {
             capturePanel
             deliveryPanel
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: scopeKey) { await refresh() }
     }
 

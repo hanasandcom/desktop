@@ -18,6 +18,7 @@ struct HanasandLoginResponse: Decodable {
     let pendingDeletion: Bool?
     let deletionScheduledAt: String?
     let restoreToken: String?
+    let resetToken: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -27,5 +28,12 @@ struct HanasandLoginResponse: Decodable {
         case pendingDeletion = "pending_deletion"
         case deletionScheduledAt = "deletion_scheduled_at"
         case restoreToken = "restore_token"
+        case resetToken
+    }
+
+    var requiredPasswordResetTokenForRestoration: String? {
+        guard let resetToken else { return nil }
+        let token = resetToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
     }
 }

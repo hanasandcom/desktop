@@ -72,6 +72,10 @@ extension DesktopAgentModel {
             passwordResetStatus = "Enter a new password."
             return
         }
+        guard AccountSignupClient.passwordMeetsRequirements(passwordResetNewPassword) else {
+            passwordResetStatus = AccountSignupError.weakPassword.localizedDescription
+            return
+        }
 
         isResettingPassword = true
         passwordResetStatus = "Setting password"

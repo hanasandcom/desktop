@@ -46,6 +46,7 @@ enum DevicePhotoReviewSwipe {
 }
 
 struct DevicePhotoReviewNativePanel: View {
+    private let loadsPhotoLibrary: Bool
     @Environment(\.desktopTheme) private var theme
     @StateObject private var library = DevicePhotoLibrary()
     @State private var progress = DevicePhotoReviewProgress()
@@ -57,6 +58,10 @@ struct DevicePhotoReviewNativePanel: View {
     @State private var deleteError = ""
     @State private var swipeTranslation: CGSize = .zero
 
+    init(loadsPhotoLibrary: Bool = true) {
+        self.loadsPhotoLibrary = loadsPhotoLibrary
+    }
+
     private var photoIDs: [String] { library.photos.map(\.localIdentifier) }
     private var currentPhoto: PHAsset? {
         guard photoIDs.indices.contains(progress.index) else { return nil }
@@ -64,14 +69,18 @@ struct DevicePhotoReviewNativePanel: View {
     }
 
     var body: some View {
-        FeatureWorkspace(title: "Review device photos", subtitle: library.status) {
+        VStack(alignment: .leading, spacing: 14) {
             if library.authorization == .authorized || library.authorization == .limited {
                 reviewContent
             } else {
                 accessContent
             }
         }
-        .task { _ = await library.loadInitialPage() }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task {
+            guard loadsPhotoLibrary else { return }
+            _ = await library.loadInitialPage()
+        }
         .onChange(of: currentPhoto?.localIdentifier) { _, _ in requestPreview() }
         .onDisappear { cancelPreview() }
         .alert("Delete marked photos?", isPresented: $showingDeleteConfirmation) {
