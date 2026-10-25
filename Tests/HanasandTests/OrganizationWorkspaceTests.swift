@@ -178,12 +178,76 @@ final class OrganizationWorkspaceTests: XCTestCase {
                 updatedAt: "2026-10-21T10:00:00Z", createdAt: "", organizationId: "org/a"),
         ]
 
-        let overview = OrganizationWorkspaceOverview(events: events, cases: cases)
+        let overview = OrganizationWorkspaceOverview(events: events, cases: cases, activity: .summaryUnavailable,
+            organizationID: "org/a", role: "owner", canViewInvites: true)
 
         XCTAssertEqual(overview.eventCount, 2)
         XCTAssertEqual(overview.caseCount, 2)
         XCTAssertEqual(overview.openCaseCount, 1)
         XCTAssertEqual(overview.latestActivity, "2026-10-23T10:00:00Z")
-        XCTAssertNil(OrganizationWorkspaceOverview(events: [], cases: []).latestActivity)
+        XCTAssertNil(OrganizationWorkspaceOverview(events: [], cases: [], activity: .summaryUnavailable,
+            organizationID: "org/a", role: nil, canViewInvites: false).latestActivity)
+    }
+
+    func testOverviewCountsOrganizationSummaryAndExposesNativeDestinations() {
+        let activity = OrganizationWorkspaceActivityPage(entries: [
+            summaryEntry("member-1", kind: .member, status: "active"),
+            summaryEntry("member-2", kind: .member, status: "ACTIVE"),
+            summaryEntry("member-3", kind: .member, status: "suspended"),
+            summaryEntry("invite-1", kind: .invite, status: "pending"),
+            summaryEntry("invite-2", kind: .invite, status: "accepted"),
+            summaryEntry("watch-active", kind: .watchlist, status: "active"),
+            summaryEntry("watch-paused", kind: .watchlist, status: "paused"),
+        ], warnings: [])
+
+        let overview = OrganizationWorkspaceOverview(events: [], cases: [], activity: activity,
+            organizationID: "org/a", role: "admin", canViewInvites: true)
+
+        XCTAssertEqual(overview.role, "admin")
+        XCTAssertEqual(overview.activeMemberCount, 2)
+        XCTAssertEqual(overview.pendingInviteCount, 1)
+        XCTAssertEqual(overview.activeWatchlistCount, 1)
+        XCTAssertEqual(overview.pausedWatchlistCount, 1)
+        XCTAssertEqual(OrganizationWorkspaceSummaryDestination.allCases.map(\.path), ["/organizations/team", "/watchlists"])
+    }
+
+    func testOverviewKeepsZeroDistinctFromUnavailableAndHidesInviteCountWithoutPermission() {
+        let empty = OrganizationWorkspaceActivityPage(entries: [], warnings: [])
+        let overview = OrganizationWorkspaceOverview(events: [], cases: [], activity: empty,
+            organizationID: "org/a", role: "reader", canViewInvites: false)
+
+        XCTAssertEqual(overview.activeMemberCount, 0)
+        XCTAssertNil(overview.pendingInviteCount)
+        XCTAssertEqual(overview.activeWatchlistCount, 0)
+        XCTAssertEqual(overview.pausedWatchlistCount, 0)
+
+        let unavailable = OrganizationWorkspaceOverview(events: [], cases: [], activity: .summaryUnavailable,
+            organizationID: "org/a", role: nil, canViewInvites: true)
+        XCTAssertNil(unavailable.role)
+        XCTAssertNil(unavailable.activeMemberCount)
+        XCTAssertNil(unavailable.pendingInviteCount)
+        XCTAssertNil(unavailable.activeWatchlistCount)
+        XCTAssertNil(unavailable.pausedWatchlistCount)
+    }
+
+    func testOverviewDoesNotCountMismatchedOrganizationActivity() {
+        let activity = OrganizationWorkspaceActivityPage(entries: [
+            summaryEntry("foreign-member", kind: .member, status: "active", organizationID: "org/other"),
+            summaryEntry("watch-active", kind: .watchlist, status: "active"),
+        ], warnings: [])
+
+        let overview = OrganizationWorkspaceOverview(events: [], cases: [], activity: activity,
+            organizationID: "org/a", role: "owner", canViewInvites: true)
+
+        XCTAssertNil(overview.activeMemberCount)
+        XCTAssertEqual(overview.pendingInviteCount, 0)
+        XCTAssertEqual(overview.activeWatchlistCount, 1)
+        XCTAssertEqual(overview.pausedWatchlistCount, 0)
+    }
+
+    private func summaryEntry(_ id: String, kind: OrganizationWorkspaceActivityKind, status: String,
+                              organizationID: String = "org/a") -> OrganizationWorkspaceActivityEntry {
+        OrganizationWorkspaceActivityEntry(id: id, kind: kind, occurredAt: "", title: id, detail: status,
+            status: status, subjectID: id, contextPath: "", contextQuery: ["organizationId": organizationID], metadata: [])
     }
 }

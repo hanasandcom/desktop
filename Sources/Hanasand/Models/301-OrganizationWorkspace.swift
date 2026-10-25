@@ -129,6 +129,14 @@ struct OrganizationWorkspaceActivityEntry: Identifiable, Equatable {
 struct OrganizationWorkspaceActivityPage {
     let entries: [OrganizationWorkspaceActivityEntry]
     let warnings: [String]
+
+    static var summaryUnavailable: OrganizationWorkspaceActivityPage {
+        OrganizationWorkspaceActivityPage(entries: [], warnings: [
+            "Organization members activity could not be loaded.",
+            "Organization invites activity could not be loaded.",
+            "Organization watchlists activity could not be loaded.",
+        ])
+    }
 }
 
 struct OrganizationWorkspaceSettingsReceipt: Decodable {
@@ -164,8 +172,14 @@ struct OrganizationWorkspaceOverview: Equatable {
     let caseCount: Int
     let openCaseCount: Int
     let latestActivity: String?
+    let role: String?
+    let activeMemberCount: Int?
+    let pendingInviteCount: Int?
+    let activeWatchlistCount: Int?
+    let pausedWatchlistCount: Int?
 
-    init(events: [OrganizationWorkspaceRecord], cases: [OrganizationWorkspaceRecord]) {
+    init(events: [OrganizationWorkspaceRecord], cases: [OrganizationWorkspaceRecord],
+         activity: OrganizationWorkspaceActivityPage, organizationID: String, role: String?, canViewInvites: Bool) {
         eventCount = events.count
         caseCount = cases.count
         openCaseCount = cases.filter { !["closed", "resolved", "false_positive", "suppressed"].contains($0.status.lowercased()) }.count
@@ -175,6 +189,62 @@ struct OrganizationWorkspaceOverview: Equatable {
                 return value.isEmpty ? nil : value
             }
             .max()
+
+        self.role = role?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        activeMemberCount = Self.count(kind: .member, matching: "active", activity: activity, organizationID: organizationID)
+        pendingInviteCount = canViewInvites
+            ? Self.count(kind: .invite, matching: "pending", activity: activity, organizationID: organizationID)
+            : nil
+        activeWatchlistCount = Self.count(kind: .watchlist, matching: "active", activity: activity, organizationID: organizationID)
+        pausedWatchlistCount = Self.count(kind: .watchlist, matching: "paused", activity: activity, organizationID: organizationID)
+    }
+
+    private static func count(kind: OrganizationWorkspaceActivityKind, matching status: String,
+                              activity: OrganizationWorkspaceActivityPage, organizationID: String) -> Int? {
+        let sourceName: String
+        switch kind {
+        case .member: sourceName = "members"
+        case .invite: sourceName = "invites"
+        case .watchlist: sourceName = "watchlists"
+        default: return nil
+        }
+        guard !organizationID.isEmpty,
+              !activity.warnings.contains(where: { $0.localizedCaseInsensitiveContains("organization \(sourceName)") }) else {
+            return nil
+        }
+        let rows = activity.entries.filter { $0.kind == kind }
+        guard rows.allSatisfy({ $0.contextQuery["organizationId"] == organizationID }) else { return nil }
+        return rows.filter { $0.status.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(status) == .orderedSame }.count
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+enum OrganizationWorkspaceSummaryDestination: CaseIterable, Hashable {
+    case team
+    case watchlists
+
+    var path: String {
+        switch self {
+        case .team: "/organizations/team"
+        case .watchlists: "/watchlists"
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .team: "Organization Team"
+        case .watchlists: "Watchlists"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .team: "Manage team"
+        case .watchlists: "Manage watchlists"
+        }
     }
 }
 

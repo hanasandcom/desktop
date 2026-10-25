@@ -9,7 +9,7 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var draft: OrganizationWorkspaceSettings?
     @State private var events: [OrganizationWorkspaceRecord] = []
     @State private var cases: [OrganizationWorkspaceRecord] = []
-    @State private var activityPage = OrganizationWorkspaceActivityPage(entries: [], warnings: [])
+    @State private var activityPage = OrganizationWorkspaceActivityPage.summaryUnavailable
     @State private var warnings: [String] = []
     @State private var isLoading = false
     @State private var isSaving = false
@@ -31,6 +31,9 @@ struct OrganizationWorkspaceNativePanel: View {
         guard let settingsPage else { return false }
         return OrganizationWorkspacePolicy.canEdit(settings: settingsPage, selectedOrganizationID: organizationID,
             signedInUserID: model.userIDForRequests, isAuthenticated: model.hasHanasandAuth, isImpersonating: impersonating)
+    }
+    private var canViewInvites: Bool {
+        ["owner", "admin"].contains(settingsPage?.organization.role?.lowercased() ?? "")
     }
     private var visibleRecords: [OrganizationWorkspaceRecord] {
         let records = events + cases
@@ -96,9 +99,25 @@ struct OrganizationWorkspaceNativePanel: View {
     }
 
     private var overviewContent: some View {
-        let overview = OrganizationWorkspaceOverview(events: events, cases: cases)
+        let overview = OrganizationWorkspaceOverview(events: events, cases: cases, activity: activityPage,
+            organizationID: organizationID, role: settingsPage?.organization.role, canViewInvites: canViewInvites)
         return VStack(alignment: .leading, spacing: 14) {
             if let page = settingsPage {
+                NativeGroupPanel(title: "Workspace summary", subtitle: "Current membership and watchlist status") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)], alignment: .leading, spacing: 10) {
+                        overviewSummaryMetric("Your role", value: overview.role?.capitalized ?? "Unavailable")
+                        overviewSummaryMetric("Active members", value: overview.activeMemberCount.map(String.init) ?? "Unavailable")
+                        if canViewInvites {
+                            overviewSummaryMetric("Pending invites", value: overview.pendingInviteCount.map(String.init) ?? "Unavailable")
+                        }
+                        overviewSummaryMetric("Active watchlists", value: overview.activeWatchlistCount.map(String.init) ?? "Unavailable")
+                        overviewSummaryMetric("Paused watchlists", value: overview.pausedWatchlistCount.map(String.init) ?? "Unavailable")
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { overviewActions }
+                        VStack(alignment: .leading, spacing: 8) { overviewActions }
+                    }
+                }
                 NativeGroupPanel(title: page.organization.name, subtitle: "Organization overview · \(page.organization.role?.capitalized ?? "Member") · \(page.organization.status.capitalized)") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)], alignment: .leading, spacing: 10) {
                         overviewMetric("Events", value: overview.eventCount, symbol: "bell.badge")
@@ -145,6 +164,26 @@ struct OrganizationWorkspaceNativePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func overviewSummaryMetric(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+            Text(value).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(theme.text)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 45, alignment: .leading)
+        .padding(10)
+        .background(theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    @ViewBuilder private var overviewActions: some View {
+        ForEach(OrganizationWorkspaceSummaryDestination.allCases, id: \.self) { destination in
+            ActionButton(title: destination.title, icon: destination == .team ? "person.2" : "list.bullet.rectangle") {
+                model.openNativeDashboard(path: destination.path, label: destination.label, query: ["organizationId": organizationID])
+            }
+        }
     }
 
     @ViewBuilder private var settingsContent: some View {
@@ -208,7 +247,7 @@ struct OrganizationWorkspaceNativePanel: View {
                 Text("All activity").tag("All")
                 ForEach(OrganizationWorkspaceActivityKind.allCases) { kind in Text(kind.rawValue).tag(kind.rawValue) }
             }.pickerStyle(.menu)
-            if !activityPage.warnings.isEmpty {
+            if !isLoading && !activityPage.warnings.isEmpty {
                 ForEach(Array(activityPage.warnings.enumerated()), id: \.offset) { _, warning in NativeNotice(message: warning) }
             }
             if activityEntries.isEmpty && !isLoading {
@@ -311,6 +350,7 @@ struct OrganizationWorkspaceNativePanel: View {
         guard model.hasHanasandAuth, !organizationID.isEmpty else { return }
         let requestedOrganization = organizationID
         isLoading = true; error = ""; status = ""
+        activityPage = .summaryUnavailable
         defer { if requestedOrganization == organizationID { isLoading = false } }
         do {
             let client = try OrganizationWorkspaceClient(settings: model.settings, organizationID: requestedOrganization)
@@ -318,7 +358,8 @@ struct OrganizationWorkspaceNativePanel: View {
             async let rows = client.loadRecords()
             let (loadedPage, loadedRows) = try await (page, rows)
             let canViewInvites = ["owner", "admin"].contains(loadedPage.organization.role?.lowercased() ?? "")
-            let loadedActivity = section == .activity ? try? await client.loadActivity(includeInvites: canViewInvites) : nil
+            let loadedActivity = section == .activity || section == .overview
+                ? try? await client.loadActivity(includeInvites: canViewInvites) : nil
             guard requestedOrganization == organizationID else { return }
             settingsPage = loadedPage; draft = loadedPage.settings
             events = loadedRows.events; cases = loadedRows.cases; warnings = loadedRows.warnings
