@@ -217,6 +217,24 @@ struct AccountSubscriptionClient {
 
 @MainActor
 final class NativePlanCheckoutCoordinator: ObservableObject {
+    private struct Scope: Equatable {
+        let apiBaseURL: String
+        let websiteBaseURL: String
+        let userID: String
+        let authToken: String
+        let impersonatingUserID: String
+        let impersonationToken: String
+
+        @MainActor init(model: DesktopAgentModel) {
+            apiBaseURL = model.settings.apiBaseURL
+            websiteBaseURL = model.settings.websiteBaseURL
+            userID = model.userIDForRequests
+            authToken = model.authTokenForRequests
+            impersonatingUserID = model.settings.impersonatingUserID
+            impersonationToken = model.settings.impersonationToken
+        }
+    }
+
     @Published private(set) var openingPlanID: String?
     @Published private(set) var status = ""
 
@@ -236,7 +254,7 @@ final class NativePlanCheckoutCoordinator: ObservableObject {
 
         let currentRequestID = UUID()
         requestID = currentRequestID
-        let requestedScope = scope(for: model)
+        let requestedScope = Scope(model: model)
         openingPlanID = planID
         status = ""
         task = Task { [weak self] in
@@ -260,7 +278,7 @@ final class NativePlanCheckoutCoordinator: ObservableObject {
                 )
                 let checkoutURL = try await client.createPlanCheckoutURL(for: planID)
                 guard !Task.isCancelled, self.requestID == currentRequestID,
-                      self.scope(for: model) == requestedScope else { return }
+                      Scope(model: model) == requestedScope else { return }
                 let didOpen = model.openStripeInAppBrowser(
                     url: checkoutURL.absoluteString,
                     title: "checkout",
@@ -271,7 +289,7 @@ final class NativePlanCheckoutCoordinator: ObservableObject {
                     : "Could not open secure Stripe checkout in the built-in browser."
             } catch {
                 guard !Task.isCancelled, self.requestID == currentRequestID,
-                      self.scope(for: model) == requestedScope else { return }
+                      Scope(model: model) == requestedScope else { return }
                 self.status = error.localizedDescription
             }
         }
@@ -287,9 +305,4 @@ final class NativePlanCheckoutCoordinator: ObservableObject {
         openingPlanID = nil
     }
 
-    private func scope(for model: DesktopAgentModel) -> String {
-        [model.settings.apiBaseURL, model.settings.websiteBaseURL, model.userIDForRequests,
-         String(model.authTokenForRequests.hashValue), model.settings.impersonatingUserID,
-         String(model.settings.impersonationToken.hashValue)].joined(separator: "|")
-    }
 }
