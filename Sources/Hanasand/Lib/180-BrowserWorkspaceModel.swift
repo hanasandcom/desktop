@@ -245,9 +245,18 @@ final class BrowserWorkspaceModel: ObservableObject {
             "/thoughts": "/content/thoughts",
         ]
         let websiteHost = host == "hanasand.com" || host == "www.hanasand.com"
+        let isConfiguredWebsiteOrigin: Bool = {
+            guard let configuredWebsiteBaseURL,
+                  let configured = URL(string: configuredWebsiteBaseURL) else { return false }
+            return host == configured.host?.lowercased()
+                && url.scheme?.lowercased() == configured.scheme?.lowercased()
+                && effectivePort(for: url) == effectivePort(for: configured)
+        }()
+        let websiteBrowserReportAlias = (websiteHost || isConfiguredWebsiteOrigin) && path == "/sandbox/browser/report"
         let websiteGalleryAlbumsRoute = websiteHost && path == "/gallery/albums"
         let websiteGalleryRoute = websiteHost && (path == "/gallery" || websiteGalleryAlbumsRoute)
         path = websiteAliases[path] ?? path
+        if websiteBrowserReportAlias { path = "/sandbox/report" }
         if websiteGalleryRoute {
             // Preserve the website Gallery's all-media behavior through the
             // shared native Images route. The section value is consumed by its
@@ -259,9 +268,22 @@ final class BrowserWorkspaceModel: ObservableObject {
         let queryItems = urlComponents?.queryItems ?? []
         func queryValue(_ key: String) -> String? { queryItems.first(where: { $0.name == key })?.value }
         var routeQuery = Dictionary(queryItems.compactMap { item in item.value.map { (item.name, $0) } }, uniquingKeysWith: { first, _ in first })
+        if websiteBrowserReportAlias {
+            // The Website redirect carries only these two share-report inputs
+            // to its canonical page. Keep the same narrow contract for direct
+            // native routing and reject values the report client cannot use.
+            routeQuery = [:]
+            for key in ["run", "token"] {
+                guard let value = queryValue(key), !value.isEmpty else { continue }
+                let pattern = key == "run" ? "^[A-Za-z0-9._-]{1,128}$" : "^[A-Za-z0-9._~-]{1,4096}$"
+                guard value.utf8.count <= (key == "run" ? 128 : 4096),
+                      value.range(of: pattern, options: .regularExpression) != nil else { return nil }
+                routeQuery[key] = value
+            }
+        }
         // Native Gallery album handoff uses the existing Images route; the
         // Images panel validates albumId against the signed-in user's albums.
-        if let fragment = urlComponents?.fragment, !fragment.isEmpty,
+        if !websiteBrowserReportAlias, let fragment = urlComponents?.fragment, !fragment.isEmpty,
            let fragmentComponents = URLComponents(string: "https://fragment.invalid/?\(fragment)") {
             for item in fragmentComponents.queryItems ?? [] where routeQuery[item.name] == nil {
                 if let value = item.value { routeQuery[item.name] = value }
@@ -319,7 +341,7 @@ final class BrowserWorkspaceModel: ObservableObject {
         }
         if path == "/sandbox/report" {
             path = queryValue("run")?.isEmpty == false ? "/sandbox/report" : "/sandbox"
-            detailID = queryValue("run")
+            detailID = queryValue("run").flatMap { $0.isEmpty ? nil : $0 }
         } else if path == "/ai/workspace" {
             path = "/ai/workspace"
         } else if path == "/test/stats" || path == "/g/stats" {

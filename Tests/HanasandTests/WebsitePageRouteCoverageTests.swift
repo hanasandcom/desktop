@@ -7,7 +7,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         var detailID: String? = nil
         var section: String? = nil
     }
-    // Generated from the website's App Router page inventory on 2026-10-24.
+    // Generated from the website's App Router page inventory on 2026-10-25.
     // Dynamic templates are exercised with representative values so every page
     // family must resolve to a native screen rather than the route fallback.
     private let websitePagePatterns = [
@@ -150,6 +150,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             "/s/[...id]",
             "/sandbox",
             "/sandbox/[id]",
+            "/sandbox/browser/report", // Next's private-folder page redirects to the native report route.
             "/sandbox/report",
             "/secure-account",
             "/signup",
@@ -289,7 +290,7 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
         add("/reset-password-again", ["/reset-password-again"])
         add("/sandbox", ["/sandbox"])
         add("/sandbox/result", ["/sandbox/[id]"])
-        add("/sandbox/report", ["/sandbox/report"])
+        add("/sandbox/report", ["/sandbox/browser/report", "/sandbox/report"])
         add("/secure-account", ["/secure-account"])
         add("/solutions/scanner", ["/solutions/scanner"])
         add("/solutions/security-monitoring", ["/solutions/security-monitoring"])
@@ -333,7 +334,9 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
             .replacingOccurrences(of: "[query]", with: "search")
             .replacingOccurrences(of: "/organizations/[section]", with: "/organizations/alerts")
             .replacingOccurrences(of: "/dashboard/system/[section]", with: "/dashboard/system/containers")
-        if pattern == "/sandbox/report" { return path + "?run=run-sample&token=report-token" }
+        if pattern == "/sandbox/browser/report" || pattern == "/sandbox/report" {
+            return path + "?run=run-sample&token=report-token"
+        }
         return path
     }
 
@@ -379,6 +382,9 @@ final class WebsitePageRouteCoverageTests: XCTestCase {
                 XCTAssertEqual(route.path, "/notes", pattern)
             case "/test/[...id]": XCTAssertEqual(route.detailID, "run-sample", pattern)
             case "/user/[...id]", "/users/[...id]": XCTAssertEqual(route.detailID, "user-sample", pattern)
+            case "/sandbox/browser/report":
+                XCTAssertEqual(route.detailID, "run-sample", pattern)
+                XCTAssertEqual(route.query["token"], "report-token", pattern)
             case "/organizations/[section]": XCTAssertEqual(route.path, "/organizations/events", pattern)
             case "/dashboard/system/[section]": XCTAssertEqual(route.path, "/system/containers", pattern)
             default: break

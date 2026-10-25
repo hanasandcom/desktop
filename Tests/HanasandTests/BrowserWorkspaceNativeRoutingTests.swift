@@ -332,6 +332,37 @@ final class BrowserWorkspaceNativeRoutingTests: XCTestCase {
         XCTAssertEqual(reportWithoutRun?.path, "/sandbox")
     }
 
+    func testWebsiteBrowserReportAliasPreservesOnlyValidatedShareInputs() {
+        let alias = BrowserWorkspaceModel.nativeRoute(
+            for: "https://hanasand.com/sandbox/browser/report?run=run-7%2Efinal&token=share%2Etoken_1&redirect=https%3A%2F%2Fattacker.test#extra=fragment"
+        )
+        XCTAssertEqual(alias?.path, "/sandbox/report")
+        XCTAssertEqual(alias?.detailID, "run-7.final")
+        XCTAssertEqual(alias?.query, ["run": "run-7.final", "token": "share.token_1"])
+
+        let noRun = BrowserWorkspaceModel.nativeRoute(
+            for: "https://www.hanasand.com/sandbox/browser/report?run=&token=&unused=discard"
+        )
+        XCTAssertEqual(noRun?.path, "/sandbox")
+        XCTAssertNil(noRun?.detailID)
+        XCTAssertTrue(noRun?.query.isEmpty == true)
+
+        XCTAssertNil(BrowserWorkspaceModel.nativeRoute(
+            for: "https://hanasand.com/sandbox/browser/report?run=run%2Fprivate&token=share-token"
+        ))
+        XCTAssertNil(BrowserWorkspaceModel.nativeRoute(
+            for: "https://hanasand.com/sandbox/browser/report?run=run-7&token=share%2Ftoken"
+        ))
+
+        let configuredWebsiteAlias = BrowserWorkspaceModel.nativeRoute(
+            for: "https://staging.example.test/sandbox/browser/report?run=run-8&token=share-456",
+            configuredWebsiteBaseURL: "https://staging.example.test"
+        )
+        XCTAssertEqual(configuredWebsiteAlias?.path, "/sandbox/report")
+        XCTAssertEqual(configuredWebsiteAlias?.detailID, "run-8")
+        XCTAssertEqual(configuredWebsiteAlias?.query["token"], "share-456")
+    }
+
     func testQueryAndIdentifierContextSurvivesNativeFeatureHandoffs() {
         let actorDirectory = BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com/findings/actors?organizationId=org-9")
         XCTAssertEqual(actorDirectory?.path, "/ti/profiles")
