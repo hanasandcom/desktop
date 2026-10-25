@@ -196,7 +196,8 @@ struct NativePublicInfoPanel: View {
     }
 
     @ViewBuilder private var aboutLinks: some View {
-        ForEach(page.links) { link in
+        ForEach(Array(page.links.enumerated()), id: \.element.id) { index, link in
+            let isPrimary = index == 0
             Button { open(link.route) } label: {
                 HStack(spacing: 7) {
                     Text(link.title).font(.system(size: 12, weight: .semibold))
@@ -204,7 +205,9 @@ struct NativePublicInfoPanel: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
                 .padding(.horizontal, 12)
-                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .foregroundStyle(isPrimary ? theme.background : theme.text)
+                .background(isPrimary ? theme.text : theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isPrimary ? Color.clear : theme.divider, lineWidth: 1))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
