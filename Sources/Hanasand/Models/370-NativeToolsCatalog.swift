@@ -48,7 +48,7 @@ enum NativeToolsCatalog {
         case "/ti": ["Threat Search"]
         case "/ti/profiles": ["Actors"]
         case "/ti/sources": ["Feeds"]
-        case "/findings/actions": ["Delivery"]
+        case "/dashboard/delivery-history": ["Delivery"]
         case "/traffic/map": ["Live map"]
         case "/pwned": ["Check Password"]
         case "/support": ["Support Chats"]

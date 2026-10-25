@@ -32,7 +32,8 @@ final class NativeToolsCatalogTests: XCTestCase {
         let dashboard = [
             DesktopAction.route("Actor Profiles", "Browse source-backed threat actor records.", "person", "/ti/profiles"),
             DesktopAction.route("Intelligence Sources", "Browse the public intelligence source catalogue.", "wave", "/ti/sources"),
-            DesktopAction.route("Findings Actions", "Review saved finding action receipts.", "bolt", "/findings/actions"),
+            DesktopAction.route("Findings Actions", "Run native finding actions.", "bolt", "/findings/actions"),
+            DesktopAction.route("Delivery History", "Review organization alert delivery attempts.", "paperplane", "/dashboard/delivery-history"),
             DesktopAction.route("Live Traffic Map", "Explore recent requests by country.", "map", "/traffic/map"),
             DesktopAction.route("Password Check", "Check a password against known breach ranges.", "key", "/pwned"),
             DesktopAction.route("Support Desk", "Review and respond to support conversations.", "bubble", "/support"),
@@ -42,7 +43,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         let mobileLabels = [
             ("Actors", "/ti/profiles"),
             ("Feeds", "/ti/sources"),
-            ("Delivery", "/findings/actions"),
+            ("Delivery", "/dashboard/delivery-history"),
             ("Live map", "/traffic/map"),
             ("Check Password", "/pwned"),
             ("Support Chats", "/support"),
@@ -53,7 +54,7 @@ final class NativeToolsCatalogTests: XCTestCase {
         for (label, expectedPath) in mobileLabels {
             let matches = NativeToolsCatalog.sections(dashboard: dashboard, administration: [], query: label)
                 .flatMap(\.actions)
-            XCTAssertTrue(matches.contains { $0.routePath == expectedPath }, "The mobile navigation label ‘\(label)’ should find \(expectedPath).")
+            XCTAssertEqual(matches.compactMap(\.routePath), [expectedPath], "The mobile navigation label ‘\(label)’ should find only \(expectedPath).")
         }
     }
 
