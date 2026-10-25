@@ -25,6 +25,7 @@ extension HanasandLoginGate {
             .font(.system(size: 12, weight: .bold))
             .foregroundStyle(theme.text)
             .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity)
             .frame(height: 40)
             .background(theme.cardRaised)
             .overlay(

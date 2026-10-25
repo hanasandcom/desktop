@@ -157,7 +157,7 @@ extension HanasandLoginGate {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    func primaryButton(title: String, busy: Bool, action: @escaping () -> Void) -> some View {
+    func primaryButton(title: String, busy: Bool, expands: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 if busy {
@@ -170,7 +170,7 @@ extension HanasandLoginGate {
             .font(.system(size: 13, weight: .bold))
             .foregroundStyle(theme.background)
             .padding(.horizontal, 18)
-            .frame(minWidth: busy ? 118 : 96)
+            .frame(minWidth: busy ? 118 : 96, maxWidth: expands ? .infinity : nil)
             .frame(height: 36)
             .background(theme.text)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

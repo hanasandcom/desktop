@@ -16,4 +16,5 @@ struct HanasandLoginGate: View {
     @Environment(\.desktopTheme) var theme
 
     @FocusState var focusedField: Field?
+    @State var showsSignupForm = false
 }

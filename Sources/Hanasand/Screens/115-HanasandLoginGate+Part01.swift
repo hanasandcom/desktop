@@ -35,18 +35,24 @@ extension HanasandLoginGate {
                         VStack(alignment: .leading, spacing: 16) {
                             masthead
                             if model.pendingDeletionUserID.isEmpty {
-                                loginCard
-                                if model.passwordResetStep != .idle {
-                                    recoveryCard
+                                if showsSignupForm {
+                                    signupCard
                                         .transition(.opacity.combined(with: .move(edge: .top)))
+                                } else {
+                                    loginCard
+                                    if model.passwordResetStep != .idle {
+                                        recoveryCard
+                                            .transition(.opacity.combined(with: .move(edge: .top)))
+                                    }
                                 }
                             } else {
                                 pendingDeletionCard
                                     .transition(.opacity.combined(with: .move(edge: .top)))
                             }
                         }
-                        .frame(width: 392, alignment: .leading)
+                        .frame(maxWidth: 448, alignment: .leading)
                         .padding(.vertical, 24)
+                        .padding(.horizontal, 20)
                         .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
                     }
                     .scrollIndicators(.hidden)
@@ -65,23 +71,18 @@ extension HanasandLoginGate {
     }
 
     var masthead: some View {
-        VStack(spacing: 9) {
-            Text("Hanasand")
-                .font(.system(size: 46, weight: .semibold, design: .serif))
-                .kerning(0.5)
-                .foregroundStyle(theme.text)
-            Rectangle()
-                .fill(theme.text.opacity(0.22))
-                .frame(width: 44, height: 1)
-        }
+        Text("Hanasand")
+            .font(.system(size: 34, weight: .semibold))
+            .tracking(-1.5)
+            .foregroundStyle(theme.accent)
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.bottom, 14)
+        .padding(.bottom, 8)
     }
 
     var loginCard: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 7) {
-                authTextField("Username", text: $model.loginUsername, field: .username) {
+                authTextField("Email or username", text: $model.loginUsername, field: .username) {
                     focusedField = .password
                 }
                 authSecureField("Password", text: $model.loginPassword, field: .password) {
@@ -89,30 +90,14 @@ extension HanasandLoginGate {
                 }
             }
 
-            HStack(alignment: .center, spacing: 12) {
-                primaryButton(
-                    title: model.isLoggingIn ? "Logging in" : "Log in",
-                    busy: model.isLoggingIn,
-                    action: { Task { await model.loginToHanasand() } }
-                )
-                .disabled(model.isLoggingIn)
-
-                Spacer(minLength: 12)
-
-                if model.passwordResetStep == .idle {
-                    Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                            model.beginPasswordReset()
-                            focusedField = .resetUsername
-                        }
-                    } label: {
-                        Text("Forgot password?")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(theme.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+            primaryButton(
+                title: model.isLoggingIn ? "Signing in…" : "Sign in",
+                busy: model.isLoggingIn,
+                expands: true,
+                action: { Task { await model.loginToHanasand() } }
+            )
+            .frame(maxWidth: .infinity)
+            .disabled(model.isLoggingIn)
 
             secondaryButton(
                 title: model.isLoggingIn ? "Waiting" : "Continue with Google",
@@ -130,22 +115,72 @@ extension HanasandLoginGate {
             .frame(maxWidth: .infinity)
             .disabled(model.isLoggingIn)
 
-            ActionButton(title: "Check a service without signing in", icon: "speedometer") {
-                model.openNativeDashboard(path: "/test", label: "Check a service", loadData: false)
-            }
-            .frame(maxWidth: .infinity)
-
-            ActionButton(title: "Upload public media", icon: "arrow.up.doc") {
-                model.openNativeDashboard(path: "/upload", label: "Upload public media", loadData: false)
-            }
-            .frame(maxWidth: .infinity)
-
             if !model.loginStatus.isEmpty {
                 statusText(model.loginStatus, isSuccess: false)
             }
-            AccountSignupForm(focusedField: $focusedField)
+
+            HStack(spacing: 8) {
+                Button("Create an account") {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        model.cancelPasswordReset()
+                        model.loginStatus = ""
+                        showsSignupForm = true
+                        focusedField = .signupUsername
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isLoggingIn)
+
+                Spacer(minLength: 8)
+
+                if model.passwordResetStep == .idle {
+                    Button("Forgot password?") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                            model.beginPasswordReset()
+                            focusedField = .resetUsername
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(theme.textTertiary)
         }
-        .padding(14)
+        .padding(20)
+        .background(theme.card)
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(theme.divider, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: .black.opacity(theme.isLight ? 0.08 : 0.24), radius: 22, x: 0, y: 14)
+    }
+
+    var signupCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Create an account")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                Spacer()
+                Button("Sign in") {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        showsSignupForm = false
+                        model.loginStatus = ""
+                        focusedField = .username
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(theme.textTertiary)
+                .disabled(model.isLoggingIn)
+            }
+            AccountSignupForm(focusedField: $focusedField)
+            if !model.loginStatus.isEmpty {
+                statusText(model.loginStatus, isSuccess: false)
+            }
+        }
+        .padding(20)
         .background(theme.card)
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -159,7 +194,6 @@ private struct AccountSignupForm: View {
     @FocusState.Binding var focusedField: HanasandLoginGate.Field?
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
-    @State private var expanded = false
     @State private var waitingForCode = false
     @State private var challengeID: String?
     @State private var name = ""
@@ -169,42 +203,25 @@ private struct AccountSignupForm: View {
     @State private var code = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                expanded.toggle()
-                model.loginStatus = ""
-                focusedField = expanded ? .signupName : .username
-            } label: {
-                Text(expanded ? "Already have an account? Log in" : "Create an account")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .disabled(model.isLoggingIn)
-
-            if expanded {
-                Divider().overlay(theme.divider)
-                Text("Create your Hanasand account")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.text)
-                TextField("Full name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedField, equals: .signupName)
-                    .id(HanasandLoginGate.Field.signupName)
-                    .onSubmit { focusedField = .signupUsername }
-                    .disabled(model.isLoggingIn || waitingForCode)
+        VStack(alignment: .leading, spacing: 12) {
                 TextField("Username", text: $username)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
                     .focused($focusedField, equals: .signupUsername)
                     .id(HanasandLoginGate.Field.signupUsername)
-                    .onSubmit { focusedField = .signupEmail }
+                    .onSubmit { focusedField = .signupName }
                     .disabled(model.isLoggingIn || waitingForCode)
                 if usernameIsReserved {
                     Text("Reserved username.")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.danger)
                 }
+                TextField("Full name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .signupName)
+                    .id(HanasandLoginGate.Field.signupName)
+                    .onSubmit { focusedField = .signupEmail }
+                    .disabled(model.isLoggingIn || waitingForCode)
                 TextField("Email address", text: $email)
                     .textFieldStyle(.roundedBorder)
                     .textContentType(.emailAddress)
@@ -239,30 +256,32 @@ private struct AccountSignupForm: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 8) {
-                    Button {
-                        Task { await submit() }
-                    } label: {
-                        HStack(spacing: 7) {
-                            if model.isLoggingIn { ProgressView().controlSize(.small) }
-                            Text(waitingForCode ? "Verify email and create account" : "Send verification code")
-                        }
+                Button {
+                    Task { await submit() }
+                } label: {
+                    HStack(spacing: 7) {
+                        if model.isLoggingIn { ProgressView().controlSize(.small) }
+                        Text(waitingForCode ? "Verify email and create account" : "Create account")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isLoggingIn || !canSubmit)
-
-                    if waitingForCode {
-                        Button("Start over") {
-                            waitingForCode = false
-                            challengeID = nil
-                            code = ""
-                            model.loginStatus = ""
-                            focusedField = .signupName
-                        }
-                        .disabled(model.isLoggingIn)
-                    }
+                    .frame(maxWidth: .infinity)
                 }
-            }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity)
+                .disabled(model.isLoggingIn || !canSubmit)
+
+                if waitingForCode {
+                    Button("Start over") {
+                        waitingForCode = false
+                        challengeID = nil
+                        code = ""
+                        model.loginStatus = ""
+                        focusedField = .signupUsername
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+                    .disabled(model.isLoggingIn)
+                }
         }
     }
 
