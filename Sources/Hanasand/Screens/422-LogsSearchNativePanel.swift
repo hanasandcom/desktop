@@ -247,7 +247,7 @@ struct LogsSearchNativePanel: View {
           .font(.system(size: 10, weight: .medium, design: .monospaced))
           .foregroundStyle(theme.textTertiary)
           .lineLimit(1)
-        detectionLinks(event.detections)
+        detectionLinks(event.detectionPresentation)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
     Button {
@@ -281,29 +281,8 @@ struct LogsSearchNativePanel: View {
   }
 
   @ViewBuilder
-  private func detectionLinks(_ detections: [LogsDetection]) -> some View {
-    if !detections.isEmpty {
-      VStack(alignment: .leading, spacing: 4) {
-        ForEach(detections) { detection in
-          Button {
-            model.openNativeDashboard(
-              path: "/rules/detail", label: "Rule: \(detection.summary)", detailID: detection.ruleID)
-          } label: {
-            Label(detection.summary, systemImage: "arrow.up.right.square")
-              .lineLimit(2)
-              .fixedSize(horizontal: false, vertical: true)
-              .padding(.horizontal, 7)
-              .padding(.vertical, 4)
-              .background(theme.cardRaised)
-              .clipShape(RoundedRectangle(cornerRadius: 6))
-          }
-          .buttonStyle(.plain)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(theme.accent)
-          .accessibilityLabel("Open matched rule: \(detection.summary)")
-        }
-      }
-    }
+  private func detectionLinks(_ presentation: LogsDetectionPresentation) -> some View {
+    LogsDetectionLinks(presentation: presentation)
   }
 
   @MainActor
@@ -354,5 +333,47 @@ struct LogsSearchNativePanel: View {
   private var routeFilterScope: String {
     let keys = ["hours", "service", "search", "severity", "table", "hql", "kql"]
     return keys.map { "\($0)=\(model.selectedNativeDashboardQuery[$0] ?? "")" }.joined(separator: "&")
+  }
+}
+
+struct LogsDetectionLinks: View {
+  @EnvironmentObject private var model: DesktopAgentModel
+  @Environment(\.desktopTheme) private var theme
+  let presentation: LogsDetectionPresentation
+
+  private let columns = [GridItem(.adaptive(minimum: 148, maximum: 280), alignment: .leading)]
+
+  var body: some View {
+    if !presentation.detections.isEmpty || presentation.additionalCount > 0 {
+      VStack(alignment: .leading, spacing: 6) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 6) {
+          ForEach(presentation.detections) { detection in
+            Button {
+              model.openNativeDashboard(
+                path: "/rules/detail", label: "Rule: \(detection.summary)", detailID: detection.ruleID)
+            } label: {
+              Label(detection.summary, systemImage: "arrow.up.right.square")
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(theme.cardRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(theme.accent)
+            .accessibilityLabel("Open matched rule: \(detection.summary)")
+          }
+        }
+        if presentation.additionalCount > 0 {
+          Text("\(presentation.additionalCount) additional match\(presentation.additionalCount == 1 ? "" : "es")")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(theme.textTertiary)
+            .accessibilityLabel("\(presentation.additionalCount) additional log matches omitted")
+        }
+      }
+    }
   }
 }

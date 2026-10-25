@@ -95,6 +95,32 @@ final class LogsSearchClientTests: XCTestCase {
     XCTAssertEqual((normalized["detections"] as? [[String: String]])?.first?["rule_id"], "r-1")
   }
 
+  func testDetectionPresentationCapsWrappedItemsAndCountsOnlyOmittedMatches() throws {
+    var detections: [[String: String]] = (1...20).map { index in
+      ["rule_id": "rule-\(index)", "summary": "Matched rule \(index)", "severity": "high"]
+    }
+    detections.append(["rule_id": "javascript:alert(1)", "summary": "Unsafe rule", "severity": "high"])
+    detections.append(contentsOf: (21...24).map { index in
+      ["rule_id": "rule-\(index)", "summary": "Matched rule \(index)", "severity": "critical"]
+    })
+    let payload: [String: Any] = [
+      "id": "event-1",
+      "event_timestamp": "2026-10-24T06:00:00Z",
+      "normalized": [
+        "severity": "high", "service": "api", "message": "request failed", "detections": detections,
+      ],
+    ]
+    let event = try JSONDecoder().decode(
+      LogsSearchEvent.self, from: JSONSerialization.data(withJSONObject: payload))
+
+    XCTAssertEqual(event.detectionPresentation.detections.count, 20)
+    XCTAssertEqual(event.detectionPresentation.additionalCount, 5)
+    XCTAssertEqual(event.detectionPresentation.detections.first?.summary, "Matched rule 1")
+    XCTAssertEqual(event.detectionPresentation.detections.last?.ruleID, "rule-20")
+    XCTAssertFalse(event.detectionPresentation.detections.contains { $0.summary == "Unsafe rule" })
+    XCTAssertTrue(event.detectionPresentation.detections.allSatisfy { $0.ruleID.range(of: #"^[A-Za-z0-9_.:@-]{1,200}$"#, options: .regularExpression) != nil })
+  }
+
   func testDashboardSummaryAndPublicMetricsUseBoundedReadOnlyRequests() async throws {
     let summaryURL = apiBase.appendingAPIPath("logs/services/summary")
     let metricsURL = apiBase.appendingAPIPath("logs/metrics/public")

@@ -47,7 +47,8 @@ struct LogsSearchEvent: Decodable, Identifiable, Equatable {
   let host: String
   let message: String
   let rawNormalized: APIReferenceJSONValue
-  var detections: [LogsDetection] { logsDetections(from: rawNormalized) }
+  var detectionPresentation: LogsDetectionPresentation { logsDetectionPresentation(from: rawNormalized) }
+  var detections: [LogsDetection] { detectionPresentation.detections }
 
   var copyJSON: String {
     let payload: [String: Any] = ["id": id, "event_timestamp": timestamp, "normalized": logsJSONFoundationValue(rawNormalized)]
@@ -111,10 +112,19 @@ struct LogsDetection: Equatable, Identifiable {
   let severity: String
 }
 
-func logsDetections(from normalized: APIReferenceJSONValue) -> [LogsDetection] {
+struct LogsDetectionPresentation: Equatable {
+  let detections: [LogsDetection]
+  let additionalCount: Int
+}
+
+private let logsDetectionDisplayLimit = 20
+
+func logsDetectionPresentation(from normalized: APIReferenceJSONValue) -> LogsDetectionPresentation {
   guard case .object(let fields) = normalized,
-        case .array(let entries)? = fields["detections"] else { return [] }
-  return entries.prefix(20).enumerated().compactMap { index, entry in
+        case .array(let entries)? = fields["detections"] else {
+    return LogsDetectionPresentation(detections: [], additionalCount: 0)
+  }
+  let detections: [LogsDetection] = entries.prefix(logsDetectionDisplayLimit).enumerated().compactMap { index, entry in
     guard case .object(let fields) = entry,
           case .string(let ruleID)? = fields["rule_id"],
           ruleID.range(of: #"^[A-Za-z0-9_.:@-]{1,200}$"#, options: .regularExpression) != nil,
@@ -125,6 +135,11 @@ func logsDetections(from normalized: APIReferenceJSONValue) -> [LogsDetection] {
     else { return nil }
     return LogsDetection(id: "\(index):\(ruleID)", ruleID: ruleID, summary: summary, severity: severity.lowercased())
   }
+  return LogsDetectionPresentation(detections: detections, additionalCount: max(0, entries.count - detections.count))
+}
+
+func logsDetections(from normalized: APIReferenceJSONValue) -> [LogsDetection] {
+  logsDetectionPresentation(from: normalized).detections
 }
 
 func logsJSONFoundationValue(_ value: APIReferenceJSONValue) -> Any {
