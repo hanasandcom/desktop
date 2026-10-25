@@ -36,9 +36,7 @@ struct NativePublicInfoPanel: View {
 
     private var heroTitleSize: CGFloat {
         switch page.kind {
-        case .home: 42
-        case .pricing: 28
-        case .scannerSolution, .monitoringSolution: 34
+        case .home, .pricing, .scannerSolution, .monitoringSolution: 42
         default: 24
         }
     }
@@ -561,10 +559,10 @@ struct NativePublicInfoPanel: View {
     private var pricingContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             ViewThatFits(in: .horizontal) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 260), alignment: .top), count: 4), alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 250), alignment: .top), count: 4), alignment: .leading, spacing: 12) {
                     pricingPlanCards
                 }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 260), alignment: .top), count: 2), alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 250), alignment: .top), count: 2), alignment: .leading, spacing: 10) {
                     pricingPlanCards
                 }
             }
@@ -634,15 +632,9 @@ struct NativePublicInfoPanel: View {
 
     private var monitoringDetails: some View {
         let event = page.sections.first(where: { $0.title == "Send an event" })
-        return ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 14) {
-                sendEventPanel(event).frame(maxWidth: .infinity, alignment: .topLeading)
-                monitoringScopePanel.frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            VStack(alignment: .leading, spacing: 14) {
-                sendEventPanel(event)
-                monitoringScopePanel
-            }
+        return HStack(alignment: .top, spacing: 14) {
+            sendEventPanel(event).frame(maxWidth: .infinity, alignment: .topLeading)
+            monitoringScopePanel.frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 

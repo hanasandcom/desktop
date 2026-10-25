@@ -24,16 +24,20 @@ struct FeatureWorkspace<Content: View>: View {
             TopBar()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(title)
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(theme.text)
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.system(size: 13, weight: .regular))
-                                .foregroundStyle(theme.textSecondary)
-                                .lineLimit(2)
-                                .textSelection(.enabled)
+                    if !title.isEmpty || !subtitle.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            if !title.isEmpty {
+                                Text(title)
+                                    .font(.system(size: 24, weight: .semibold))
+                                    .foregroundStyle(theme.text)
+                            }
+                            if !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.system(size: 13, weight: .regular))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
                         }
                     }
                     content

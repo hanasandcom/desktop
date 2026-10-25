@@ -46,8 +46,8 @@ struct NativeDashboardDetail: View {
 
     var body: some View {
         FeatureWorkspace(
-            title: model.selectedDashboardTitle,
-            subtitle: statusSubtitle,
+            title: isPublicInfoPage ? "" : model.selectedDashboardTitle,
+            subtitle: isPublicInfoPage ? "" : statusSubtitle,
             contentMaxWidth: NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "") == nil ? 1040 : 1280,
             initialScrollTarget: model.selectedDashboardPath == "/profile" ? model.selectedNativeDashboardQuery["section"] : nil
         ) {
@@ -76,6 +76,10 @@ struct NativeDashboardDetail: View {
             guard !ownedByPanel else { return }
             await model.loadNativeDashboardData()
         }
+    }
+
+    private var isPublicInfoPage: Bool {
+        NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "") != nil
     }
 
     private var hasPanelRefresh: Bool {
