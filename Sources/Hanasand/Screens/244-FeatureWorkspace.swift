@@ -14,6 +14,7 @@ struct FeatureWorkspace<Content: View>: View {
     @Environment(\.desktopTheme) var theme
     let title: String
     let subtitle: String
+    var contentMaxWidth: CGFloat = 1040
     var initialScrollTarget: String? = nil
     @ViewBuilder let content: Content
 
@@ -38,7 +39,7 @@ struct FeatureWorkspace<Content: View>: View {
                     content
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: 1040, alignment: .leading)
+                .frame(maxWidth: contentMaxWidth, alignment: .leading)
                 .padding(.horizontal, 28)
                 .padding(.top, 28)
                 .padding(.bottom, 32)

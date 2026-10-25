@@ -266,7 +266,7 @@ struct NativePublicInfoPage: Identifiable, Hashable {
             .init(title: "Evidence-first review", paragraphs: ["Inspect the matching events, rule ID, source context, and original event sample."]),
             .init(title: "Send an event", paragraphs: ["POST https://api.hanasand.com/mill\nAuthorization: Bearer hsk_<organization-key>\nContent-Type: application/json\n\n{\n  \"events\": [{\n    \"timestamp\": \"2026-08-03T08:15:00Z\",\n    \"event_type\": \"authentication\",\n    \"action\": \"login\",\n    \"outcome\": \"success\",\n    \"user\": {\"id\": \"user-123\"},\n    \"source\": {\"ip\": \"203.0.113.10\", \"country\": \"NO\"}\n  }]\n}"], bullets: ["Suspicious login findings", "Impossible-travel evidence", "Organization-specific raw and normalized events", "Extensible path for Sigma and Hanasand rules"])
         ],
-        links: [.init(title: "Open cases", route: "/cases"), .init(title: "View API docs", route: "/api")]
+        links: [.init(title: "Open cases", route: "/cases"), .init(title: "View API docs", route: "/developers")]
     )
 
     static let securityContact = NativePublicInfoPage(

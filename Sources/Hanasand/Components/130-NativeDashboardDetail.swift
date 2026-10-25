@@ -48,6 +48,7 @@ struct NativeDashboardDetail: View {
         FeatureWorkspace(
             title: model.selectedDashboardTitle,
             subtitle: statusSubtitle,
+            contentMaxWidth: NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "") == nil ? 1040 : 1280,
             initialScrollTarget: model.selectedDashboardPath == "/profile" ? model.selectedNativeDashboardQuery["section"] : nil
         ) {
             HStack(spacing: 8) {

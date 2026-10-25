@@ -34,6 +34,14 @@ struct NativePublicInfoPanel: View {
         ["All"] + Array(Set(NativePublicInfoPage.faqItems.map(\.category))).sorted()
     }
 
+    private var heroTitleSize: CGFloat {
+        switch page.kind {
+        case .pricing: 28
+        case .scannerSolution, .monitoringSolution: 34
+        default: 24
+        }
+    }
+
     var body: some View {
         Group {
             if page.kind == .about {
@@ -64,16 +72,26 @@ struct NativePublicInfoPanel: View {
     private var standardContentBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
-                Text(page.title)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(theme.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                Text(page.intro)
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
+                    Text(page.title)
+                        .font(.system(size: heroTitleSize, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
+                        .textSelection(.enabled)
+                    Text(page.intro)
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
+                        .textSelection(.enabled)
+                    if page.kind == .scannerSolution || page.kind == .monitoringSolution {
+                        solutionActions
+                            .padding(.top, 4)
+                    }
+                }
+                .frame(maxWidth: page.kind == .pricing ? 760 : .infinity)
+                .frame(maxWidth: .infinity, alignment: page.kind == .pricing ? .center : .leading)
                 if page.kind == .home { homeSearch }
                 if page.kind == .faq { faqControls }
                 if page.kind == .cookieSettings { cookieSettingsControls }
@@ -85,6 +103,8 @@ struct NativePublicInfoPanel: View {
                 reservedUsernameContent
             } else if page.kind == .pricing {
                 pricingContent
+            } else if page.kind == .scannerSolution || page.kind == .monitoringSolution {
+                solutionContent
             } else {
                 ForEach(page.sections) { section in
                     NativeGroupPanel(title: section.title, subtitle: "") {
@@ -120,7 +140,7 @@ struct NativePublicInfoPanel: View {
                 PublicExposureActivityNativePanel()
             }
 
-            if !page.links.isEmpty {
+            if !page.links.isEmpty && page.kind != .scannerSolution && page.kind != .monitoringSolution {
                 NativeGroupPanel(title: page.kind == .home ? "Explore Hanasand" : "Related", subtitle: "") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), alignment: .leading)], alignment: .leading, spacing: 8) {
                         ForEach(page.links) { link in
@@ -373,19 +393,12 @@ struct NativePublicInfoPanel: View {
 
     private var pricingContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), alignment: .top)], alignment: .leading, spacing: 10) {
-                ForEach(NativePublicInfoPage.plans) { plan in
-                    NativeGroupPanel(title: plan.name, subtitle: plan.quota, fillsAvailableWidth: true) {
-                        Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-                        Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
-                        ForEach(plan.features, id: \.self) { feature in
-                            Label(feature, systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
-                        }
-                        ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
-                            open("/subscription")
-                        }
-                    }
+            ViewThatFits(in: .horizontal) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 260), alignment: .top), count: 4), alignment: .leading, spacing: 12) {
+                    pricingPlanCards
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 260), alignment: .top), count: 2), alignment: .leading, spacing: 12) {
+                    pricingPlanCards
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -400,6 +413,102 @@ struct NativePublicInfoPanel: View {
             Text("Secure checkout is handled by Stripe.")
                 .font(.system(size: 10)).foregroundStyle(theme.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+
+    private var pricingPlanCards: some View {
+        ForEach(NativePublicInfoPage.plans) { plan in
+            NativeGroupPanel(title: plan.name, subtitle: plan.quota, fillsAvailableWidth: true) {
+                Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
+                ForEach(plan.features, id: \.self) { feature in
+                    Label(feature, systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                }
+                ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
+                    open("/subscription")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var solutionActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { solutionActionButtons }
+            VStack(alignment: .leading, spacing: 8) { solutionActionButtons }
+        }
+    }
+
+    @ViewBuilder private var solutionActionButtons: some View {
+        ForEach(page.links) { link in
+            ActionButton(title: link.title, icon: "arrow.right") { open(link.route) }
+        }
+    }
+
+    private var solutionContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 220), alignment: .top), count: 3), alignment: .leading, spacing: 14) {
+                ForEach(Array(page.sections.prefix(3))) { section in
+                    NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: true) {
+                        ForEach(section.paragraphs, id: \.self) { paragraph in
+                            Text(paragraph)
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            if page.kind == .monitoringSolution {
+                monitoringDetails
+            }
+        }
+    }
+
+    private var monitoringDetails: some View {
+        let event = page.sections.first(where: { $0.title == "Send an event" })
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                sendEventPanel(event).frame(maxWidth: .infinity, alignment: .topLeading)
+                monitoringScopePanel.frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                sendEventPanel(event)
+                monitoringScopePanel
+            }
+        }
+    }
+
+    private func sendEventPanel(_ section: NativePublicInfoSection?) -> some View {
+        NativeGroupPanel(title: "Send an event", subtitle: "", fillsAvailableWidth: true) {
+            if let sample = section?.paragraphs.first {
+                Text(sample)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+
+    private var monitoringScopePanel: some View {
+        NativeGroupPanel(title: "Security Monitoring scope", subtitle: "", fillsAvailableWidth: true) {
+            Text("A working MDR starting point, not a generic log dump.")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Security Monitoring is built on the existing Hanasand organization, API-key, tenant, and analyst process. The API keeps one stable endpoint while vendor adapters and broader rule families feed the same event model.")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(["Suspicious login findings", "Impossible-travel evidence", "Organization-specific raw and normalized events", "Extensible path for Sigma and Hanasand rules"], id: \.self) { item in
+                Label(item, systemImage: "circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.textSecondary)
+            }
         }
     }
 
