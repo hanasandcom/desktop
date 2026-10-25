@@ -46,7 +46,7 @@ struct NativeDashboardDetail: View {
 
     var body: some View {
         FeatureWorkspace(
-            title: isPublicInfoPage ? "" : model.selectedDashboardTitle,
+            title: isPublicInfoPage || model.selectedDashboardPath == "/api/openapi" ? "" : model.selectedDashboardTitle,
             subtitle: isPublicInfoPage ? "" : statusSubtitle,
             contentMaxWidth: NativePublicInfoPage.resolve(model.selectedDashboardPath ?? "") == nil ? 1040 : 1280,
             initialScrollTarget: model.selectedDashboardPath == "/profile" ? model.selectedNativeDashboardQuery["section"] : nil
@@ -209,9 +209,9 @@ struct NativeDashboardDetail: View {
         case "/organization-api-keys":
             OrganizationApiKeysNativePanel()
         case "/api":
-            APIReferenceNativePanel()
+            APIReferenceNativePanel(showsPanelTitle: false)
         case "/api/openapi":
-            APIReferenceNativePanel(initialSection: .json)
+            APIReferenceNativePanel(initialSection: .json, showsPanelTitle: false)
         case "/developers":
             NativeDeveloperOnboardingPanel()
         case "/public-profile":

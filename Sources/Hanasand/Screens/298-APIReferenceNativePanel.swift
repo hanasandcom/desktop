@@ -5,14 +5,20 @@ struct APIReferenceNativePanel: View {
     @EnvironmentObject private var appModel: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @StateObject private var reference: APIReferenceModel
+    private let showsPanelTitle: Bool
 
-    init(initialSection: APIReferenceModel.Section = .publicAPI) {
+    init(initialSection: APIReferenceModel.Section = .publicAPI, showsPanelTitle: Bool = true) {
         _reference = StateObject(wrappedValue: APIReferenceModel(section: initialSection))
+        self.showsPanelTitle = showsPanelTitle
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: "API reference", subtitle: "Endpoint documentation, schemas, examples, and authentication") {
+            NativeGroupPanel(
+                title: "API reference",
+                subtitle: showsPanelTitle ? "Endpoint documentation, schemas, examples, and authentication" : "",
+                showsTitle: showsPanelTitle
+            ) {
                 HStack(spacing: 10) {
                     SearchFieldRow(placeholder: "Search endpoints and schemas", text: Binding(
                         get: { reference.query },

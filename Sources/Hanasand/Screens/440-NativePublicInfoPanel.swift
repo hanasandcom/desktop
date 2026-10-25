@@ -1,6 +1,46 @@
 import AppKit
 import SwiftUI
 
+private struct WebsiteWeightedColumns: Layout {
+    var leadingFraction: CGFloat = 0.35
+    var spacing: CGFloat = 16
+    var minimumLeadingWidth: CGFloat = 240
+    var minimumTrailingWidth: CGFloat = 520
+
+    private var minimumWidth: CGFloat { minimumLeadingWidth + minimumTrailingWidth + spacing }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let width = max(proposal.width ?? minimumWidth, minimumWidth)
+        let leadingWidth = widthForLeadingColumn(in: width)
+        let trailingWidth = width - leadingWidth - spacing
+        let leadingSize = subviews[0].sizeThatFits(ProposedViewSize(width: leadingWidth, height: nil))
+        let trailingSize = subviews[1].sizeThatFits(ProposedViewSize(width: trailingWidth, height: nil))
+        return CGSize(width: width, height: max(leadingSize.height, trailingSize.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let leadingWidth = widthForLeadingColumn(in: bounds.width)
+        let trailingWidth = bounds.width - leadingWidth - spacing
+        subviews[0].place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: leadingWidth, height: nil)
+        )
+        subviews[1].place(
+            at: CGPoint(x: bounds.minX + leadingWidth + spacing, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: trailingWidth, height: nil)
+        )
+    }
+
+    private func widthForLeadingColumn(in width: CGFloat) -> CGFloat {
+        let availableWidth = max(0, width - spacing)
+        return min(max(minimumLeadingWidth, availableWidth * leadingFraction), availableWidth - minimumTrailingWidth)
+    }
+}
+
 struct NativePublicInfoPanel: View {
     let page: NativePublicInfoPage
     let onNavigate: (String) -> Void
@@ -392,9 +432,9 @@ struct NativePublicInfoPanel: View {
 
     private var homeConsoleSection: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 16) {
-                homeConsoleIntro.frame(minWidth: 240, maxWidth: .infinity, alignment: .topLeading)
-                homeConsoleActions.frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
+            WebsiteWeightedColumns {
+                homeConsoleIntro
+                homeConsoleActions
             }
             VStack(alignment: .leading, spacing: 14) {
                 homeConsoleIntro
@@ -404,7 +444,7 @@ struct NativePublicInfoPanel: View {
     }
 
     private var homeConsoleIntro: some View {
-        NativeGroupPanel(title: "Console", subtitle: "") {
+        NativeGroupPanel(title: "Console", subtitle: "", fillsAvailableWidth: true) {
             Text("Get started.")
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(theme.text)
@@ -419,7 +459,7 @@ struct NativePublicInfoPanel: View {
     }
 
     private var homeConsoleActions: some View {
-        NativeGroupPanel(title: "Console actions", subtitle: "") {
+        NativeGroupPanel(title: "Console actions", subtitle: "", fillsAvailableWidth: true) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 4) {
                 ForEach(page.links) { link in
                     homeActionButton(link)
@@ -455,7 +495,7 @@ struct NativePublicInfoPanel: View {
 
     private var homeFAQSection: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 16) {
+            WebsiteWeightedColumns {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("FAQ").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
                     Text("A few useful answers.")
@@ -463,8 +503,7 @@ struct NativePublicInfoPanel: View {
                         .foregroundStyle(theme.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(minWidth: 240, maxWidth: .infinity, alignment: .topLeading)
-                homeFAQList.frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
+                homeFAQList
             }
             VStack(alignment: .leading, spacing: 12) {
                 Text("A few useful answers.")
@@ -476,7 +515,7 @@ struct NativePublicInfoPanel: View {
     }
 
     private var homeFAQList: some View {
-        NativeGroupPanel(title: "Frequently asked questions", subtitle: "") {
+        NativeGroupPanel(title: "Frequently asked questions", subtitle: "", fillsAvailableWidth: true) {
             ForEach(Array(NativePublicInfoPage.faqItems.prefix(3))) { item in
                 DisclosureGroup {
                     Text(item.answer)

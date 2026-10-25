@@ -15,6 +15,7 @@ struct NativeGroupPanel<Content: View>: View {
     let title: String
     let subtitle: String
     var fillsAvailableWidth = false
+    var showsTitle = true
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -35,17 +36,21 @@ struct NativeGroupPanel<Content: View>: View {
     @ViewBuilder
     private var panelContent: some View {
         let stack = VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 16, weight: .black))
-                    .foregroundStyle(theme.text)
-                    .textSelection(.enabled)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
+            if showsTitle || !subtitle.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    if showsTitle {
+                        Text(title)
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(theme.text)
+                            .textSelection(.enabled)
+                    }
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                            .lineLimit(1)
+                            .textSelection(.enabled)
+                    }
                 }
             }
             content
