@@ -366,6 +366,58 @@ final class SupportDeskClientTests: XCTestCase {
         }
     }
 
+    func testVMUnavailablePrefillSanitizesContextAndRequiresAuthenticatedCustomerRoute() throws {
+        let now = Date(timeIntervalSince1970: 0)
+        let route: [String: String] = ["newTicket": "vm-sudo-password", "vm": "vm 17/../../east\n"]
+        let prefill = try XCTUnwrap(SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: route, isAuthenticated: true, isSupportQueue: false, now: now
+        ))
+        XCTAssertEqual(prefill.vmName, "vm17....east")
+        XCTAssertEqual(prefill.subject, "Sudo password unavailable for vm17....east")
+        XCTAssertTrue(prefill.message.contains("I could not display the sudo password for VM vm17....east."))
+        XCTAssertTrue(prefill.message.contains("Time: 1970-01-01T00:00:00.000Z\nPage: /vms"))
+        XCTAssertFalse(prefill.message.localizedCaseInsensitiveContains("temporary-sudo-secret"))
+        XCTAssertLessThanOrEqual(prefill.subject.count, 160)
+        XCTAssertLessThanOrEqual(prefill.message.count, 10_000)
+
+        XCTAssertNil(SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: route, isAuthenticated: false, isSupportQueue: false, now: now
+        ), "Guest support must not receive authenticated ticket prefill data.")
+        XCTAssertNil(SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: route, isAuthenticated: true, isSupportQueue: true, now: now
+        ), "The global Support queue must not start a customer ticket composer.")
+        XCTAssertNil(SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: ["newTicket": "other", "vm": "vm-17"], isAuthenticated: true, isSupportQueue: false, now: now
+        ))
+        XCTAssertNil(SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: ["newTicket": "vm-sudo-password", "vm": " /!?\n"], isAuthenticated: true, isSupportQueue: false, now: now
+        ))
+    }
+
+    func testGuestHumanAgentStatusHandlesAssignedMissingAndMalformedName() throws {
+        func decode(agentName: Any? = nil, messages: [[String: Any]] = [], channel: String = "human") throws -> SupportGuestConversation {
+            var object: [String: Any] = ["channel": channel, "status": "open", "pending": false, "messages": messages, "tickets": []]
+            if let agentName { object["agent_name"] = agentName }
+            return try JSONDecoder().decode(SupportGuestConversation.self, from: JSONSerialization.data(withJSONObject: object))
+        }
+        let assigned = try decode(agentName: "  Sam Agent  ")
+        XCTAssertEqual(assigned.agentName, "Sam Agent")
+        XCTAssertEqual(assigned.humanAgentStatus, "Speaking with Sam Agent")
+        let supportMessage: [[String: Any]] = [[
+            "id": "33333333-3333-4333-8333-333333333333", "sender_kind": "support", "sender_name": "Support Agent",
+            "body": "I can help", "created_at": "2026-10-25T00:00:00Z"
+        ]]
+        XCTAssertEqual(try decode(agentName: "", messages: supportMessage).humanAgentStatus, "Speaking with Support Agent")
+        XCTAssertEqual(try decode().humanAgentStatus, "Waiting for support")
+        XCTAssertEqual(try decode(agentName: String(repeating: "x", count: 121), messages: supportMessage).humanAgentStatus, "Speaking with Support Agent")
+
+        let malformed = try decode(agentName: 7)
+        XCTAssertNil(malformed.agentName)
+        XCTAssertEqual(malformed.humanAgentStatus, "Waiting for support")
+        let ai = try decode(agentName: "Sam Agent", channel: "ai")
+        XCTAssertNil(ai.humanAgentStatus)
+    }
+
     func testGuestConnectIssuesFreshOneUseTicketWithSessionCapability() async throws {
         let firstTicket = String(repeating: "b", count: 64)
         let secondTicket = String(repeating: "c", count: 64)

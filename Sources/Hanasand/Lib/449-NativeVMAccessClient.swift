@@ -188,6 +188,13 @@ struct NativeVMAccessClient {
               response.url?.host?.lowercased() == baseURL.host?.lowercased(),
               response.url?.path == expectedPath else { throw NativeVMAccessError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 503,
+               path.hasSuffix("/sudo-password"),
+               let object = try? Self.object(data),
+               object["code"] as? String == "SUDO_PASSWORD_UNAVAILABLE",
+               object["error"] as? String == "Unavailable. Contact Support if the problem persists." {
+                throw NativeVMAccessError.sudoPasswordUnavailable
+            }
             if mutation && (http.statusCode == 408 || http.statusCode >= 500) { throw NativeVMAccessError.uncertainOutcome }
             if http.statusCode == 401 || http.statusCode == 403 { throw NativeVMAccessError.accessDenied }
             throw NativeVMAccessError.requestFailed(http.statusCode)

@@ -17,6 +17,7 @@ struct SupportDeskNativePanel: View {
     @State private var draft = ""
     @State private var creatingTicket = false
     @State private var createSubject = ""
+    @State private var appliedTicketPrefillKey = ""
     @State private var feedbackRating = 5
     @State private var feedbackComment = ""
     @State private var searchOpen = false
@@ -56,6 +57,9 @@ struct SupportDeskNativePanel: View {
     private var canCreateDiscordLinkCode: Bool {
         model.hasHanasandAuth && model.settings.impersonationToken.isEmpty && model.settings.impersonatingUserID.isEmpty
     }
+    private var nativeTicketPrefillRouteKey: String {
+        "\(model.selectedNativeDashboardQuery["newTicket"] ?? "")|\(model.selectedNativeDashboardQuery["vm"] ?? "")"
+    }
     private var canReplyToSelected: Bool {
         guard let ticket, let snapshot else { return false }
         return canWrite && ticket.status == "open" && (snapshot.isSupport || ticket.userID == model.userIDForRequests)
@@ -81,7 +85,7 @@ struct SupportDeskNativePanel: View {
                 if let guestSession {
                     Text("Session expires \(guestSession.expiresAt.formatted(date: .abbreviated, time: .shortened)).")
                         .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary)
-                    Text(live.status.title).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    Text("Live connection · \(live.status.title)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) { guestActions }
@@ -138,6 +142,10 @@ struct SupportDeskNativePanel: View {
         let activeTicket = conversation.tickets.first(where: { $0.id == selectedID })
         let isSelected = conversation.id == selectedID
         NativeGroupPanel(title: activeTicket?.subject ?? "New conversation", subtitle: activeTicket.map { "Guest conversation · \($0.status == "closed" ? "resolved" : "open") · updated \(date($0.updatedAt))" } ?? "Your message starts a new guest conversation.") {
+            if let assignment = conversation.humanAgentStatus {
+                Text(assignment).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                    .accessibilityIdentifier("support-human-assignment-status")
+            }
             if isSelected {
                 ForEach(conversation.messages) { item in
                     VStack(alignment: .leading, spacing: 5) {
@@ -249,9 +257,9 @@ struct SupportDeskNativePanel: View {
                 NativeEmptyState(title: model.hasHanasandAuth ? "Support unavailable" : "Sign in required", message: model.hasHanasandAuth ? "Refresh to try loading the Support queue." : "Sign in to review Support conversations.")
             }
         }
-        .task(id: "\(model.settings.websiteBaseURL):\(model.userIDForRequests):\(model.authTokenForRequests):\(model.settings.impersonationToken):\(model.settings.impersonatingUserID):\(revision)") { await load() }
+        .task(id: "\(model.settings.websiteBaseURL):\(model.userIDForRequests):\(model.authTokenForRequests):\(model.settings.impersonationToken):\(model.settings.impersonatingUserID):\(nativeTicketPrefillRouteKey):\(revision)") { await load() }
         .onAppear { isVisible = true; updateLive() }
-        .onDisappear { isVisible = false; live.stop() }
+        .onDisappear { isVisible = false; live.stop(); appliedTicketPrefillKey = "" }
         .onChange(of: scenePhase) { _, _ in updateLive() }
         .onChange(of: discordLinkScope) { _, _ in clearDiscordLinkState() }
         .confirmationDialog(pendingAction?.title ?? "Confirm Support action", isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }), titleVisibility: .visible) {
@@ -312,7 +320,9 @@ struct SupportDeskNativePanel: View {
     private var newTicketComposer: some View {
         NativeGroupPanel(title: "New support ticket", subtitle: "Your message is sent to the Hanasand Support team.") {
             TextField("Subject", text: $createSubject).textFieldStyle(.roundedBorder).disabled(busy || !canWrite)
+                .accessibilityIdentifier("support-ticket-subject")
             TextField("How can we help?", text: $draft, axis: .vertical).lineLimit(5...12).textFieldStyle(.roundedBorder).disabled(busy || !canWrite)
+                .accessibilityIdentifier("support-ticket-message")
             ActionButton(title: "Review and send ticket", icon: "paperplane") {
                 pendingAction = PendingAction(kind: .create, ticket: nil, body: draft, subject: createSubject)
             }.disabled(!canWrite || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -545,6 +555,7 @@ struct SupportDeskNativePanel: View {
             let next = try await client.loadForCurrentUser(filters: filters)
             guard !Task.isCancelled else { return }
             snapshot = next
+            applyNativeTicketPrefill(for: next)
             if !next.isSupport && creatingTicket { return }
             if !selectedID.isEmpty && !next.tickets.contains(where: { $0.id == selectedID }) { selectedID = ""; messages = [] }
             if !selectedID.isEmpty { await loadMessages(selectedID) }
@@ -553,6 +564,22 @@ struct SupportDeskNativePanel: View {
             if !keepingLive { updateLive() }
             else if !next.realtime { live.stop() }
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+
+    private func applyNativeTicketPrefill(for snapshot: SupportDeskSnapshot) {
+        guard let prefill = SupportVMUnavailableTicketPrefill.fromNativeRoute(
+            query: model.selectedNativeDashboardQuery,
+            isAuthenticated: model.hasHanasandAuth,
+            isSupportQueue: snapshot.isSupport
+        ) else { return }
+        let key = "\(snapshot.scope)\n\(prefill.vmName)"
+        guard appliedTicketPrefillKey != key else { return }
+        appliedTicketPrefillKey = key
+        creatingTicket = true
+        createSubject = prefill.subject
+        draft = prefill.message
+        selectedID = ""
+        messages = []
     }
 
     private func refreshFromLive() {
@@ -590,6 +617,7 @@ struct SupportDeskNativePanel: View {
             guard let snapshot else { throw SupportDeskClientError.readOnly }
             switch action.kind {
             case .create:
+                guard !snapshot.isSupport, snapshot.scope == client.scope, client.canMutate else { throw SupportDeskClientError.readOnly }
                 _ = try await client.createTicket(subject: action.subject, message: action.body)
                 creatingTicket = false; createSubject = ""; draft = ""; selectedID = ""
                 notice = "Support ticket created. Refresh to review the conversation."

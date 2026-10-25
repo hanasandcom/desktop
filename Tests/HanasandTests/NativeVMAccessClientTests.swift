@@ -57,6 +57,37 @@ final class NativeVMAccessClientTests: XCTestCase {
         catch { XCTAssertEqual(error as? NativeVMAccessError, .invalidPassword) }
     }
 
+    func testSudoUnavailableRequiresExactWebsiteCodeAndMessage() async throws {
+        let exact = try makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/vm/vm-17/sudo-password")
+            return (Data(#"{"code":"SUDO_PASSWORD_UNAVAILABLE","error":"Unavailable. Contact Support if the problem persists."}"#.utf8),
+                    try Self.response(for: request, status: 503))
+        }
+        do {
+            _ = try await exact.revealSudoPassword(for: "vm-17", currentPassword: "account-password")
+            XCTFail("The Website-equivalent failure must be surfaced as a typed unavailable result.")
+        } catch {
+            XCTAssertEqual(error as? NativeVMAccessError, .sudoPasswordUnavailable)
+        }
+
+        let mismatches: [(Int, String)] = [
+            (503, #"{"code":"TEMPORARY_FAILURE","error":"Unavailable. Contact Support if the problem persists."}"#),
+            (503, #"{"code":"SUDO_PASSWORD_UNAVAILABLE","error":"Internal transport detail"}"#),
+            (502, #"{"code":"SUDO_PASSWORD_UNAVAILABLE","error":"Unavailable. Contact Support if the problem persists."}"#)
+        ]
+        for (status, body) in mismatches {
+            let client = try makeClient { request in
+                (Data(body.utf8), try Self.response(for: request, status: status))
+            }
+            do {
+                _ = try await client.revealSudoPassword(for: "vm-17", currentPassword: "account-password")
+                XCTFail("A non-matching failure must not enable the Support handoff.")
+            } catch {
+                XCTAssertEqual(error as? NativeVMAccessError, .uncertainOutcome)
+            }
+        }
+    }
+
     func testFailoverMutationUsesExpectedMethodsBodiesAndExactReceipts() async throws {
         let client = try makeClient { request in
             self.requests.append(request)

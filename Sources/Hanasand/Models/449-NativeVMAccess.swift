@@ -27,6 +27,7 @@ enum NativeVMAccessError: LocalizedError, Equatable {
     case invalidEndpoint
     case invalidVMName
     case invalidPassword
+    case sudoPasswordUnavailable
     case invalidResponse
     case responseTooLarge
     case accessDenied
@@ -40,6 +41,7 @@ enum NativeVMAccessError: LocalizedError, Equatable {
         case .invalidEndpoint: "Use a secure API address for VM access."
         case .invalidVMName: "The selected VM name is invalid."
         case .invalidPassword: "Enter your current Hanasand account password."
+        case .sudoPasswordUnavailable: "Unavailable. Contact Support if the problem persists."
         case .invalidResponse: "The VM service returned an invalid response."
         case .responseTooLarge: "The VM service response exceeded its size limit."
         case .accessDenied: "Current owner or editor access is required for this VM."

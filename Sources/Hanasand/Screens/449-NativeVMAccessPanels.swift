@@ -291,6 +291,8 @@ struct NativeVMSudoPasswordButton: View {
     @State private var error = ""
     @State private var isLoading = false
     @State private var copied = false
+    @State private var canContactSupport = false
+    @State private var unavailableErrorScopeKey = ""
     @State private var requestGeneration = 0
 
     private var isImpersonating: Bool { model.isProfileIdentityImpersonating }
@@ -332,6 +334,16 @@ struct NativeVMSudoPasswordButton: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await reveal() } }
                     if !error.isEmpty { Text(error).font(.system(size: 12)).foregroundStyle(theme.danger).textSelection(.enabled) }
+                    if canContactSupport, unavailableErrorScopeKey == scopeKey, mayReveal,
+                       let safeVMName = SupportVMUnavailableTicketPrefill.sanitizedVMName(vmName) {
+                        ActionButton(title: "Contact Support", icon: "bubble.left.and.bubble.right") {
+                            guard canContactSupport, unavailableErrorScopeKey == scopeKey, mayReveal else { return }
+                            model.openNativeDashboard(path: "/support", label: "Support", query: [
+                                "newTicket": "vm-sudo-password", "vm": safeVMName
+                            ])
+                            isPresented = false
+                        }
+                    }
                     HStack {
                         Button(isLoading ? "Verifying…" : "Verify and show") { Task { await reveal() } }
                             .disabled(isLoading || currentPassword.isEmpty || !mayReveal)
@@ -351,6 +363,8 @@ struct NativeVMSudoPasswordButton: View {
         let password = currentPassword
         currentPassword = ""
         error = ""
+        canContactSupport = false
+        unavailableErrorScopeKey = ""
         isLoading = true
         defer { isLoading = false }
         do {
@@ -365,6 +379,8 @@ struct NativeVMSudoPasswordButton: View {
         } catch {
             guard generation == requestGeneration, scope == scopeKey, isPresented else { return }
             self.error = error.localizedDescription
+            canContactSupport = (error as? NativeVMAccessError) == .sudoPasswordUnavailable
+            unavailableErrorScopeKey = canContactSupport ? scope : ""
         }
     }
 
@@ -373,6 +389,8 @@ struct NativeVMSudoPasswordButton: View {
         currentPassword = ""
         revealedPassword = nil
         error = ""
+        canContactSupport = false
+        unavailableErrorScopeKey = ""
         isLoading = false
         copied = false
     }
