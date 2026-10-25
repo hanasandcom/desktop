@@ -1,5 +1,21 @@
 import Foundation
 
+struct GalleryAlbumSessionIdentity: Equatable {
+    let cdnBaseURL: String
+    let userID: String
+    let authToken: String
+    let impersonatingUserID: String
+    let impersonationToken: String
+
+    init(settings: HanasandDesktopSettings) {
+        cdnBaseURL = settings.cdnBaseURL
+        userID = settings.userID
+        authToken = settings.authToken
+        impersonatingUserID = settings.impersonatingUserID
+        impersonationToken = settings.impersonationToken
+    }
+}
+
 struct GalleryAlbum: Decodable, Identifiable, Hashable {
     let id: String
     var name: String

@@ -16,6 +16,24 @@ final class GalleryLibraryTests: XCTestCase {
         return (Data(body.utf8), http)
     }
 
+    func testAlbumSessionIdentityUsesExactCDNAccountAndImpersonationValues() {
+        let baselineSettings = settings
+        let baseline = GalleryAlbumSessionIdentity(settings: baselineSettings)
+        let mutations: [(String, (inout HanasandDesktopSettings) -> Void)] = [
+            ("CDN endpoint", { $0.cdnBaseURL = "https://cdn-next.hanasand.test/api" }),
+            ("account", { $0.userID = "another-owner" }),
+            ("session token", { $0.authToken = "another-token" }),
+            ("impersonated account", { $0.impersonatingUserID = "target-owner" }),
+            ("impersonation token", { $0.impersonationToken = "target-token" })
+        ]
+
+        for (label, mutate) in mutations {
+            var changedSettings = baselineSettings
+            mutate(&changedSettings)
+            XCTAssertNotEqual(baseline, GalleryAlbumSessionIdentity(settings: changedSettings), label)
+        }
+    }
+
     func testAlbumListEmptyStateDoesNotHideRequestFailures() {
         XCTAssertTrue(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 0, isLoading: false, error: ""))
         XCTAssertFalse(GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: 0, isLoading: true, error: ""))

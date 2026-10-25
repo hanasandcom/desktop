@@ -33,16 +33,22 @@ struct GalleryLibraryNativePanel: View {
         !model.settings.impersonatingUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
         !model.settings.impersonationToken.isEmpty
     }
-    private var sessionFingerprint: String {
-        let value = model.settings
-        return "\(value.cdnBaseURL)|\(value.userID)|\(value.authToken.hashValue)|\(value.impersonatingUserID)|\(value.impersonationToken.hashValue)"
+    private var sessionIdentity: GalleryAlbumSessionIdentity {
+        GalleryAlbumSessionIdentity(settings: model.settings)
     }
     private var selectedAlbumID: String? {
         guard collection.hasPrefix("album:") else { return nil }
         return String(collection.dropFirst("album:".count))
     }
     private var favoritesOnly: Bool { collection == "favorites" }
-    private var queryKey: String { "\(search)|\(collection)|\(selectedAlbumID == nil ? "" : selectedMonth)|\(sessionFingerprint)" }
+    private var queryKey: GalleryLibraryQueryIdentity {
+        GalleryLibraryQueryIdentity(
+            search: search,
+            collection: collection,
+            month: selectedAlbumID == nil ? "" : selectedMonth,
+            session: sessionIdentity
+        )
+    }
     private var emptyTitle: String {
         if selectedAlbumID != nil { return "No photos in this album" }
         if favoritesOnly { return "No favorites yet" }
@@ -131,8 +137,8 @@ struct GalleryLibraryNativePanel: View {
                 }
             }
         }
-        .task(id: sessionFingerprint) { await loadAlbums() }
-        .onChange(of: sessionFingerprint) { _, _ in
+        .task(id: sessionIdentity) { await loadAlbums() }
+        .onChange(of: sessionIdentity) { _, _ in
             collection = "all"
             search = ""
             selectedMonth = ""
@@ -261,19 +267,19 @@ struct GalleryLibraryNativePanel: View {
 
     @MainActor private func loadAlbums() async {
         let settings = model.settings
-        let fingerprint = sessionFingerprint
+        let identity = sessionIdentity
         albums = []
         albumError = ""
         guard !impersonating, model.hasHanasandAuth else { return }
         do {
             let loaded = try await GalleryAlbumClient(settings: settings).listAlbums()
-            guard fingerprint == sessionFingerprint else { return }
+            guard identity == sessionIdentity else { return }
             albums = loaded
             if let requestedID = model.selectedNativeDashboardQuery["albumId"], !requestedID.isEmpty {
                 selectRequestedAlbum(requestedID, from: loaded)
             }
         } catch {
-            guard fingerprint == sessionFingerprint else { return }
+            guard identity == sessionIdentity else { return }
             albumError = error.localizedDescription
         }
     }
@@ -359,12 +365,12 @@ struct GalleryLibraryNativePanel: View {
         favoritePending[file.id] = mutation
         favoriteErrors[file.id] = nil
         let expected = !(file.isFavorite ?? false)
-        let currentSession = sessionFingerprint
+        let currentSession = sessionIdentity
         defer { if favoritePending[file.id] == mutation { favoritePending[file.id] = nil } }
         do {
             let client = try GalleryAlbumClient(settings: model.settings)
             _ = try await client.setFavorite(expected, for: file.id)
-            guard currentSession == sessionFingerprint else { return }
+            guard currentSession == sessionIdentity else { return }
             if favoritesOnly && !expected {
                 files.removeAll { $0.id == file.id }
             } else if let index = files.firstIndex(where: { $0.id == file.id }) {
@@ -375,7 +381,7 @@ struct GalleryLibraryNativePanel: View {
             }
             status = "Favorite saved"
         } catch {
-            guard currentSession == sessionFingerprint else { return }
+            guard currentSession == sessionIdentity else { return }
             if case GalleryAlbumClientError.unconfirmedMutation = error {
                 favoriteErrors[file.id] = "The favorite update was not confirmed. Refresh before retrying."
             } else {
@@ -465,7 +471,11 @@ private struct GalleryLibraryPreview: View {
         }
         .padding(18)
         .background(theme.background)
-        .task(id: "\(file.id)|\(settings.userID)|\(settings.authToken.hashValue)|\(attempt)") { await load() }
+        .task(id: GalleryLibraryPreviewIdentity(
+            fileID: file.id,
+            session: GalleryAlbumSessionIdentity(settings: settings),
+            attempt: attempt
+        )) { await load() }
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -493,4 +503,17 @@ private struct GalleryLibraryPreview: View {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
+}
+
+private struct GalleryLibraryQueryIdentity: Equatable {
+    let search: String
+    let collection: String
+    let month: String
+    let session: GalleryAlbumSessionIdentity
+}
+
+private struct GalleryLibraryPreviewIdentity: Equatable {
+    let fileID: String
+    let session: GalleryAlbumSessionIdentity
+    let attempt: Int
 }

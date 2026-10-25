@@ -53,7 +53,7 @@ struct GalleryAlbumsNativePanel: View {
             }
         }
         .task { await refreshAlbums() }
-        .onChange(of: sessionFingerprint) { _, _ in
+        .onChange(of: sessionIdentity) { _, _ in
             sessionRevision += 1
             albums = []; album = nil; library = []; selectedFiles.removeAll()
             selectedMonth = ""
@@ -493,9 +493,8 @@ struct GalleryAlbumsNativePanel: View {
         .accessibilityLabel("Filter album by capture month")
     }
 
-    private var sessionFingerprint: String {
-        let settings = model.settings
-        return "\(settings.userID)|\(settings.authToken.hashValue)|\(settings.cdnBaseURL)|\(settings.impersonatingUserID)|\(settings.impersonationToken.hashValue)"
+    private var sessionIdentity: GalleryAlbumSessionIdentity {
+        GalleryAlbumSessionIdentity(settings: model.settings)
     }
 
     private func withClient<T>(_ action: (GalleryAlbumClient) async throws -> T, success: String,
