@@ -61,7 +61,7 @@ final class PublicStatusTests: XCTestCase {
         let requests = await transport.requests()
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.url?.host, "status.hanasand.com")
-        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems, [])
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems, [URLQueryItem(name: "history", value: "true")])
         XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
     }
 
@@ -167,7 +167,7 @@ final class PublicStatusTests: XCTestCase {
         XCTAssertEqual(payload?.history.count, 1)
         let requests = await transport.requests()
         XCTAssertEqual(requests.count, 2)
-        XCTAssertEqual(URLComponents(url: try XCTUnwrap(requests[1].url), resolvingAgainstBaseURL: false)?.queryItems, [])
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(requests[1].url), resolvingAgainstBaseURL: false)?.queryItems, [URLQueryItem(name: "history", value: "true")])
     }
 
     func testEmptyPayloadAndRefreshErrorRemainDistinguishable() async throws {

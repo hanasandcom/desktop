@@ -26,10 +26,9 @@ struct PublicStatusClient {
     }
 
     func dashboard() async throws -> PublicStatusPayload {
-        // The dashboard projection intentionally compacts incidents for the
-        // website's status overview. Desktop also exposes incident history,
-        // so use the full public snapshot used by the website's history view.
-        try await fetch(query: [])
+        // The public status route defaults to the compact dashboard projection.
+        // Desktop also exposes the website's full incident/history view.
+        try await fetch(query: [URLQueryItem(name: "history", value: "true")])
     }
 
     func incident(id: String) async throws -> PublicStatusPayload {
