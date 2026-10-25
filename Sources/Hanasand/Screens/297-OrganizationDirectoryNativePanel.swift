@@ -95,6 +95,34 @@ enum DashboardOrganizationDirectorySortKey: String, CaseIterable, Identifiable {
     }
 }
 
+enum DashboardOrganizationDirectoryDateFormatting {
+    static func createdAt(_ value: String?) -> String {
+        format(value, dateFormat: "dd/MM/yyyy", fallback: "Unavailable")
+    }
+
+    static func lastActiveAt(_ value: String?) -> String {
+        format(value, dateFormat: "d MMM yyyy, HH:mm", fallback: "No recorded activity")
+    }
+
+    private static func format(_ value: String?, dateFormat: String, fallback: String) -> String {
+        guard let value,
+              let date = parseUTCDate(value) else { return fallback }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = dateFormat
+        return formatter.string(from: date)
+    }
+
+    private static func parseUTCDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+}
+
 struct OrganizationDirectoryNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
@@ -422,8 +450,8 @@ struct OrganizationDirectoryNativePanel: View {
                 .foregroundStyle(theme.textSecondary)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Created (UTC) · \(organization.createdAt.map(Self.formatUTCDate) ?? "Unavailable")")
-                Text("Last active (UTC) · \(organization.lastActiveAt.map(Self.formatUTCTimestamp) ?? "No recorded activity")")
+                Text("Created · \(DashboardOrganizationDirectoryDateFormatting.createdAt(organization.createdAt))")
+                Text("Last active (UTC) · \(DashboardOrganizationDirectoryDateFormatting.lastActiveAt(organization.lastActiveAt))")
             }
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(theme.textTertiary)
@@ -457,28 +485,4 @@ struct OrganizationDirectoryNativePanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private static func formatUTCDate(_ value: String) -> String {
-        formatUTC(value, dateStyle: .medium, timeStyle: .none)
-    }
-
-    private static func formatUTCTimestamp(_ value: String) -> String {
-        formatUTC(value, dateStyle: .medium, timeStyle: .short)
-    }
-
-    private static func formatUTC(_ value: String, dateStyle: DateFormatter.Style, timeStyle: DateFormatter.Style) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = formatter.date(from: value) ?? {
-            formatter.formatOptions = [.withInternetDateTime]
-            return formatter.date(from: value)
-        }()
-        guard let date else { return "Unavailable" }
-
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "en_GB")
-        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        dateFormatter.dateStyle = dateStyle
-        dateFormatter.timeStyle = timeStyle
-        return dateFormatter.string(from: date)
-    }
 }

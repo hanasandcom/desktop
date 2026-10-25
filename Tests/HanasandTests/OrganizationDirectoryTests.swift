@@ -49,6 +49,19 @@ final class OrganizationDirectoryTests: XCTestCase {
         XCTAssertEqual(ids(.lastActive, ascending: false), ["org-a", "org-z", "org-b"])
     }
 
+    func testDirectoryDatesMatchWebsiteUTCDisplay() {
+        XCTAssertEqual(
+            DashboardOrganizationDirectoryDateFormatting.createdAt("2026-10-22T14:00:00+02:00"),
+            "22/10/2026"
+        )
+        XCTAssertEqual(
+            DashboardOrganizationDirectoryDateFormatting.lastActiveAt("2026-10-22T14:00:00+02:00"),
+            "22 Oct 2026, 12:00"
+        )
+        XCTAssertEqual(DashboardOrganizationDirectoryDateFormatting.createdAt(nil), "Unavailable")
+        XCTAssertEqual(DashboardOrganizationDirectoryDateFormatting.lastActiveAt(nil), "No recorded activity")
+    }
+
     func testSwitchRequiresOwnAuthenticatedNonImpersonatedActiveMembership() {
         func allowed(
             organizationID: String = "org-one",
