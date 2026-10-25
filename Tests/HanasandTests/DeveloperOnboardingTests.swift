@@ -76,7 +76,9 @@ final class DeveloperOnboardingTests: XCTestCase {
 
         let curlExample = try XCTUnwrap(NativeDeveloperOnboardingContent.apiKeyCurlExample(details: details))
         XCTAssertTrue(curlExample.contains("https://api.example.test/api/v1/actors?page=1&limit=20"))
-        XCTAssertTrue(curlExample.contains("X-API-Key: $HANASAND_API_KEY"))
+        XCTAssertEqual(curlExample.components(separatedBy: "\n").last, "  -H 'X-API-Key: '\"$HANASAND_API_KEY\"")
+        XCTAssertTrue(curlExample.contains("$HANASAND_API_KEY"), "The shell variable is passed for expansion at runtime.")
+        XCTAssertFalse(curlExample.contains("actual-test-secret"), "The generated command must not contain a live key.")
         XCTAssertFalse(curlExample.contains("Authorization: Bearer"))
         XCTAssertFalse(curlExample.contains("YOUR_API_KEY"))
 

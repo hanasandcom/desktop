@@ -26,9 +26,10 @@ enum NativeDeveloperOnboardingContent {
     static func apiKeyCurlExample(details: DeveloperAPIReferenceDetails) -> String? {
         guard let url = apiKeyRequestURL(details: details) else { return nil }
         let query = details.supportsPageAndLimit ? "?page=1&limit=20" : ""
+        let headerPrefix = shellString("\(details.apiKeyHeader): ")
         return [
             "curl \(shellString(url.absoluteString + query)) \\",
-            "  -H \(shellString("\(details.apiKeyHeader): $HANASAND_API_KEY"))",
+            "  -H \(headerPrefix)\"$HANASAND_API_KEY\"",
         ].joined(separator: "\n")
     }
 
