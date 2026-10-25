@@ -70,33 +70,33 @@ struct NativePublicInfoPanel: View {
 
     private var standardContentBody: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
-                VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
-                    if page.kind == .home {
-                        ActionButton(title: "Start monitoring", icon: "arrow.right") { open("/organizations") }
+            if page.kind == .home {
+                homeHero
+            } else {
+                NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
+                    VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
+                        Text(page.title)
+                            .font(.system(size: heroTitleSize, weight: .semibold))
+                            .foregroundStyle(theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
+                            .textSelection(.enabled)
+                        Text(page.intro)
+                            .font(.system(size: 14))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
+                            .textSelection(.enabled)
+                        if page.kind == .scannerSolution || page.kind == .monitoringSolution {
+                            solutionActions
+                                .padding(.top, 4)
+                        }
                     }
-                    Text(page.title)
-                        .font(.system(size: heroTitleSize, weight: .semibold))
-                        .foregroundStyle(theme.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
-                        .textSelection(.enabled)
-                    Text(page.intro)
-                        .font(.system(size: 14))
-                        .foregroundStyle(theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(page.kind == .pricing ? .center : .leading)
-                        .textSelection(.enabled)
-                    if page.kind == .scannerSolution || page.kind == .monitoringSolution {
-                        solutionActions
-                            .padding(.top, 4)
-                    }
+                    .frame(maxWidth: page.kind == .pricing ? 760 : .infinity)
+                    .frame(maxWidth: .infinity, alignment: page.kind == .pricing ? .center : .leading)
+                    if page.kind == .faq { faqControls }
+                    if page.kind == .cookieSettings { cookieSettingsControls }
                 }
-                .frame(maxWidth: page.kind == .pricing ? 760 : .infinity)
-                .frame(maxWidth: .infinity, alignment: page.kind == .pricing ? .center : .leading)
-                if page.kind == .home { homeSearch }
-                if page.kind == .faq { faqControls }
-                if page.kind == .cookieSettings { cookieSettingsControls }
             }
 
             if page.kind == .home {
@@ -319,6 +319,67 @@ struct NativePublicInfoPanel: View {
                 searchButton
             }
         }
+    }
+
+    private var homeHero: some View {
+        ZStack(alignment: .leading) {
+            if let image = homeHeroImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 460)
+                    .clipped()
+            } else {
+                Rectangle().fill(Color.black)
+            }
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.82), location: 0),
+                    .init(color: .black.opacity(0.62), location: 0.48),
+                    .init(color: .black.opacity(0.12), location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            VStack(alignment: .leading, spacing: 22) {
+                ActionButton(title: "Start monitoring", icon: "arrow.right") { open("/organizations") }
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Know what’s exposed")
+                        Text("before it’s too late.")
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                        .font(.system(size: 42, weight: .medium))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    Text(page.intro)
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: 650, alignment: .leading)
+                homeSearch
+                    .frame(maxWidth: 620, alignment: .leading)
+            }
+            .padding(.horizontal, 30)
+            .padding(.vertical, 48)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 460)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(theme.divider.opacity(0.8), lineWidth: 1)
+        )
+    }
+
+    private var homeHeroImage: NSImage? {
+        guard let url = Bundle.module.url(forResource: "lantern-hero", withExtension: "webp") else { return nil }
+        return NSImage(contentsOf: url)
     }
 
     private var homeContent: some View {
@@ -558,12 +619,9 @@ struct NativePublicInfoPanel: View {
 
     private var pricingContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 250), alignment: .top), count: 4), alignment: .leading, spacing: 12) {
-                    pricingPlanCards
-                }
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 250), alignment: .top), count: 2), alignment: .leading, spacing: 10) {
-                    pricingPlanCards
+            NativePricingCardsLayout {
+                ForEach(NativePublicInfoPage.plans) { plan in
+                    pricingPlanCard(plan)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -581,18 +639,16 @@ struct NativePublicInfoPanel: View {
         }
     }
 
-    private var pricingPlanCards: some View {
-        ForEach(NativePublicInfoPage.plans) { plan in
-            NativeGroupPanel(title: plan.name, subtitle: plan.quota, fillsAvailableWidth: true) {
-                Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-                Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
-                ForEach(plan.features, id: \.self) { feature in
-                    Label(feature, systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
-                }
-                ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
-                    open("/subscription")
-                }
+    private func pricingPlanCard(_ plan: NativePublicInfoPlan) -> some View {
+        NativeGroupPanel(title: plan.name, subtitle: plan.quota, fillsAvailableWidth: true) {
+            Text(plan.summary).font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            Text("\(plan.priceNok) NOK / month").font(.system(size: 16, weight: .semibold)).foregroundStyle(theme.accent)
+            ForEach(plan.features, id: \.self) { feature in
+                Label(feature, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+            }
+            ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
+                open("/subscription")
             }
         }
     }
@@ -864,6 +920,49 @@ struct NativePublicInfoPanel: View {
             NSWorkspace.shared.open(url)
         } else {
             onNavigate(route)
+        }
+    }
+}
+
+private struct NativePricingCardsLayout: Layout {
+    var spacing: CGFloat = 12
+    var fourColumnBreakpoint: CGFloat = 1100
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? fourColumnBreakpoint
+        let columns = width >= fourColumnBreakpoint ? 4 : 2
+        let cardWidth = max(0, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let rowHeights = rowHeights(for: subviews, cardWidth: cardWidth, columns: columns)
+        let height = rowHeights.reduce(0, +) + spacing * CGFloat(max(0, rowHeights.count - 1))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let columns = bounds.width >= fourColumnBreakpoint ? 4 : 2
+        let cardWidth = max(0, (bounds.width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let rowHeights = rowHeights(for: subviews, cardWidth: cardWidth, columns: columns)
+        var rowY = bounds.minY
+
+        for row in rowHeights.indices {
+            let rowStart = row * columns
+            let rowEnd = min(rowStart + columns, subviews.count)
+            for index in rowStart..<rowEnd {
+                let column = index - rowStart
+                subviews[index].place(
+                    at: CGPoint(x: bounds.minX + CGFloat(column) * (cardWidth + spacing), y: rowY),
+                    proposal: ProposedViewSize(width: cardWidth, height: rowHeights[row])
+                )
+            }
+            rowY += rowHeights[row] + spacing
+        }
+    }
+
+    private func rowHeights(for subviews: Subviews, cardWidth: CGFloat, columns: Int) -> [CGFloat] {
+        stride(from: 0, to: subviews.count, by: columns).map { start in
+            let end = min(start + columns, subviews.count)
+            return (start..<end).map { index in
+                subviews[index].sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)).height
+            }.max() ?? 0
         }
     }
 }
