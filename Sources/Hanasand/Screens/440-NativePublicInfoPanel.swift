@@ -35,6 +35,25 @@ struct NativePublicInfoPanel: View {
     }
 
     var body: some View {
+        Group {
+            if page.kind == .about {
+                aboutContent
+            } else {
+                standardContent
+            }
+        }
+        .task(id: page.kind) {
+            if page.kind == .cookieSettings { refreshCookieSettings() }
+        }
+        .confirmationDialog("Clear local IDE drafts?", isPresented: $confirmClearLocalDrafts, titleVisibility: .visible) {
+            Button("Clear IDE drafts", role: .destructive) { clearLocalDrafts() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes only allowlisted local IDE drafts from this Mac. Notes drafts, Keychain credentials, settings, appearance, identity, and workspace session preferences are kept.")
+        }
+    }
+
+    private var standardContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: page.eyebrow, subtitle: "") {
                 Text(page.title)
@@ -117,14 +136,107 @@ struct NativePublicInfoPanel: View {
                 }
             }
         }
-        .task(id: page.kind) {
-            if page.kind == .cookieSettings { refreshCookieSettings() }
+    }
+
+    private var aboutContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 14) {
+                    aboutCompanyPanel
+                    aboutFocusPanel
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    aboutCompanyPanel
+                    aboutFocusPanel
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) { aboutPrinciplePanels }
+                VStack(alignment: .leading, spacing: 14) { aboutPrinciplePanels }
+            }
         }
-        .confirmationDialog("Clear local IDE drafts?", isPresented: $confirmClearLocalDrafts, titleVisibility: .visible) {
-            Button("Clear IDE drafts", role: .destructive) { clearLocalDrafts() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This permanently removes only allowlisted local IDE drafts from this Mac. Notes drafts, Keychain credentials, settings, appearance, identity, and workspace session preferences are kept.")
+    }
+
+    private var aboutCompanyPanel: some View {
+        NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
+            Text(page.title)
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            Text(page.intro)
+                .font(.system(size: 14))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { aboutLinks }
+                VStack(alignment: .leading, spacing: 8) { aboutLinks }
+            }
+        }
+    }
+
+    private var aboutFocusPanel: some View {
+        let focus = page.sections.first
+        return NativeGroupPanel(title: focus?.title ?? "Current product focus", subtitle: "", fillsAvailableWidth: true) {
+            if let focus {
+                ForEach(focus.paragraphs, id: \.self) { paragraph in
+                    Text(paragraph)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(focus.bullets, id: \.self) { bullet in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.green)
+                            .padding(.top, 2)
+                        Text(bullet)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var aboutLinks: some View {
+        ForEach(page.links) { link in
+            Button { open(link.route) } label: {
+                HStack(spacing: 7) {
+                    Text(link.title).font(.system(size: 12, weight: .semibold))
+                    if link.route == "/ti" { Image(systemName: "arrow.right").font(.system(size: 10, weight: .bold)) }
+                }
+                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                .padding(.horizontal, 12)
+                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the native \(link.title) page")
+        }
+    }
+
+    @ViewBuilder private var aboutPrinciplePanels: some View {
+        ForEach(Array(page.sections.dropFirst())) { section in
+            NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: true) {
+                let symbol = section.title.hasPrefix("Direct") ? "dot.radiowaves.left.and.right"
+                    : section.title.hasPrefix("Clean") ? "point.3.connected.trianglepath.dotted"
+                    : "checkmark.shield"
+                Image(systemName: symbol)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+                ForEach(section.paragraphs, id: \.self) { paragraph in
+                    Text(paragraph)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
         }
     }
 
