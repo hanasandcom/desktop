@@ -53,7 +53,15 @@ struct NativePublicInfoPanel: View {
         }
     }
 
-    private var standardContent: some View {
+    @ViewBuilder private var standardContent: some View {
+        if page.kind == .contact {
+            contactContent
+        } else {
+            standardContentBody
+        }
+    }
+
+    private var standardContentBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: page.eyebrow, subtitle: "") {
                 Text(page.title)
@@ -67,7 +75,6 @@ struct NativePublicInfoPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                 if page.kind == .home { homeSearch }
-                if page.kind == .contact { contactForm }
                 if page.kind == .faq { faqControls }
                 if page.kind == .cookieSettings { cookieSettingsControls }
             }
@@ -135,6 +142,51 @@ struct NativePublicInfoPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    private var contactContent: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 18) {
+                contactIntroduction
+                    .frame(minWidth: 210, maxWidth: 330, alignment: .topLeading)
+                contactFormPanel
+                    .frame(minWidth: 360, maxWidth: .infinity, alignment: .topLeading)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                contactIntroduction
+                contactFormPanel
+            }
+        }
+        .frame(maxWidth: 1100, alignment: .leading)
+    }
+
+    private var contactIntroduction: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(page.title)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(page.intro)
+                .font(.system(size: 14))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let emailLink = page.links.first(where: { $0.route.hasPrefix("mailto:") }) {
+                Button { open(emailLink.route) } label: {
+                    Label(emailLink.title.replacingOccurrences(of: "Email ", with: ""), systemImage: "envelope")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var contactFormPanel: some View {
+        NativeGroupPanel(title: page.eyebrow, subtitle: "") {
+            contactForm
         }
     }
 
@@ -488,8 +540,6 @@ struct NativePublicInfoPanel: View {
                 Task { await submitContactRequest() }
             }
             .disabled(isSubmitting || !contactFormIsValid)
-            Text("Or email contact@hanasand.com")
-                .font(.system(size: 11)).foregroundStyle(theme.textTertiary)
         }
     }
 
