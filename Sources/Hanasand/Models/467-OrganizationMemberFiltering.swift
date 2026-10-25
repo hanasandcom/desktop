@@ -50,7 +50,7 @@ struct OrganizationMemberFiltering: Equatable {
         }
     }
 
-    func matching(_ invites: [DashboardOrganizationInvite]) -> [DashboardOrganizationInvite] {
+    func matchingInvites(_ invites: [DashboardOrganizationInvite]) -> [DashboardOrganizationInvite] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return invites }
         return invites.filter {

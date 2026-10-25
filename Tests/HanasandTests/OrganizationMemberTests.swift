@@ -35,10 +35,10 @@ final class OrganizationMemberTests: XCTestCase {
 
     func testInviteFilterFindsInvitationByIDWithoutLosingEmailRoleOrStatusSearch() throws {
         let invites = try decodeInvites()
-        XCTAssertEqual(OrganizationMemberFiltering(searchText: "invite-opaque-7").matching(invites).map(\.id), ["invite-opaque-7"])
-        XCTAssertEqual(OrganizationMemberFiltering(searchText: "PERSON@EXAMPLE.COM").matching(invites).map(\.id), ["invite-opaque-7"])
-        XCTAssertEqual(OrganizationMemberFiltering(searchText: "reader").matching(invites).map(\.id), ["invite-opaque-7"])
-        XCTAssertEqual(OrganizationMemberFiltering(searchText: "pending").matching(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "invite-opaque-7").matchingInvites(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "PERSON@EXAMPLE.COM").matchingInvites(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "reader").matchingInvites(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "pending").matchingInvites(invites).map(\.id), ["invite-opaque-7"])
     }
 
     func testOrganizationMemberRouteFocusResolvesExactTargetsAndWebsiteFallbackOrder() throws {

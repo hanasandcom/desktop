@@ -47,7 +47,7 @@ struct OrganizationMembersNativePanel: View {
     }
 
     private var filteredInvites: [DashboardOrganizationInvite] {
-        memberFilters.matching(model.organizationInvites)
+        memberFilters.matchingInvites(model.organizationInvites)
     }
 
     var body: some View {
