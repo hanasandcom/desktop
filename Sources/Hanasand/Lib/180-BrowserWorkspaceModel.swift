@@ -268,11 +268,21 @@ final class BrowserWorkspaceModel: ObservableObject {
         let queryItems = urlComponents?.queryItems ?? []
         func queryValue(_ key: String) -> String? { queryItems.first(where: { $0.name == key })?.value }
         var routeQuery = Dictionary(queryItems.compactMap { item in item.value.map { (item.name, $0) } }, uniquingKeysWith: { first, _ in first })
+        let accountFragmentAllowedKeys: Set<String>
         let accountFragmentSecretKey: String?
         switch path {
-        case "/reset-password", "/reset-password-again", "/secure-account": accountFragmentSecretKey = "token"
-        case "/account-pending-deletion": accountFragmentSecretKey = "restoreToken"
-        default: accountFragmentSecretKey = nil
+        case "/reset-password":
+            accountFragmentAllowedKeys = ["id", "token"]
+            accountFragmentSecretKey = "token"
+        case "/reset-password-again", "/secure-account":
+            accountFragmentAllowedKeys = ["token"]
+            accountFragmentSecretKey = "token"
+        case "/account-pending-deletion":
+            accountFragmentAllowedKeys = ["restoreToken"]
+            accountFragmentSecretKey = "restoreToken"
+        default:
+            accountFragmentAllowedKeys = []
+            accountFragmentSecretKey = nil
         }
         if let accountFragmentSecretKey { routeQuery.removeValue(forKey: accountFragmentSecretKey) }
         if websiteBrowserReportAlias {
@@ -293,7 +303,7 @@ final class BrowserWorkspaceModel: ObservableObject {
         if !websiteBrowserReportAlias, let fragment = urlComponents?.fragment, !fragment.isEmpty,
            let fragmentComponents = URLComponents(string: "https://fragment.invalid/?\(fragment)") {
             for item in fragmentComponents.queryItems ?? []
-            where routeQuery[item.name] == nil && item.name == accountFragmentSecretKey {
+            where routeQuery[item.name] == nil && accountFragmentAllowedKeys.contains(item.name) {
                 if let value = item.value { routeQuery[item.name] = value }
             }
         }

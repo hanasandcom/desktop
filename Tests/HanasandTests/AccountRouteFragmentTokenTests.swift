@@ -3,7 +3,7 @@ import XCTest
 
 final class AccountRouteFragmentTokenTests: XCTestCase {
     func testWebsitePasswordResetFragmentTokenIsPassedAsNativeRouteSecretAndCanBeScrubbed() {
-        let url = "https://hanasand.com/reset-password?id=member-24#token=reset%2Bsecret"
+        let url = "https://hanasand.com/reset-password#id=member-24&token=reset%2Bsecret"
         guard let route = BrowserWorkspaceModel.nativeRoute(for: url) else {
             XCTFail("Expected native reset route")
             return
@@ -12,7 +12,9 @@ final class AccountRouteFragmentTokenTests: XCTestCase {
         XCTAssertEqual(route.path, "/reset-password")
         XCTAssertEqual(route.query["id"], "member-24")
         XCTAssertEqual(route.query["token"], "reset+secret")
-        XCTAssertFalse(URLComponents(string: url)?.queryItems?.contains(where: { $0.name == "token" }) ?? false)
+        let queryNames = URLComponents(string: url)?.queryItems?.map(\.name) ?? []
+        XCTAssertFalse(queryNames.contains("id"))
+        XCTAssertFalse(queryNames.contains("token"))
 
         let capture = NativeAccountRouteSecretCapture.capture(from: route.query, removing: ["token"])
         XCTAssertEqual(capture.values["token"], "reset+secret")
