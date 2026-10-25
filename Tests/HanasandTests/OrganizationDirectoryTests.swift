@@ -11,12 +11,42 @@ final class OrganizationDirectoryTests: XCTestCase {
 
         XCTAssertEqual(organization.id, "org-one")
         XCTAssertEqual(organization.memberCount, 7)
+        XCTAssertEqual(organization.createdAt, "2026-10-22T12:00:00Z")
         XCTAssertEqual(organization.lastActiveAt, nil)
         XCTAssertEqual(membership.status, "active")
         XCTAssertEqual(membership.role, "reader")
 
         let stringCountData = #"{"organizations":[{"id":"org-two","name":"Second Org","slug":"second-org","status":"active","member_count":"12"}]}"#.data(using: .utf8)!
         XCTAssertEqual(try JSONDecoder().decode(DashboardDirectoryOrganizationsEnvelope.self, from: stringCountData).organizations[0].memberCount, 12)
+    }
+
+    func testDirectorySortingMatchesWebsiteColumnsAndUsesUTCInstants() {
+        let organizations = [
+            DashboardDirectoryOrganization(
+                id: "org-z", name: "Team 10", slug: "team-z", status: "suspended", memberCount: 7,
+                createdAt: "2026-10-22T14:00:00+02:00", lastActiveAt: "2026-10-22T12:00:00Z"
+            ),
+            DashboardDirectoryOrganization(
+                id: "org-b", name: "Team 2", slug: "team-b", status: "active", memberCount: 3,
+                createdAt: "2026-10-22T11:00:00Z", lastActiveAt: nil
+            ),
+            DashboardDirectoryOrganization(
+                id: "org-a", name: "Team 2", slug: "team-a", status: "archived", memberCount: 1,
+                createdAt: "2026-10-22T10:00:00Z", lastActiveAt: "2026-10-22T15:30:00Z"
+            ),
+        ]
+
+        func ids(_ key: DashboardOrganizationDirectorySortKey, ascending: Bool = true) -> [String] {
+            DashboardOrganizationDirectorySortKey.sorted(organizations, by: key, ascending: ascending).map(\.id)
+        }
+
+        XCTAssertEqual(ids(.name), ["org-a", "org-b", "org-z"])
+        XCTAssertEqual(ids(.slug), ["org-a", "org-b", "org-z"])
+        XCTAssertEqual(ids(.status), ["org-b", "org-a", "org-z"])
+        XCTAssertEqual(ids(.members), ["org-a", "org-b", "org-z"])
+        XCTAssertEqual(ids(.created), ["org-a", "org-b", "org-z"])
+        XCTAssertEqual(ids(.lastActive), ["org-b", "org-z", "org-a"])
+        XCTAssertEqual(ids(.lastActive, ascending: false), ["org-a", "org-z", "org-b"])
     }
 
     func testSwitchRequiresOwnAuthenticatedNonImpersonatedActiveMembership() {

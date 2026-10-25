@@ -10,10 +10,97 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum DashboardOrganizationDirectorySortKey: String, CaseIterable, Identifiable {
+    case name
+    case slug
+    case status
+    case members
+    case created
+    case lastActive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: "Organization"
+        case .slug: "Slug"
+        case .status: "Status"
+        case .members: "Members"
+        case .created: "Created"
+        case .lastActive: "Last active (UTC)"
+        }
+    }
+
+    static func sorted(
+        _ organizations: [DashboardDirectoryOrganization],
+        by key: Self,
+        ascending: Bool
+    ) -> [DashboardDirectoryOrganization] {
+        let dates = Dictionary(uniqueKeysWithValues: organizations.map { organization in
+            (organization.id, (created: parseUTCDate(organization.createdAt), lastActive: parseUTCDate(organization.lastActiveAt)))
+        })
+
+        return organizations.sorted { lhs, rhs in
+            let comparison: ComparisonResult
+            switch key {
+            case .name:
+                comparison = lhs.name.localizedStandardCompare(rhs.name)
+            case .slug:
+                comparison = lhs.slug.localizedStandardCompare(rhs.slug)
+            case .status:
+                comparison = lhs.status.localizedStandardCompare(rhs.status)
+            case .members:
+                comparison = compare(lhs.memberCount ?? Int.min, rhs.memberCount ?? Int.min)
+            case .created:
+                comparison = compare(dates[lhs.id]?.created, dates[rhs.id]?.created)
+            case .lastActive:
+                comparison = compare(dates[lhs.id]?.lastActive, dates[rhs.id]?.lastActive)
+            }
+
+            if comparison != .orderedSame {
+                return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+            }
+
+            let nameComparison = lhs.name.localizedStandardCompare(rhs.name)
+            if nameComparison != .orderedSame { return nameComparison == .orderedAscending }
+            return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+        }
+    }
+
+    private static func compare<T: Comparable>(_ lhs: T?, _ rhs: T?) -> ComparisonResult {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            if lhs < rhs { return .orderedAscending }
+            if lhs > rhs { return .orderedDescending }
+            return .orderedSame
+        case (nil, .some): return .orderedAscending
+        case (.some, nil): return .orderedDescending
+        case (nil, nil): return .orderedSame
+        }
+    }
+
+    private static func compare(_ lhs: Int, _ rhs: Int) -> ComparisonResult {
+        if lhs < rhs { return .orderedAscending }
+        if lhs > rhs { return .orderedDescending }
+        return .orderedSame
+    }
+
+    private static func parseUTCDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+}
+
 struct OrganizationDirectoryNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
     @Environment(\.desktopTheme) var theme
     @State private var searchText = ""
+    @State private var sortKey: DashboardOrganizationDirectorySortKey = .name
+    @State private var sortAscending = true
     @State private var createName = ""
     @State private var createFirstWatchlistKind = OrganizationWatchlistKind.domain
     @State private var createFirstWatchlistValue = ""
@@ -40,12 +127,12 @@ struct OrganizationDirectoryNativePanel: View {
 
     private var filteredOrganizations: [DashboardDirectoryOrganization] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.organizationDirectory }
-        return model.organizationDirectory.filter {
+        let matchingOrganizations = query.isEmpty ? model.organizationDirectory : model.organizationDirectory.filter {
             $0.name.localizedCaseInsensitiveContains(query)
                 || $0.slug.localizedCaseInsensitiveContains(query)
                 || $0.status.localizedCaseInsensitiveContains(query)
         }
+        return DashboardOrganizationDirectorySortKey.sorted(matchingOrganizations, by: sortKey, ascending: sortAscending)
     }
 
     var body: some View {
@@ -109,6 +196,32 @@ struct OrganizationDirectoryNativePanel: View {
             }
 
             SearchFieldRow(placeholder: "Search organizations by name, slug, or status", text: $searchText)
+
+            HStack(spacing: 10) {
+                Text("\(filteredOrganizations.count) of \(model.organizationDirectory.count) organizations")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .accessibilityAddTraits(.updatesFrequently)
+                Spacer(minLength: 8)
+                Picker("Sort organizations", selection: $sortKey) {
+                    ForEach(DashboardOrganizationDirectorySortKey.allCases) { key in
+                        Text(key.title).tag(key)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .accessibilityLabel("Sort organizations")
+
+                Button {
+                    sortAscending.toggle()
+                } label: {
+                    Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(sortAscending ? "Sort ascending" : "Sort descending")
+                .help(sortAscending ? "Sort ascending" : "Sort descending")
+            }
 
             if model.hasHanasandAuth {
                 NativeGroupPanel(title: "Create an organization", subtitle: "Create a workspace and optionally prepare its first shared term and team invitations") {
@@ -308,6 +421,15 @@ struct OrganizationDirectoryNativePanel: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.textSecondary)
 
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Created (UTC) · \(organization.createdAt.map(Self.formatUTCDate) ?? "Unavailable")")
+                Text("Last active (UTC) · \(organization.lastActiveAt.map(Self.formatUTCTimestamp) ?? "No recorded activity")")
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(theme.textTertiary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+
             if current {
                 Label("Current workspace", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -333,5 +455,30 @@ struct OrganizationDirectoryNativePanel: View {
         .background(theme.card)
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(theme.divider, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private static func formatUTCDate(_ value: String) -> String {
+        formatUTC(value, dateStyle: .medium, timeStyle: .none)
+    }
+
+    private static func formatUTCTimestamp(_ value: String) -> String {
+        formatUTC(value, dateStyle: .medium, timeStyle: .short)
+    }
+
+    private static func formatUTC(_ value: String, dateStyle: DateFormatter.Style, timeStyle: DateFormatter.Style) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = formatter.date(from: value) ?? {
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: value)
+        }()
+        guard let date else { return "Unavailable" }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_GB")
+        dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        dateFormatter.dateStyle = dateStyle
+        dateFormatter.timeStyle = timeStyle
+        return dateFormatter.string(from: date)
     }
 }
