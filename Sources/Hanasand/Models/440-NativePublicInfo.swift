@@ -92,16 +92,17 @@ struct NativePublicInfoPage: Identifiable, Hashable {
             .init(title: "A few useful answers", paragraphs: ["Exposure mentions are signals to review. They do not, by themselves, prove a breach."])
         ],
         links: [
-            .init(title: "Start monitoring", route: "/organizations", detail: "Companies, vendors, and domains"),
+            .init(title: "Monitor companies", route: "/organizations", detail: "Companies, vendors, domains"),
             .init(title: "Review alerts", route: "/findings", detail: "Exposure mentions and next steps"),
             .init(title: "Search intelligence", route: "/ti", detail: "Groups, sources, and activity"),
-            .init(title: "Route notifications", route: "/automation/health", detail: "Email, webhooks, and API"),
-            .init(title: "Open activity", route: "/activity"),
-            .init(title: "Pricing", route: "/pricing"),
-            .init(title: "About Hanasand", route: "/about"),
-            .init(title: "Contact", route: "/contact")
+            .init(title: "Route notifications", route: "/automation?setup=dwm", detail: "Email, webhooks, and API")
         ]
     )
+
+    static let homeSolutions: [NativePublicInfoLink] = [
+        .init(title: "Monitoring", route: "/ti"),
+        .init(title: "Shared reports", route: "/contact"),
+    ]
 
     static let about = NativePublicInfoPage(
         route: "/about",

@@ -2,6 +2,15 @@ import XCTest
 @testable import Hanasand
 
 final class NativePublicInfoPageParityTests: XCTestCase {
+    func testHomeActionsAndSolutionsMatchWebsiteDestinations() throws {
+        let home = try XCTUnwrap(NativePublicInfoPage.resolve("/"))
+        XCTAssertEqual(home.links.map(\.route), [
+            "/organizations", "/findings", "/ti", "/automation?setup=dwm",
+        ])
+        XCTAssertEqual(NativePublicInfoPage.homeSolutions.map(\.route), ["/ti", "/contact"])
+        XCTAssertEqual(NativePublicInfoPage.faqItems.prefix(10).count, 10)
+    }
+
     func testSolutionCallsToActionMatchWebsiteDestinations() throws {
         let scanner = try XCTUnwrap(NativePublicInfoPage.resolve("/solutions/scanner"))
         XCTAssertEqual(scanner.links.map(\.route), ["/scanner"])

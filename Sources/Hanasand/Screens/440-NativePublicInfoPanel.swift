@@ -36,6 +36,7 @@ struct NativePublicInfoPanel: View {
 
     private var heroTitleSize: CGFloat {
         switch page.kind {
+        case .home: 42
         case .pricing: 28
         case .scannerSolution, .monitoringSolution: 34
         default: 24
@@ -73,6 +74,9 @@ struct NativePublicInfoPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true) {
                 VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
+                    if page.kind == .home {
+                        ActionButton(title: "Start monitoring", icon: "arrow.right") { open("/organizations") }
+                    }
                     Text(page.title)
                         .font(.system(size: heroTitleSize, weight: .semibold))
                         .foregroundStyle(theme.text)
@@ -97,7 +101,10 @@ struct NativePublicInfoPanel: View {
                 if page.kind == .cookieSettings { cookieSettingsControls }
             }
 
-            if page.kind == .faq {
+            if page.kind == .home {
+                PublicExposureActivityNativePanel()
+                homeContent
+            } else if page.kind == .faq {
                 faqContent
             } else if page.kind == .reservedUsernames {
                 reservedUsernameContent
@@ -136,11 +143,7 @@ struct NativePublicInfoPanel: View {
                 }
             }
 
-            if page.kind == .home {
-                PublicExposureActivityNativePanel()
-            }
-
-            if !page.links.isEmpty && page.kind != .scannerSolution && page.kind != .monitoringSolution {
+            if !page.links.isEmpty && page.kind != .home && page.kind != .scannerSolution && page.kind != .monitoringSolution {
                 NativeGroupPanel(title: page.kind == .home ? "Explore Hanasand" : "Related", subtitle: "") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), alignment: .leading)], alignment: .leading, spacing: 8) {
                         ForEach(page.links) { link in
@@ -317,6 +320,170 @@ struct NativePublicInfoPanel: View {
                 searchField
                 searchButton
             }
+        }
+    }
+
+    private var homeContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            homeConsoleSection
+            homeFAQSection
+            homeSolutionsSection
+        }
+    }
+
+    private var homeConsoleSection: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                homeConsoleIntro.frame(minWidth: 240, maxWidth: .infinity, alignment: .topLeading)
+                homeConsoleActions.frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                homeConsoleIntro
+                homeConsoleActions
+            }
+        }
+    }
+
+    private var homeConsoleIntro: some View {
+        NativeGroupPanel(title: "Console", subtitle: "") {
+            Text("Get started.")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { open("/dashboard") } label: {
+                Label("Go to dashboard", systemImage: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var homeConsoleActions: some View {
+        NativeGroupPanel(title: "Console actions", subtitle: "") {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 4) {
+                ForEach(page.links) { link in
+                    homeActionButton(link)
+                }
+            }
+        }
+    }
+
+    private func homeActionButton(_ link: NativePublicInfoLink) -> some View {
+        Button { open(link.route) } label: {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(link.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                    Text(link.detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+            }
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .padding(.horizontal, 8)
+            .overlay(alignment: .bottom) { Rectangle().fill(theme.divider).frame(height: 1) }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var homeFAQSection: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("FAQ").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
+                    Text("A few useful answers.")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(minWidth: 240, maxWidth: .infinity, alignment: .topLeading)
+                homeFAQList.frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("A few useful answers.")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                homeFAQList
+            }
+        }
+    }
+
+    private var homeFAQList: some View {
+        NativeGroupPanel(title: "Frequently asked questions", subtitle: "") {
+            ForEach(Array(NativePublicInfoPage.faqItems.prefix(3))) { item in
+                DisclosureGroup {
+                    Text(item.answer)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                } label: {
+                    Text(item.question)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                }
+                .padding(.vertical, 6)
+                if item.id != NativePublicInfoPage.faqItems.prefix(3).last?.id {
+                    Divider().overlay(theme.divider)
+                }
+            }
+            DisclosureGroup("More questions") {
+                ForEach(Array(NativePublicInfoPage.faqItems.dropFirst(3).prefix(7))) { item in
+                    DisclosureGroup(item.question) {
+                        Text(item.answer)
+                            .font(.system(size: 12))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 5)
+                }
+                Button { open("/faq") } label: {
+                    Label("Read all FAQs", systemImage: "arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+            }
+            .font(.system(size: 12, weight: .semibold))
+        }
+    }
+
+    private var homeSolutionsSection: some View {
+        NativeGroupPanel(title: "Solutions", subtitle: "Tools for the next step") {
+            Text("Tools for the next step.")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(theme.text)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                ForEach(NativePublicInfoPage.homeSolutions) { link in
+                    Button { open(link.route) } label: {
+                        HStack {
+                            Text(link.title).font(.system(size: 13, weight: .medium)).foregroundStyle(theme.text)
+                            Spacer(minLength: 8)
+                            Image(systemName: "arrow.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                        .padding(.horizontal, 4)
+                        .overlay(alignment: .bottom) { Rectangle().fill(theme.divider).frame(height: 1) }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Button { open("/dashboard") } label: {
+                Label("Go to dashboard", systemImage: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+            }
+            .buttonStyle(.plain)
         }
     }
 
