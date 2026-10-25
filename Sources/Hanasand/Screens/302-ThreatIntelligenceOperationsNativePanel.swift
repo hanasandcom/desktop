@@ -360,12 +360,35 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     private var collectionRunContent: some View {
         NativeGroupPanel(title: "Collection runs", subtitle: "\(collectionRuns?.total ?? 0) recorded runs · page \(page)") {
             if let collectionRuns, !collectionRuns.collectionRuns.isEmpty {
+                let summary = collectionRuns.summary
+                Text("Active \(summary.active) · Completed \(summary.completed) · Failed \(summary.failed) · Captures \(summary.captures)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(collectionRuns.collectionRuns) { run in
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(run.sourceId ?? "Global source fleet").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text).textSelection(.enabled)
-                            Text("\(run.status ?? "status not reported") · started \(date(run.startedAt ?? "")) · \(run.captureCount ?? run.rows ?? run.rowCount ?? 0) captures/items")
+                            let family = run.sourceFamily ?? collectionRuns.sourceFamily(for: run, sources: operationalSources?.rows ?? [])
+                            let runDetails = [family, run.trigger, run.status]
+                                .compactMap { $0 }
+                                .filter { !$0.isEmpty } + ["Started \(date(run.startedAt ?? ""))"]
+                            Text(collectionRuns.sourceName(for: run, sources: operationalSources?.rows ?? []))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(theme.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                            Text(runDetails.joined(separator: " · "))
                                 .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            Text("\(run.captureTotal) captures · \(run.screenshots ?? 0) screenshots · \(run.rowTotal) rows")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            if let finishedAt = run.finishedAt, !finishedAt.isEmpty {
+                                Text("Finished \(date(finishedAt))")
+                                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let nextRunAt = run.nextRunAt, !nextRunAt.isEmpty {
+                                Text("Next run \(date(nextRunAt))")
+                                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            }
                             if let message = run.message ?? run.error, !message.isEmpty { Text(message).font(.system(size: 10)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true) }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
                         if run.id != collectionRuns.collectionRuns.last?.id { Divider() }
@@ -907,9 +930,12 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                     sources = snapshot
                     message = "Loaded \(snapshot.sources.count) public sources on page \(snapshot.page) of \(snapshot.total) matching."
                 case .runs:
+                    async let sourceLookup = try? client.loadOperationalSources(query: "", page: 1)
                     let snapshot = try await client.loadCollectionRuns(query: submittedQuery, page: page)
+                    let sourceSnapshot = await sourceLookup
                     guard stillCurrent(current, settings: requestedSettings) else { return }
                     collectionRuns = snapshot
+                    operationalSources = sourceSnapshot
                     message = "Loaded \(snapshot.collectionRuns.count) collection runs on page \(page) of \(snapshot.total) matching. This view is read-only."
                 case .captures:
                     let snapshot = try await client.loadCaptures(query: submittedQuery, page: page)

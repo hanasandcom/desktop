@@ -204,19 +204,121 @@ struct ThreatIntelligenceCollectionRunPage: Decodable, Equatable {
     struct Run: Decodable, Equatable, Identifiable {
         let id: String
         let sourceId: String?
+        let sourceIds: [String]?
+        let sourceName: String?
+        let sourceFamily: String?
         let status: String?
         let startedAt: String?
         let finishedAt: String?
+        let nextRunAt: String?
         let rows: Int?
         let rowCount: Int?
+        let captures: Int?
         let captureCount: Int?
+        let screenshots: Int?
+        let trigger: String?
         let message: String?
         let error: String?
+
+        private struct Metadata: Decodable {
+            let trigger: String?
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case id, sourceId, sourceIds, sourceName, sourceFamily, status, startedAt, createdAt
+            case finishedAt, completedAt, updatedAt, nextRunAt, rows, rowCount, processedCount, itemCount
+            case captures, captureCount, screenshots, screenshotCount, trigger, metadata, message, error
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(String.self, forKey: .id)
+            sourceIds = try values.decodeIfPresent([String].self, forKey: .sourceIds)
+            let primarySourceId = try values.decodeIfPresent(String.self, forKey: .sourceId)
+            sourceId = (primarySourceId?.isEmpty == false ? primarySourceId : nil)
+                ?? sourceIds?.first(where: { !$0.isEmpty })
+            sourceName = try values.decodeIfPresent(String.self, forKey: .sourceName)
+            sourceFamily = try values.decodeIfPresent(String.self, forKey: .sourceFamily)
+            status = Self.normalizedStatus(try values.decodeIfPresent(String.self, forKey: .status))
+            startedAt = try values.decodeIfPresent(String.self, forKey: .startedAt)
+                ?? values.decodeIfPresent(String.self, forKey: .createdAt)
+            finishedAt = try values.decodeIfPresent(String.self, forKey: .finishedAt)
+                ?? values.decodeIfPresent(String.self, forKey: .completedAt)
+                ?? values.decodeIfPresent(String.self, forKey: .updatedAt)
+            nextRunAt = try values.decodeIfPresent(String.self, forKey: .nextRunAt)
+            let rawRows = try values.decodeIfPresent(Int.self, forKey: .rows)
+                ?? values.decodeIfPresent(Int.self, forKey: .rowCount)
+                ?? values.decodeIfPresent(Int.self, forKey: .processedCount)
+                ?? values.decodeIfPresent(Int.self, forKey: .itemCount)
+            rows = rawRows.flatMap { $0 >= 0 ? $0 : nil }
+            rowCount = try values.decodeIfPresent(Int.self, forKey: .rowCount).flatMap { $0 >= 0 ? $0 : nil }
+            let rawCaptures = try values.decodeIfPresent(Int.self, forKey: .captures)
+                ?? values.decodeIfPresent(Int.self, forKey: .captureCount)
+            captures = rawCaptures.flatMap { $0 >= 0 ? $0 : nil }
+            captureCount = try values.decodeIfPresent(Int.self, forKey: .captureCount).flatMap { $0 >= 0 ? $0 : nil }
+            screenshots = try values.decodeIfPresent(Int.self, forKey: .screenshots).flatMap { $0 >= 0 ? $0 : nil }
+                ?? values.decodeIfPresent(Int.self, forKey: .screenshotCount).flatMap { $0 >= 0 ? $0 : nil }
+            let metadata = try? values.decode(Metadata.self, forKey: .metadata)
+            trigger = try values.decodeIfPresent(String.self, forKey: .trigger)
+                ?? metadata?.trigger
+            message = try values.decodeIfPresent(String.self, forKey: .message)
+            error = try values.decodeIfPresent(String.self, forKey: .error)
+        }
+
+        private static func normalizedStatus(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let normalized = value.lowercased()
+            if ["queued", "pending"].contains(normalized) { return "queued" }
+            if ["running", "leased", "processing"].contains(normalized) { return "running" }
+            if ["failed", "error", "dead_letter"].contains(normalized) { return "failed" }
+            if normalized == "completed" { return "completed" }
+            return "unknown"
+        }
+
+        var captureTotal: Int { captures ?? captureCount ?? 0 }
+        var rowTotal: Int { rows ?? rowCount ?? 0 }
     }
     let collectionRuns: [Run]
     let total: Int
     let nextCursor: String?
     let previousCursor: String?
+
+    var summary: Summary { Summary(runs: collectionRuns) }
+
+    func sourceName(for run: Run, sources: [ThreatIntelligenceOperationalSourcePage.Source]) -> String {
+        if let sourceName = run.sourceName?.trimmingCharacters(in: .whitespacesAndNewlines), !sourceName.isEmpty {
+            return sourceName
+        }
+        if let sourceId = run.sourceId, let sourceName = sources.first(where: { $0.id == sourceId })?.name,
+           !sourceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return sourceName
+        }
+        return run.sourceId ?? "Global source fleet"
+    }
+
+    func sourceFamily(for run: Run, sources: [ThreatIntelligenceOperationalSourcePage.Source]) -> String? {
+        if let sourceFamily = run.sourceFamily?.trimmingCharacters(in: .whitespacesAndNewlines), !sourceFamily.isEmpty {
+            return sourceFamily
+        }
+        return run.sourceId.flatMap { sourceId in sources.first(where: { $0.id == sourceId })?.family }
+    }
+
+    struct Summary: Equatable {
+        let active: Int
+        let completed: Int
+        let failed: Int
+        let captures: Int
+
+        init(runs: [Run]) {
+            active = runs.filter { ["queued", "running"].contains($0.status ?? "") }.count
+            completed = runs.filter { $0.status == "completed" }.count
+            failed = runs.filter { $0.status == "failed" }.count
+            captures = runs.reduce(0) { partial, run in
+                let (sum, overflow) = partial.addingReportingOverflow(run.captureTotal)
+                return overflow ? Int.max : sum
+            }
+        }
+    }
 }
 
 struct ThreatIntelligenceCapturePage: Decodable, Equatable {

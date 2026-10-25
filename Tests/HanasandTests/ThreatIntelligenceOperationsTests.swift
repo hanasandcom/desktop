@@ -178,7 +178,7 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
             requests.append(request)
             let body: String
             if request.url?.path == "/v1/intel/collection-runs" {
-                body = #"{"collectionRuns":[{"id":"run-1","sourceId":"feed-1","status":"completed","startedAt":"2026-10-23T10:00:00Z","captureCount":2}],"total":1}"#
+                body = #"{"collectionRuns":[{"id":"run-1","sourceId":"feed-1","sourceName":"Synthetic feed","sourceFamily":"advisory","status":"completed","startedAt":"2026-10-23T10:00:00Z","finishedAt":"2026-10-23T10:01:00Z","nextRunAt":"2026-10-24T10:00:00Z","rows":12,"captures":3,"screenshots":1,"trigger":"automated"},{"id":"run-2","sourceIds":["feed-2"],"status":"processing","createdAt":"2026-10-23T11:00:00Z","captureCount":2,"metadata":{"trigger":"manual"}},{"id":"run-3","sourceId":"feed-3","status":"dead_letter","startedAt":"2026-10-23T12:00:00Z","updatedAt":"2026-10-23T12:05:00Z","rowCount":5,"captureCount":4,"screenshotCount":2}],"total":3}"#
             } else {
                 body = #"{"captures":[{"id":"capture-1","sourceId":"feed-1","sourceName":"Synthetic feed","collectedAt":"2026-10-23T10:00:00Z","storageKind":"metadata_only","locatorRedacted":true,"metadata":{"title":"Synthetic event","actor":"Example group","domain":"example.test"},"bodyRedacted":true}],"total":1}"#
             }
@@ -189,6 +189,31 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         let captures = try await client.loadCaptures(query: "feed", page: 1)
 
         XCTAssertEqual(runs.collectionRuns.first?.status, "completed")
+        XCTAssertEqual(runs.collectionRuns.first?.sourceName, "Synthetic feed")
+        XCTAssertEqual(runs.collectionRuns.first?.sourceFamily, "advisory")
+        XCTAssertEqual(runs.collectionRuns.first?.trigger, "automated")
+        XCTAssertEqual(runs.collectionRuns.first?.finishedAt, "2026-10-23T10:01:00Z")
+        XCTAssertEqual(runs.collectionRuns.first?.nextRunAt, "2026-10-24T10:00:00Z")
+        XCTAssertEqual(runs.collectionRuns.first?.captureTotal, 3)
+        XCTAssertEqual(runs.collectionRuns.first?.screenshots, 1)
+        XCTAssertEqual(runs.collectionRuns.first?.rowTotal, 12)
+        XCTAssertEqual(runs.collectionRuns[1].sourceId, "feed-2")
+        XCTAssertEqual(runs.collectionRuns[1].startedAt, "2026-10-23T11:00:00Z")
+        XCTAssertEqual(runs.collectionRuns[1].status, "running")
+        XCTAssertEqual(runs.collectionRuns[1].trigger, "manual")
+        let mappedSource = try JSONDecoder().decode(
+            ThreatIntelligenceOperationalSourcePage.Source.self,
+            from: responseData(#"{"id":"feed-2","name":"Mapped feed","family":"advisory"}"#))
+        XCTAssertEqual(runs.sourceName(for: runs.collectionRuns[1], sources: [mappedSource]), "Mapped feed")
+        XCTAssertEqual(runs.sourceFamily(for: runs.collectionRuns[1], sources: [mappedSource]), "advisory")
+        XCTAssertEqual(runs.collectionRuns[2].status, "failed")
+        XCTAssertEqual(runs.collectionRuns[2].finishedAt, "2026-10-23T12:05:00Z")
+        XCTAssertEqual(runs.collectionRuns[2].screenshots, 2)
+        XCTAssertEqual(runs.collectionRuns[2].rowTotal, 5)
+        XCTAssertEqual(runs.summary.active, 1)
+        XCTAssertEqual(runs.summary.completed, 1)
+        XCTAssertEqual(runs.summary.failed, 1)
+        XCTAssertEqual(runs.summary.captures, 9)
         XCTAssertEqual(captures.captures.first?.metadata?.title, "Synthetic event")
         XCTAssertEqual(captures.captures.first?.locatorRedacted, true)
         XCTAssertEqual(requests.map { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.path }, ["/v1/intel/collection-runs", "/v1/intel/captures"])
