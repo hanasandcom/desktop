@@ -357,10 +357,21 @@ struct SecurityScannerNativePanel: View {
                     }.frame(maxWidth: 330).disabled(writeDisabled)
                 }
                 Text("Each engine runs across the selected assets before the next engine. The scanner rechecks DNS and public IP scope at launch; this is not a penetration test.").font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Toggle("I am authorized to scan the selected assets and public IPs", isOn: Binding(get: { !selectedAssets.isEmpty && selectedAssets.isSubset(of: authorization) }, set: { allowed in if allowed { authorization.formUnion(selectedAssets) } else { authorization.subtract(selectedAssets) } })).toggleStyle(.checkbox).disabled(writeDisabled)
-                    ActionButton(title: busy == "assessment" ? "Starting…" : "Start assessment", icon: "play.fill") { Task { await startAssessment() } }
-                        .disabled(writeDisabled || selectedAssets.isEmpty || selectedEngines.isEmpty || !selectedAssets.isSubset(of: authorization) || (selectedEngines.contains("tenable-vm") && assessmentScanID.isEmpty))
+                let authorizationToggle = Toggle("I am authorized to scan the selected assets and public IPs", isOn: Binding(get: { !selectedAssets.isEmpty && selectedAssets.isSubset(of: authorization) }, set: { allowed in if allowed { authorization.formUnion(selectedAssets) } else { authorization.subtract(selectedAssets) } }))
+                    .toggleStyle(.checkbox)
+                    .disabled(writeDisabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                let startAssessmentButton = ActionButton(title: busy == "assessment" ? "Starting…" : "Start assessment", icon: "play.fill") { Task { await startAssessment() } }
+                    .disabled(writeDisabled || selectedAssets.isEmpty || selectedEngines.isEmpty || !selectedAssets.isSubset(of: authorization) || (selectedEngines.contains("tenable-vm") && assessmentScanID.isEmpty))
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 12) {
+                        authorizationToggle
+                        startAssessmentButton
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        authorizationToggle
+                        startAssessmentButton.frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             NativeGroupPanel(title: "Assessment history", subtitle: "\(snapshot.assessments.count + olderAssessments.count) loaded") {

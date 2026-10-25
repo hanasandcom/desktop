@@ -111,12 +111,12 @@ struct ThreatIntelligenceOverviewNativePanel: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(source.name ?? "Unnamed source")
                                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
-                                        .lineLimit(1).textSelection(.enabled)
+                                        .lineLimit(2).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                                     Text([source.family, source.lifecycleStatus, source.health?.state].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                                         .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
-                                        .lineLimit(2).textSelection(.enabled)
+                                        .lineLimit(2).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                                     if let failure = source.health?.lastFailureReason, !failure.isEmpty {
-                                        Text(failure).font(.system(size: 10)).foregroundStyle(theme.danger).lineLimit(2).textSelection(.enabled)
+                                        Text(failure).font(.system(size: 10)).foregroundStyle(theme.danger).lineLimit(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                                     }
                                 }
                                 Spacer(minLength: 0)
