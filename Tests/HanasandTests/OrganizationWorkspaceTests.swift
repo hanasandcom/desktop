@@ -113,9 +113,11 @@ final class OrganizationWorkspaceTests: XCTestCase {
     }
 
     func testRecordFeedsRetainSuccessfulSourceWhenCasesFail() async throws {
-        let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
+        var eventSettings = settings
+        eventSettings.selectedOrganizationID = "org-one"
+        let client = try OrganizationWorkspaceClient(settings: eventSettings, organizationID: "org-one") { request in
             if request.url?.path.hasSuffix("/api/findings/alerts") == true {
-                return self.http(#"{"organization":{"id":"org/a"},"visibilityDecision":{"allowed":true},"alerts":[{"id":"event-1","tenantId":"org/a","organizationId":"org/a","company":"Example Company","matchedTerm":{"value":"example.test"},"severity":"high","reviewState":"new","deliveryState":"pending","firstSeenAt":"2026-10-24T12:00:00Z","evidence":[]}],"total":1,"nextCursor":null}"#, request: request)
+                return self.http(#"{"organization":{"id":"org-one"},"visibilityDecision":{"allowed":true},"alerts":[{"id":"event-1","tenantId":"org-one","organizationId":"org-one","company":"Example Company","matchedTerm":{"value":"example.test"},"severity":"high","reviewState":"new","deliveryState":"pending","firstSeenAt":"2026-10-24T12:00:00Z","evidence":[]}],"total":1,"nextCursor":null}"#, request: request)
             }
             return self.http(#"{"error":{"message":"Cases are unavailable."}}"#, request: request, status: 503)
         }
