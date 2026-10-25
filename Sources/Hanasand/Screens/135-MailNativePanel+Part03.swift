@@ -136,62 +136,71 @@ extension MailNativePanel {
     func messageRow(_ message: MailOverviewEnvelope.Message) -> some View {
         let isSelected = message.id == selectedMessage?.id
         let isChecked = model.selectedMailMessageIDs.contains(message.id)
-        return Button {
-            Task { await model.selectMailMessage(message) }
-        } label: {
-            HStack(alignment: .top, spacing: 9) {
-                Button {
-                    model.toggleMailSelection(message)
-                } label: {
-                    Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(isChecked ? theme.accent : theme.textTertiary)
-                }
-                .buttonStyle(.plain)
+        return HStack(alignment: .top, spacing: 4) {
+            Button {
+                model.toggleMailSelection(message)
+            } label: {
+                Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(isChecked ? theme.accent : theme.textTertiary)
+                    .frame(width: 30)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isChecked ? "Deselect \(message.subjectLabel)" : "Select \(message.subjectLabel)")
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(message.isRead == true ? theme.textTertiary.opacity(0.35) : theme.accent)
-                            .frame(width: 7, height: 7)
-                        Text(message.fromLabel)
-                            .font(.system(size: 12, weight: .black))
-                            .foregroundStyle(theme.text)
-                            .lineLimit(1)
-                        if message.hasAttachment == true || !(message.attachments ?? []).isEmpty {
-                            Image(systemName: "paperclip")
-                                .font(.system(size: 10, weight: .bold))
+            Button {
+                Task { await model.selectMailMessage(message) }
+            } label: {
+                HStack(alignment: .top, spacing: 9) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(message.isRead == true ? theme.textTertiary.opacity(0.35) : theme.accent)
+                                .frame(width: 7, height: 7)
+                            Text(message.fromLabel)
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundStyle(theme.text)
+                                .lineLimit(1)
+                            if message.hasAttachment == true || !(message.attachments ?? []).isEmpty {
+                                Image(systemName: "paperclip")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(theme.textTertiary)
+                            }
+                            if message.isFlagged == true {
+                                Image(systemName: "flag.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(theme.accent)
+                            }
+                            Spacer(minLength: 4)
+                            Text(message.dateLabel)
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(theme.textTertiary)
                         }
-                        if message.isFlagged == true {
-                            Image(systemName: "flag.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(theme.accent)
-                        }
-                        Spacer()
-                        Text(message.dateLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(theme.textTertiary)
+                        Text(message.subjectLabel)
+                            .font(.system(size: 13, weight: message.isRead == true ? .semibold : .black))
+                            .foregroundStyle(theme.text)
+                            .lineLimit(1)
+                        Text(message.preview ?? "")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
+                            .lineLimit(2)
                     }
-                    Text(message.subjectLabel)
-                        .font(.system(size: 13, weight: message.isRead == true ? .semibold : .black))
-                        .foregroundStyle(theme.text)
-                        .lineLimit(1)
-                    Text(message.preview ?? "")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.textSecondary)
-                        .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isSelected ? theme.accentSoft : (isChecked ? theme.card.opacity(0.95) : theme.cardRaised))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(isSelected ? theme.accent.opacity(0.55) : Color.clear, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            .padding(11)
-            .background(isSelected ? theme.accentSoft : (isChecked ? theme.card.opacity(0.95) : theme.cardRaised))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? theme.accent.opacity(0.55) : Color.clear, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(message.subjectLabel) from \(message.fromLabel)")
         }
-        .buttonStyle(.plain)
         .contextMenu {
             Button(message.isRead == true ? "Mark unread" : "Mark read") {
                 Task { await model.runMailAction(message.isRead == true ? "unread" : "read", message: message) }
