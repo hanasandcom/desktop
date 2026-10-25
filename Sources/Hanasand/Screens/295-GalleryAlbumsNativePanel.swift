@@ -279,8 +279,9 @@ struct GalleryAlbumsNativePanel: View {
                         Text(item.addedBy == nil ? item.type : "Added by \(item.addedBy!)").font(.system(size: 11)).foregroundStyle(theme.textSecondary)
                     }
                     Spacer()
-                    if GalleryAlbumAccess.canRemove(item, album: album, currentUserId: model.userIDForRequests) {
-                        ActionButton(title: "Remove", icon: "trash", tone: .danger) { itemToRemove = item }.disabled(busy)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { albumItemActions(item, album: album) }
+                        VStack(alignment: .trailing, spacing: 8) { albumItemActions(item, album: album) }
                     }
                 }
                 .padding(.vertical, 6)
@@ -341,6 +342,17 @@ struct GalleryAlbumsNativePanel: View {
             .textFieldStyle(.roundedBorder)
             .disabled(busy)
             .frame(minWidth: 160)
+    }
+
+    @ViewBuilder private func albumItemActions(_ item: GalleryAlbumItem, album: GalleryAlbumDetail) -> some View {
+        ActionButton(title: "Preview", icon: "eye") {
+            let route = GalleryAlbumPreviewRoute(item: item)
+            model.openNativeDashboard(path: GalleryAlbumPreviewRoute.path, label: route.label, detailID: route.detailID)
+        }
+        .disabled(busy)
+        if GalleryAlbumAccess.canRemove(item, album: album, currentUserId: model.userIDForRequests) {
+            ActionButton(title: "Remove", icon: "trash", tone: .danger) { itemToRemove = item }.disabled(busy)
+        }
     }
 
     private func albumNameActions(_ album: GalleryAlbumDetail) -> some View {

@@ -119,6 +119,18 @@ struct GalleryAlbumSharingResult: Equatable {
     let shareURL: URL?
 }
 
+struct GalleryAlbumPreviewRoute: Equatable {
+    static let path = "/cdn/files"
+
+    let label: String
+    let detailID: String
+
+    init(item: GalleryAlbumItem) {
+        label = item.name ?? "CDN file"
+        detailID = item.id
+    }
+}
+
 struct GalleryLibraryItem: Decodable, Identifiable, Hashable {
     let id: String
     let name: String?
