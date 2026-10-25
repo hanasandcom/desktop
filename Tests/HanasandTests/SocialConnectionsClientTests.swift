@@ -43,6 +43,52 @@ final class SocialConnectionsClientTests: XCTestCase {
         XCTAssertEqual(connections, [])
     }
 
+    func testLoadsGoogleProviderConfigurationFromIdentityWithoutCookies() async throws {
+        var captured: URLRequest?
+        let client = try SocialConnectionsClient(settings: settings) { request in
+            captured = request
+            return self.response(#"{"providers":[{"provider":"google","configured":true},{"provider":"apple","configured":false}]}"#, for: request)
+        }
+
+        let configured = try await client.isGoogleConfigured()
+        XCTAssertTrue(configured)
+        XCTAssertEqual(captured?.url?.absoluteString, "https://api.example.test/api/auth/social/providers")
+        XCTAssertEqual(captured?.httpMethod, "GET")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+    }
+
+    func testGoogleProviderSetupCanBeReportedAsUnavailable() async throws {
+        let client = try SocialConnectionsClient(settings: settings) { request in
+            self.response(#"{"providers":[{"provider":"google","configured":false}]}"#, for: request)
+        }
+        let configured = try await client.isGoogleConfigured()
+        XCTAssertFalse(configured)
+    }
+
+    func testRejectsMalformedProviderConfiguration() async throws {
+        let missingGoogle = try SocialConnectionsClient(settings: settings) { request in
+            self.response(#"{"providers":[{"provider":"apple","configured":true}]}"#, for: request)
+        }
+        do { _ = try await missingGoogle.isGoogleConfigured(); XCTFail("Expected missing Google provider rejection") }
+        catch let error as SocialConnectionsClientError { XCTAssertEqual(error, .invalidProvidersResponse) }
+
+        let duplicateGoogle = try SocialConnectionsClient(settings: settings) { request in
+            self.response(#"{"providers":[{"provider":"google","configured":true},{"provider":"google","configured":false}]}"#, for: request)
+        }
+        do { _ = try await duplicateGoogle.isGoogleConfigured(); XCTFail("Expected duplicate provider rejection") }
+        catch let error as SocialConnectionsClientError { XCTAssertEqual(error, .invalidProvidersResponse) }
+    }
+
+    func testProviderConfigurationFailureIsDistinctFromUnconfiguredGoogle() async throws {
+        let unavailable = try SocialConnectionsClient(settings: settings) { request in
+            (Data(#"{"error":"unavailable"}"#.utf8), self.httpResponse(for: request, status: 503))
+        }
+        do { _ = try await unavailable.isGoogleConfigured(); XCTFail("Expected provider status failure") }
+        catch let error as SocialConnectionsClientError { XCTAssertEqual(error, .providersRequestFailed(503)) }
+    }
+
     func testEmptyAndAppleOnlyConnectionsDoNotManufactureGoogleConnection() async throws {
         let appleOnly = try SocialConnectionsClient(settings: settings) { request in
             self.response(#"{"connections":[{"provider":"apple","email":null,"created_at":"2026-10-01T00:00:00.000Z"}]}"#, for: request)

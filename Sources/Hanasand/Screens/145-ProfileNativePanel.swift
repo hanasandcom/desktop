@@ -569,6 +569,7 @@ private struct NativeGoogleConnectionStatus: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var connection: SocialConnection?
+    @State private var googleConfigured = false
     @State private var errorMessage = ""
     @State private var isLoading = false
     @State private var hasLoaded = false
@@ -624,6 +625,11 @@ private struct NativeGoogleConnectionStatus: View {
                     }
                     Spacer(minLength: 0)
                 }
+                if !googleConfigured {
+                    NativeNotice(message: "Google sign-in is awaiting provider setup.", tone: .info)
+                }
+            } else if hasLoaded, !googleConfigured {
+                NativeNotice(message: "Google sign-in is awaiting provider setup.", tone: .info)
             } else if hasLoaded {
                 Text("No Google sign-in account is connected.")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
@@ -641,6 +647,7 @@ private struct NativeGoogleConnectionStatus: View {
     @MainActor private func reload() async {
         guard canReadOwnConnections else {
             connection = nil
+            googleConfigured = false
             errorMessage = ""
             isLoading = false
             hasLoaded = false
@@ -655,9 +662,12 @@ private struct NativeGoogleConnectionStatus: View {
 
         do {
             let client = try SocialConnectionsClient(settings: model.settings)
-            let connections = try await client.load()
+            async let connectionsTask = client.load()
+            async let googleConfiguredTask = client.isGoogleConfigured()
+            let (connections, configured) = try await (connectionsTask, googleConfiguredTask)
             guard requestedScope == accountScope, canReadOwnConnections else { return }
             connection = connections.first { $0.provider == "google" }
+            googleConfigured = configured
             hasLoaded = true
         } catch {
             guard requestedScope == accountScope, canReadOwnConnections else { return }

@@ -30,12 +30,23 @@ private struct SocialConnectionsEnvelope: Decodable {
     let connections: [SocialConnection]
 }
 
+private struct SocialProvidersEnvelope: Decodable {
+    let providers: [SocialProviderStatus]
+}
+
+private struct SocialProviderStatus: Decodable {
+    let provider: String
+    let configured: Bool
+}
+
 enum SocialConnectionsClientError: LocalizedError, Equatable {
     case signInRequired
     case ownAccountRequired
     case invalidEndpoint
     case invalidResponse
+    case invalidProvidersResponse
     case requestFailed(Int)
+    case providersRequestFailed(Int)
 
     var errorDescription: String? {
         switch self {
@@ -43,7 +54,9 @@ enum SocialConnectionsClientError: LocalizedError, Equatable {
         case .ownAccountRequired: "Return to your own account to view connected accounts."
         case .invalidEndpoint: "Connected accounts require a valid secure API address."
         case .invalidResponse: "The connected accounts response could not be verified. Refresh and review the current state."
+        case .invalidProvidersResponse: "The sign-in provider status could not be verified. Refresh and review the current state."
         case let .requestFailed(status): "Connected accounts request failed (HTTP \(status))."
+        case let .providersRequestFailed(status): "Sign-in provider status request failed (HTTP \(status))."
         }
     }
 }
@@ -52,6 +65,7 @@ struct SocialConnectionsClient {
     typealias Sender = (URLRequest) async throws -> (Data, URLResponse)
 
     let endpoint: URL
+    let providersEndpoint: URL
     let userID: String
     let token: String
     var send: Sender
@@ -90,6 +104,7 @@ struct SocialConnectionsClient {
         }
 
         endpoint = url
+        providersEndpoint = identityBase.appendingAPIPath("auth/social/providers")
         userID = user
         token = credential
         self.send = send ?? { request in try await SocialConnectionsSession.shared.data(for: request) }
@@ -121,6 +136,33 @@ struct SocialConnectionsClient {
             throw SocialConnectionsClientError.invalidResponse
         }
         return envelope.connections
+    }
+
+    func isGoogleConfigured() async throws -> Bool {
+        var request = URLRequest(url: providersEndpoint)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse,
+              http.url?.scheme?.lowercased() == "https", http.url?.host == providersEndpoint.host else {
+            throw SocialConnectionsClientError.invalidProvidersResponse
+        }
+        guard http.statusCode == 200 else { throw SocialConnectionsClientError.providersRequestFailed(http.statusCode) }
+
+        let envelope: SocialProvidersEnvelope
+        do { envelope = try JSONDecoder().decode(SocialProvidersEnvelope.self, from: data) }
+        catch { throw SocialConnectionsClientError.invalidProvidersResponse }
+        guard Set(envelope.providers.map(\.provider)).count == envelope.providers.count,
+              envelope.providers.allSatisfy({ ["google", "apple"].contains($0.provider) }),
+              let google = envelope.providers.first(where: { $0.provider == "google" }) else {
+            throw SocialConnectionsClientError.invalidProvidersResponse
+        }
+        return google.configured
     }
 
     private static func isValid(_ connection: SocialConnection) -> Bool {
