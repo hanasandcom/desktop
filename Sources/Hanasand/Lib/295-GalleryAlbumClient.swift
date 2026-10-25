@@ -198,8 +198,9 @@ struct GalleryAlbumClient {
     }
 
     func listLibraryPage(offset: Int = 0, search: String = "", favorites: Bool = false,
-                         imagesOnly: Bool = false) async throws -> GalleryLibraryPage {
+                         imagesOnly: Bool = false, videosOnly: Bool = false) async throws -> GalleryLibraryPage {
         guard (0...1_000_000).contains(offset) else { throw GalleryAlbumClientError.invalidPage }
+        guard !(imagesOnly && videosOnly) else { throw GalleryAlbumClientError.invalidMediaFilter }
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard term.count <= 200, !term.contains("\0") else { throw GalleryAlbumClientError.invalidSearch }
         var components = URLComponents()
@@ -210,6 +211,7 @@ struct GalleryAlbumClient {
             URLQueryItem(name: "search", value: term)
         ]
         if imagesOnly { components.queryItems?.append(URLQueryItem(name: "media", value: "images")) }
+        if videosOnly { components.queryItems?.append(URLQueryItem(name: "media", value: "videos")) }
         if favorites { components.queryItems?.append(URLQueryItem(name: "favorites", value: "true")) }
         guard let path = components.string, path.hasPrefix("/") else { throw GalleryAlbumClientError.invalidResponse }
         let rows = try await decode([GalleryLibraryItem].self, path: String(path.dropFirst()))
@@ -332,7 +334,7 @@ struct GalleryAlbumClient {
 }
 
 enum GalleryAlbumClientError: LocalizedError {
-    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidMonth, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
+    case invalidBaseURL, signInRequired, invalidCredentials, impersonationUnsupported, invalidPage, invalidSearch, invalidMonth, invalidMediaFilter, invalidResponse, invalidPublicLink, scopeChanged, staleAlbum
     case invalidName, invalidIdentifier, invalidSelection, invalidMember, invalidImage
     case ownerRequired, contributorRequired, removeOwnItemsOnly, cannotLeaveOwnedAlbum, unconfirmedMutation
     case requestFailed(Int, String)
@@ -346,13 +348,14 @@ enum GalleryAlbumClientError: LocalizedError {
         case .invalidPage: return "Invalid album page."
         case .invalidSearch: return "Image search must be 200 characters or fewer."
         case .invalidMonth: return "Choose a valid album month."
+        case .invalidMediaFilter: return "Choose either images or videos for the library page."
         case .invalidResponse: return "The album service returned an unexpected response. Refresh before retrying."
         case .invalidPublicLink: return "The album service returned an unsafe public link. Refresh before sharing."
         case .scopeChanged: return "Your account, session, or selected album changed. Refresh before continuing."
         case .staleAlbum: return "Album sharing changed since it was loaded. Refresh before continuing."
         case .invalidName: return "Album names must be 1–120 characters on one line."
         case .invalidIdentifier: return "Choose a valid album, photo, or account."
-        case .invalidSelection: return "Select between 1 and 500 photos."
+        case .invalidSelection: return "Select between 1 and 500 album items."
         case .invalidMember: return "Enter another Hanasand account ID and choose Viewer or Contributor."
         case .invalidImage: return "The CDN returned an unsupported or oversized thumbnail."
         case .ownerRequired: return "Only the album owner can make this change."

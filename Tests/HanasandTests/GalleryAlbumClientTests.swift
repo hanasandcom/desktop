@@ -57,6 +57,38 @@ final class GalleryAlbumClientTests: XCTestCase {
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Cache-Control"), "no-store")
     }
 
+    func testAlbumPickerRequestsVideoPagesFromTheCDN() async throws {
+        var request: URLRequest?
+        let client = try GalleryAlbumClient(settings: settings) { next in
+            request = next
+            return self.http(#"[{"id":"video-1","name":"Trip.mp4","type":"video/mp4"}]"#)
+        }
+
+        let page = try await client.listLibraryPage(offset: 60, videosOnly: true)
+
+        XCTAssertEqual(page.items.map(\.id), ["video-1"])
+        XCTAssertEqual(page.items.first?.type, "video/mp4")
+        XCTAssertEqual(page.nextOffset, 61)
+        XCTAssertFalse(page.hasMore)
+        let query = URLComponents(url: request!.url!, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(query?.first(where: { $0.name == "media" })?.value, "videos")
+        XCTAssertEqual(query?.first(where: { $0.name == "offset" })?.value, "60")
+    }
+
+    func testAlbumPickerRejectsConflictingImageAndVideoFiltersBeforeRequest() async throws {
+        let client = try GalleryAlbumClient(settings: settings) { _ in
+            XCTFail("Invalid media filters must be rejected before sending a request")
+            return self.http("[]")
+        }
+
+        do {
+            _ = try await client.listLibraryPage(imagesOnly: true, videosOnly: true)
+            XCTFail("Expected conflicting media filters to be rejected")
+        } catch GalleryAlbumClientError.invalidMediaFilter {
+            // Expected: a picker page represents either images or videos.
+        }
+    }
+
     func testOwnerCanEnableAndDisablePublicLinkUsingOnlyConfirmedServiceToken() async throws {
         var requests: [URLRequest] = []
         let token = String(repeating: "a", count: 32)

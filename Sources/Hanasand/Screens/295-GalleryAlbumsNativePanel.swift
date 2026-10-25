@@ -8,6 +8,7 @@ struct GalleryAlbumsNativePanel: View {
     @State private var album: GalleryAlbumDetail?
     @State private var library: [GalleryLibraryItem] = []
     @State private var selectedFiles: Set<String> = []
+    @State private var libraryMedia = "images"
     @State private var showPicker = false
     @State private var nameDraft = ""
     @State private var memberDraft = ""
@@ -42,7 +43,7 @@ struct GalleryAlbumsNativePanel: View {
                     }
                 }
                 if !notice.isEmpty {
-                    NativeNotice(message: notice, title: "Photos added", tone: .success)
+                    NativeNotice(message: notice, title: "Album updated", tone: .success)
                 }
                 if let album {
                     albumDetail(album)
@@ -64,6 +65,12 @@ struct GalleryAlbumsNativePanel: View {
             guard let album else { return }
             Task { await open(album.id, offset: 0, month: month) }
         }
+        .onChange(of: libraryMedia) { _, media in
+            guard showPicker else { return }
+            library = []
+            libraryOffset = 0
+            Task { await loadLibrary(offset: 0, media: media) }
+        }
         .confirmationDialog("Delete album?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete album", role: .destructive) { Task { await deleteAlbum() } }
             Button("Cancel", role: .cancel) {}
@@ -80,7 +87,7 @@ struct GalleryAlbumsNativePanel: View {
             Button("Enable public link") { beginSharingChange(true) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Anyone who gets this unguessable link can view every item in the album, including private photos. You can disable the link later.")
+            Text("Anyone who gets this unguessable link can view every item in the album, including private media. You can disable the link later.")
         }
         .confirmationDialog("Disable public album link?", isPresented: $confirmDisablePublicLink, titleVisibility: .visible) {
             Button("Disable public link", role: .destructive) { beginSharingChange(false) }
@@ -131,7 +138,7 @@ struct GalleryAlbumsNativePanel: View {
                 }
             }
             if GalleryAlbumListPresentation.shouldShowEmptyState(albumCount: albums.count, isLoading: busy, error: error) {
-                NativeEmptyState(title: "No albums yet", message: "Create an album, then add photos already uploaded to your library.")
+                NativeEmptyState(title: "No albums yet", message: "Create an album, then add images or videos already in your library.")
             }
             ForEach(albums) { item in
                 Button { Task { await open(item.id) } } label: {
@@ -196,10 +203,22 @@ struct GalleryAlbumsNativePanel: View {
         }
 
         if showPicker && canAddItems {
-            NativeGroupPanel(title: "Choose library photos", subtitle: "Select existing files · \(selectedFiles.count) selected") {
+            NativeGroupPanel(title: "Choose library items", subtitle: "Select existing images or videos · \(selectedFiles.count) selected") {
+                Picker("Library media", selection: $libraryMedia) {
+                    Text("Images").tag("images")
+                    Text("Videos").tag("videos")
+                }
+                .pickerStyle(.segmented)
+                .disabled(busy)
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) { librarySelectionActions }
                     VStack(alignment: .leading, spacing: 8) { librarySelectionActions }
+                }
+                if library.isEmpty && !busy && error.isEmpty {
+                    NativeEmptyState(
+                        title: libraryMedia == "videos" ? "No videos in your library" : "No images in your library",
+                        message: "Items already in your CDN library appear here."
+                    )
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 126), spacing: 10)], spacing: 10) {
                     ForEach(library) { file in
@@ -208,10 +227,21 @@ struct GalleryAlbumsNativePanel: View {
                             else if selectedFiles.count < 500 { selectedFiles.insert(file.id) }
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
-                                GalleryAlbumThumbnail(client: makeClient(), fileId: file.id, sessionRevision: sessionRevision)
+                                if file.type.hasPrefix("image/") {
+                                    GalleryAlbumThumbnail(client: makeClient(), fileId: file.id, sessionRevision: sessionRevision)
+                                        .frame(height: 96)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 8).fill(theme.cardRaised)
+                                        VStack(spacing: 6) {
+                                            Image(systemName: "film").font(.system(size: 26)).foregroundStyle(theme.accent)
+                                            Text("Video").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary)
+                                        }
+                                    }
                                     .frame(height: 96)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                Text("\(selectedFiles.contains(file.id) ? "✓ " : "")\(file.name ?? "Photo")")
+                                }
+                                Text("\(selectedFiles.contains(file.id) ? "✓ " : "")\(file.name ?? (file.type.hasPrefix("video/") ? "Video" : "Image"))")
                                     .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.text).lineLimit(2)
                             }
                             .padding(8)
@@ -219,7 +249,8 @@ struct GalleryAlbumsNativePanel: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(file.name ?? "Photo"), \(selectedFiles.contains(file.id) ? "selected" : "not selected")")
+                        .disabled(busy)
+                        .accessibilityLabel("\(file.name ?? "Library item"), \(selectedFiles.contains(file.id) ? "selected" : "not selected")")
                     }
                 }
             }
@@ -236,7 +267,7 @@ struct GalleryAlbumsNativePanel: View {
                 }
             }
             if album.items.isEmpty {
-                NativeEmptyState(title: album.total == 0 ? "This album is empty" : "No items on this page", message: album.total == 0 ? "Add photos already in your library." : "Return to the previous page or refresh.")
+                NativeEmptyState(title: album.total == 0 ? "This album is empty" : "No items on this page", message: album.total == 0 ? "Add images or videos already in your library." : "Return to the previous page or refresh.")
             }
             ForEach(album.items) { item in
                 HStack(spacing: 12) {
@@ -427,9 +458,9 @@ struct GalleryAlbumsNativePanel: View {
     }
 
     private var addAlbumPhotosButton: some View {
-        ActionButton(title: showPicker ? "Close picker" : "Add library photos", icon: "photo.badge.plus") {
-            showPicker.toggle(); selectedFiles.removeAll()
-            if showPicker { Task { await loadLibrary(offset: 0) } }
+        ActionButton(title: showPicker ? "Close picker" : "Add library items", icon: "photo.badge.plus") {
+            showPicker.toggle(); selectedFiles.removeAll(); libraryMedia = "images"
+            if showPicker { Task { await loadLibrary(offset: 0, media: "images") } }
         }
         .disabled(busy)
     }
@@ -563,17 +594,18 @@ struct GalleryAlbumsNativePanel: View {
         }
     }
 
-    private func loadLibrary(offset: Int) async {
-        guard let page = await withClient({ try await $0.listLibraryPage(offset: offset, imagesOnly: true) }, success: "Library loaded") else { return }
+    private func loadLibrary(offset: Int, media: String? = nil) async {
+        let selectedMedia = media ?? libraryMedia
+        guard let page = await withClient({ try await $0.listLibraryPage(offset: offset, imagesOnly: selectedMedia == "images", videosOnly: selectedMedia == "videos") }, success: "Library loaded") else { return }
         library = page.items
         libraryOffset = offset
     }
 
     private func addSelected() async {
-        guard let album, let receipt = await withClient({ try await $0.addItems(Array(selectedFiles), to: album) }, success: "Photos added") else { return }
+        guard let album, let receipt = await withClient({ try await $0.addItems(Array(selectedFiles), to: album) }, success: "Items added") else { return }
         selectedFiles.removeAll(); showPicker = false; await open(album.id, offset: offset); await refreshAlbums()
-        notice = GalleryAlbumAddFeedback.message(added: receipt.added, requested: receipt.requested)
-        if error.isEmpty { status = "Album photos updated" }
+        notice = GalleryAlbumAddFeedback.message(added: receipt.added, requested: receipt.requested, itemName: "items")
+        if error.isEmpty { status = "Album items updated" }
     }
 
     private func remove(_ item: GalleryAlbumItem) async {

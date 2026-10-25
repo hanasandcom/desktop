@@ -201,10 +201,10 @@ enum GalleryAlbumListPresentation {
 }
 
 enum GalleryAlbumAddFeedback {
-    static func message(added: Int, requested: Int) -> String {
-        guard added < requested else { return "Added all \(added) selected photos." }
+    static func message(added: Int, requested: Int, itemName: String = "photos") -> String {
+        guard added < requested else { return "Added all \(added) selected \(itemName)." }
         let skipped = max(0, requested - added)
-        return "Added \(added) of \(requested) selected photos. \(skipped) skipped because they were already in the album or unavailable to this account."
+        return "Added \(added) of \(requested) selected \(itemName). \(skipped) skipped because they were already in the album or unavailable to this account."
     }
 }
 
