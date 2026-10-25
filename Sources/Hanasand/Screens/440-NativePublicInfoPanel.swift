@@ -181,7 +181,7 @@ struct NativePublicInfoPanel: View {
                 solutionContent
             } else {
                 ForEach(page.sections) { section in
-                    NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: page.kind == .terms) {
+                    NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: page.kind == .terms || page.kind == .cookieSettings) {
                         ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
                             Text(paragraph)
                                 .font(.system(size: 12))
@@ -847,34 +847,16 @@ struct NativePublicInfoPanel: View {
             impersonationToken: model.settings.impersonationToken
         )
         return VStack(alignment: .leading, spacing: 12) {
-            NativeGroupPanel(title: "Consent", subtitle: snapshot.consent.title) {
-                Text("Required account and security functions remain enabled. Optional measurement consent applies to this Desktop app.")
-                    .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-                Text(consentUpdatedLabel(snapshot.consentUpdatedAt))
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { consentActions }
-                    VStack(alignment: .leading, spacing: 8) { consentActions }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    cookieConsentPanel(snapshot).frame(maxWidth: .infinity, alignment: .topLeading)
+                    cookieAccountTokensPanel(snapshot).frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                if !consentMessage.isEmpty { NativeNotice(message: consentMessage, tone: .success) }
-            }
-
-            NativeGroupPanel(title: "Account tokens", subtitle: "Presence only · token values are never shown") {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
-                        presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
-                    }
-                    VStack(spacing: 8) {
-                        presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
-                        presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
-                    }
-                }
-                ActionButton(title: "Open native sign out", icon: "rectangle.portrait.and.arrow.right") {
-                    model.openNativeDashboard(path: "/logout", label: "Sign out")
+                VStack(alignment: .leading, spacing: 12) {
+                    cookieConsentPanel(snapshot)
+                    cookieAccountTokensPanel(snapshot)
                 }
             }
-
             NativeGroupPanel(title: "Local Hanasand drafts", subtitle: "Saved only on this Mac") {
                 Text("This removes allowlisted local IDE drafts from this Mac. Notes drafts are preserved and managed from the Notes route.")
                     .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
@@ -899,6 +881,38 @@ struct NativePublicInfoPanel: View {
                     confirmClearLocalDrafts = true
                 }
                 .disabled(!snapshot.storedDraftKinds.contains(.ide) || !mayClearLocalDrafts)
+            }
+        }
+    }
+
+    private func cookieConsentPanel(_ snapshot: NativeCookieSettingsSnapshot) -> some View {
+        NativeGroupPanel(title: "Consent", subtitle: snapshot.consent.title, fillsAvailableWidth: true) {
+            Text("Required account and security functions remain enabled. Optional measurement consent applies to this Desktop app.")
+                .font(.system(size: 12)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            Text(consentUpdatedLabel(snapshot.consentUpdatedAt))
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { consentActions }
+                VStack(alignment: .leading, spacing: 8) { consentActions }
+            }
+            if !consentMessage.isEmpty { NativeNotice(message: consentMessage, tone: .success) }
+        }
+    }
+
+    private func cookieAccountTokensPanel(_ snapshot: NativeCookieSettingsSnapshot) -> some View {
+        NativeGroupPanel(title: "Account tokens", subtitle: "Presence only · token values are never shown", fillsAvailableWidth: true) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
+                    presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
+                }
+                VStack(spacing: 8) {
+                    presenceCard(title: "Session token", present: snapshot.hasSessionToken, icon: "key")
+                    presenceCard(title: "Impersonation token", present: snapshot.hasImpersonationToken, icon: "person.crop.circle.badge.checkmark")
+                }
+            }
+            ActionButton(title: "Open native sign out", icon: "rectangle.portrait.and.arrow.right") {
+                model.openNativeDashboard(path: "/logout", label: "Sign out")
             }
         }
     }
