@@ -174,7 +174,7 @@ struct NativePublicInfoPanel: View {
                 homeHero
             } else {
                 NativeGroupPanel(title: page.eyebrow, subtitle: "", fillsAvailableWidth: true, showsTitle: page.kind != .faq) {
-                    VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: 8) {
+                    VStack(alignment: page.kind == .pricing ? .center : .leading, spacing: page.kind == .faq ? 12 : 8) {
                         if page.kind == .faq {
                             Text(page.eyebrow)
                                 .font(.system(size: 11, weight: .semibold))
@@ -196,6 +196,7 @@ struct NativePublicInfoPanel: View {
                             ActionButton(title: "Ask a different question", icon: "arrow.right") { open(contactRoute) }
                                 .padding(.top, 4)
                         }
+                        if page.kind == .faq { faqControls }
                         if page.kind == .scannerSolution || page.kind == .monitoringSolution {
                             solutionActions
                                 .padding(.top, 4)
@@ -203,7 +204,6 @@ struct NativePublicInfoPanel: View {
                     }
                     .frame(maxWidth: page.kind == .pricing ? 760 : .infinity)
                     .frame(maxWidth: .infinity, alignment: page.kind == .pricing ? .center : .leading)
-                    if page.kind == .faq { faqControls }
                     if page.kind == .cookieSettings { cookieSettingsControls }
                 }
             }
