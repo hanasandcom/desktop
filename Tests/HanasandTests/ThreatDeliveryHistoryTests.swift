@@ -2,13 +2,27 @@ import Foundation
 import XCTest
 @testable import Hanasand
 
+private struct ThreatDeliveryProofSigner: DesktopDeviceProofSigning {
+    let publicJWK = [
+        "kty": "EC",
+        "crv": "P-256",
+        "x": String(repeating: "A", count: 43),
+        "y": String(repeating: "B", count: 43),
+    ]
+
+    func signES256(_ message: Data) throws -> Data {
+        Data(repeating: 0x5a, count: 64)
+    }
+}
+
 final class ThreatDeliveryHistoryTests: XCTestCase {
     func testClientRequestsSelectedOrganizationWithoutCookiesOrWrites() async throws {
         var settings = makeSettings()
         settings.selectedOrganizationID = "org-123"
         settings.selectedOrganizationUserID = settings.userID
         var captured: [URLRequest] = []
-        let client = try ThreatDeliveryHistoryClient(settings: settings) { request in
+        let signer = ThreatDeliveryProofSigner()
+        let client = try ThreatDeliveryHistoryClient(settings: settings, proofSigner: signer) { request in
             captured.append(request)
             return (self.payload(organizationID: "org-123"), self.response(status: 200))
         }
@@ -25,6 +39,63 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertTrue(captured.allSatisfy { $0.httpMethod == "GET" && $0.value(forHTTPHeaderField: "Authorization") == "Bearer test-token" })
         XCTAssertTrue(captured.allSatisfy { $0.value(forHTTPHeaderField: "id") == "user-1" && $0.httpShouldHandleCookies == false })
         XCTAssertTrue(captured.allSatisfy { $0.value(forHTTPHeaderField: "Cache-Control") == "no-store" })
+        XCTAssertTrue(captured.contains { $0.url?.host == "hanasand.com" && $0.url?.path == "/api/findings/alerts" })
+        for request in captured {
+            try assertDeviceProof(request, signer: signer)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "x-device-proof-method"), "GET")
+            XCTAssertEqual(dpopClaims(for: request)?["htm"] as? String, "GET")
+        }
+        let historyProof = try XCTUnwrap(captured.first { $0.url?.path.hasSuffix("/dwm/webhook-deliveries") == true })
+        XCTAssertEqual(dpopClaims(for: historyProof)?["htu"] as? String,
+                       "https://api.example.test/api/dwm/webhook-deliveries")
+    }
+
+    func testWebhookPostTransportSignsWithInjectedDeviceProof() async throws {
+        var settings = makeSettings()
+        settings.selectedOrganizationID = "org-123"
+        settings.selectedOrganizationUserID = settings.userID
+        var captured: URLRequest?
+        let signer = ThreatDeliveryProofSigner()
+        let client = try ThreatDeliveryHistoryClient(settings: settings, proofSigner: signer) { request in
+            captured = request
+            return (Data("{}".utf8), self.response(status: 200))
+        }
+        var request = URLRequest(url: URL(string: "https://api.example.test/api/dwm/webhook-deliveries")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer test-token", forHTTPHeaderField: "Authorization")
+        request.setValue("user-1", forHTTPHeaderField: "id")
+
+        _ = try await client.sendWrite(request, scopeIsCurrent: { true })
+
+        let signedRequest = try XCTUnwrap(captured)
+        try assertDeviceProof(signedRequest, signer: signer)
+        XCTAssertEqual(signedRequest.httpMethod, "POST")
+        XCTAssertEqual(signedRequest.value(forHTTPHeaderField: "x-device-proof-method"), "POST")
+        XCTAssertEqual(dpopClaims(for: signedRequest)?["htm"] as? String, "POST")
+        XCTAssertEqual(dpopClaims(for: signedRequest)?["htu"] as? String,
+                       "https://api.example.test/api/dwm/webhook-deliveries")
+    }
+
+    func testFindingsFetchNeverSendsCredentialsToUntrustedWebsiteOrigin() async throws {
+        var settings = makeSettings()
+        settings.websiteBaseURL = "https://attacker.example.test"
+        settings.selectedOrganizationID = "org-123"
+        settings.selectedOrganizationUserID = settings.userID
+        var captured: [URLRequest] = []
+        let client = try ThreatDeliveryHistoryClient(settings: settings, proofSigner: ThreatDeliveryProofSigner()) { request in
+            captured.append(request)
+            return (self.payload(organizationID: "org-123"), self.response(status: 200))
+        }
+
+        do {
+            _ = try await client.load()
+            XCTFail("An untrusted findings origin must not be contacted.")
+        } catch {
+            XCTAssertEqual(error as? ThreatDeliveryHistoryError, .requestFailed(0))
+        }
+
+        XCTAssertFalse(captured.contains { $0.url?.host == "attacker.example.test" })
+        XCTAssertTrue(captured.allSatisfy { $0.value(forHTTPHeaderField: "dpop") != nil })
     }
 
     func testRejectsPersonalOrStaleOrganizationScopeAndImpersonation() {
@@ -45,7 +116,7 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         settings.selectedOrganizationID = "org-123"
         settings.selectedOrganizationUserID = settings.userID
 
-        let denied = try ThreatDeliveryHistoryClient(settings: settings) { _ in
+        let denied = try ThreatDeliveryHistoryClient(settings: settings, proofSigner: ThreatDeliveryProofSigner()) { _ in
             (self.payload(organizationID: "org-123", allowed: false), self.response(status: 200))
         }
         do {
@@ -53,7 +124,7 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
             XCTFail("Expected denied visibility to fail.")
         } catch { XCTAssertTrue(error is ThreatDeliveryHistoryError) }
 
-        let crossOrg = try ThreatDeliveryHistoryClient(settings: settings) { _ in
+        let crossOrg = try ThreatDeliveryHistoryClient(settings: settings, proofSigner: ThreatDeliveryProofSigner()) { _ in
             (self.payload(organizationID: "org-other"), self.response(status: 200))
         }
         do {
@@ -173,7 +244,7 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         var currentSettings = expectedSettings
         currentSettings.selectedOrganizationID = "org-456"
         var didSend = false
-        let client = try ThreatDeliveryHistoryClient(settings: expectedSettings) { _ in
+        let client = try ThreatDeliveryHistoryClient(settings: expectedSettings, proofSigner: ThreatDeliveryProofSigner()) { _ in
             didSend = true
             return (Data(), self.response(status: 200))
         }
@@ -273,5 +344,38 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
     private func response(status: Int) -> HTTPURLResponse {
         HTTPURLResponse(url: URL(string: "https://api.example.test/api/dwm/webhook-deliveries")!,
                        statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+    }
+
+    private func assertDeviceProof(_ request: URLRequest, signer: ThreatDeliveryProofSigner,
+                                   file: StaticString = #filePath, line: UInt = #line) throws {
+        let expectedJWK = try JSONSerialization.data(withJSONObject: signer.publicJWK, options: [.sortedKeys])
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-device-public-jwk"), String(data: expectedJWK, encoding: .utf8), file: file, line: line)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-device-proof-url"), DesktopDeviceProof.normalizedTarget(request.url!), file: file, line: line)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-device-proof-method"), request.httpMethod, file: file, line: line)
+        let jwt = try XCTUnwrap(request.value(forHTTPHeaderField: "dpop"), file: file, line: line)
+        let parts = jwt.split(separator: ".")
+        XCTAssertEqual(parts.count, 3, file: file, line: line)
+        XCTAssertEqual(dpopClaims(for: request)?["htm"] as? String, request.httpMethod, file: file, line: line)
+        XCTAssertNotNil(dpopClaims(for: request)?["ath"] as? String, file: file, line: line)
+        XCTAssertEqual(dpopHeader(for: request)?["typ"] as? String, "dpop+jwt", file: file, line: line)
+        XCTAssertEqual(dpopHeader(for: request)?["jwk"] as? [String: String], signer.publicJWK, file: file, line: line)
+    }
+
+    private func dpopClaims(for request: URLRequest) -> [String: Any]? {
+        decodedJWTPart(request.value(forHTTPHeaderField: "dpop"), index: 1)
+    }
+
+    private func dpopHeader(for request: URLRequest) -> [String: Any]? {
+        decodedJWTPart(request.value(forHTTPHeaderField: "dpop"), index: 0)
+    }
+
+    private func decodedJWTPart(_ jwt: String?, index: Int) -> [String: Any]? {
+        guard let jwt else { return nil }
+        let parts = jwt.split(separator: ".")
+        guard parts.count == 3, parts.indices.contains(index) else { return nil }
+        var encoded = String(parts[index]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        guard let data = Data(base64Encoded: encoded) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 }

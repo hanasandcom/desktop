@@ -7,6 +7,7 @@ struct ThreatDeliveryHistoryClient {
     private static let responseLimit = 2_000_000
 
     init(settings: HanasandDesktopSettings,
+         proofSigner: (any DesktopDeviceProofSigning)? = nil,
          send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
         guard !settings.userID.isEmpty, !settings.authToken.isEmpty else {
             throw ThreatDeliveryHistoryError.signInRequired
@@ -35,7 +36,14 @@ struct ThreatDeliveryHistoryClient {
         self.organizationID = organizationID
         let transport = try send ?? Self.ephemeralSender()
         self.send = { request in
-            let (data, response) = try await transport(request)
+            let signedRequest = try DesktopAuthenticatedRequestProof.enrichIfAuthenticated(
+                request,
+                authenticated: true,
+                sessionToken: settings.authToken,
+                configuredAPIBaseURL: settings.apiBaseURL,
+                signer: proofSigner
+            )
+            let (data, response) = try await transport(signedRequest)
             guard data.count <= Self.responseLimit else { throw ThreatDeliveryHistoryError.invalidResponse }
             return (data, response)
         }
