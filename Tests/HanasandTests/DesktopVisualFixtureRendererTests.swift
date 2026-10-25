@@ -28,7 +28,6 @@ final class DesktopVisualFixtureRendererTests: XCTestCase {
 
         let output = URL(fileURLWithPath: "/private/tmp/hanasand-desktop-visual-fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let page = try XCTUnwrap(NativePublicInfoPage.resolve("/"))
         let requestRecorder = VisualFixtureRequestRecorder()
         let activityFixture = Data(#"{"generatedAt":"2026-10-25T10:00:00Z","status":"live","freshness":{"latestClaimAt":"2026-10-25T09:30:00Z","latestCollectedAt":"2026-10-25T09:31:00Z","ageMinutes":30,"collectionAgeMinutes":29,"maxLiveAgeMinutes":120},"counts":{"visible":1,"total":1,"needsReview":1,"metadataOnly":0},"page":{"limit":50,"offset":0,"total":1,"nextOffset":null,"hasMore":false},"items":[{"id":"fixture-report-1","actor":"Example Research Group","company":"Northstar Analytics","claimedData":"Employee email addresses","claimedDataSize":"Metadata only","country":"NO","claimTime":"2026-10-25T09:30:00Z","collectedAt":"2026-10-25T09:31:00Z","status":"needs_review","confidence":0.82,"sourceName":"Synthetic visual fixture"}]}"#.utf8)
         let activityClient = PublicExposureActivityClient(send: { request in
@@ -41,19 +40,26 @@ final class DesktopVisualFixtureRendererTests: XCTestCase {
         })
 
         for width in [1080, 1512] {
-            let model = DesktopAgentModel(visualFixture: ())
-            XCTAssertTrue(model.settings.authToken.isEmpty)
-            XCTAssertTrue(model.settings.userID.isEmpty)
-
-            let home = AnyView(FeatureWorkspace(title: "Home", subtitle: "") {
-                NativePublicInfoPanel(
+            for route in [
+                "/", "/about", "/contact", "/faq", "/cookies", "/cookie-settings",
+                "/privacy", "/terms", "/reserved-usernames", "/pricing",
+                "/solutions/scanner", "/solutions/security-monitoring", "/security.txt",
+            ] {
+                let page = try XCTUnwrap(NativePublicInfoPage.resolve(route))
+                let suiteName = "hanasand.visual-fixture.\(UUID().uuidString)"
+                let fixtureDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+                defer { fixtureDefaults.removePersistentDomain(forName: suiteName) }
+                let content = NativePublicInfoPanel(
                     page: page,
                     onNavigate: { _ in },
-                    homeActivityViewModel: PublicExposureActivityViewModel(client: activityClient),
-                    initialFAQFeedback: [:]
+                    homeActivityViewModel: page.kind == .home ? PublicExposureActivityViewModel(client: activityClient) : nil,
+                    initialFAQFeedback: [:],
+                    cookieSettingsDefaults: fixtureDefaults
                 )
-            })
-            try render(home, label: "home", width: width, output: output, model: model)
+                let view = AnyView(FeatureWorkspace(title: "", subtitle: "", contentMaxWidth: 1280) { content })
+                try render(view, label: "public\(safeLabel(route))", width: width, output: output,
+                           model: DesktopAgentModel(visualFixture: ()))
+            }
 
             try render(
                 AnyView(NativeAccountRoutePanel(path: "/login", query: [:])),
@@ -69,6 +75,10 @@ final class DesktopVisualFixtureRendererTests: XCTestCase {
             "/api/public/exposure-queue", "/api/public/exposure-queue",
         ])
         XCTAssertTrue(requestRecorder.urls.allSatisfy { $0.host == "hanasand.com" })
+    }
+
+    private func safeLabel(_ route: String) -> String {
+        route == "/" ? "-home" : route.replacingOccurrences(of: "/", with: "-")
     }
 
     private func render(

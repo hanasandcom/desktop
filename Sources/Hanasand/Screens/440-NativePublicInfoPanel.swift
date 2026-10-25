@@ -45,6 +45,7 @@ struct NativePublicInfoPanel: View {
     let page: NativePublicInfoPage
     let onNavigate: (String) -> Void
     private let homeActivityViewModel: PublicExposureActivityViewModel?
+    private let cookieSettingsDefaults: UserDefaults
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -71,11 +72,13 @@ struct NativePublicInfoPanel: View {
         page: NativePublicInfoPage,
         onNavigate: @escaping (String) -> Void,
         homeActivityViewModel: PublicExposureActivityViewModel? = nil,
-        initialFAQFeedback: [String: NativeFAQFeedbackVote]? = nil
+        initialFAQFeedback: [String: NativeFAQFeedbackVote]? = nil,
+        cookieSettingsDefaults: UserDefaults = .standard
     ) {
         self.page = page
         self.onNavigate = onNavigate
         self.homeActivityViewModel = homeActivityViewModel
+        self.cookieSettingsDefaults = cookieSettingsDefaults
         _faqFeedback = State(initialValue: initialFAQFeedback ?? NativeFAQFeedbackStore.load())
     }
 
@@ -830,6 +833,7 @@ struct NativePublicInfoPanel: View {
 
     private var cookieSettingsControls: some View {
         let snapshot = cookieSettings ?? NativeCookieSettingsPolicy.snapshot(
+            defaults: cookieSettingsDefaults,
             sessionToken: model.authTokenForRequests,
             impersonationToken: model.settings.impersonationToken
         )
@@ -931,6 +935,7 @@ struct NativePublicInfoPanel: View {
 
     private func refreshCookieSettings() {
         cookieSettings = NativeCookieSettingsPolicy.snapshot(
+            defaults: cookieSettingsDefaults,
             sessionToken: model.authTokenForRequests,
             impersonationToken: model.settings.impersonationToken
         )
