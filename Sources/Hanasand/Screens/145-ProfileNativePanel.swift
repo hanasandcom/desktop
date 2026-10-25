@@ -87,6 +87,7 @@ struct ProfileNativePanel: View {
                         ActionButton(title: "Delete account", icon: "trash", tone: .danger) {
                             confirmDeleteAccount = true
                         }
+                        .disabled(!model.hasHanasandAuth || model.isProfileIdentityImpersonating)
                     }
                     NativeGoogleConnectionStatus()
                     if let roles = profile.roles, !roles.isEmpty {

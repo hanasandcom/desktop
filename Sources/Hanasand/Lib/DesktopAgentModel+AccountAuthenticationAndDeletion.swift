@@ -160,6 +160,10 @@ struct AccountSignupClient {
 }
 
 extension DesktopAgentModel {
+    static func accountDeletionImpersonationDenial(isImpersonating: Bool) -> String? {
+        isImpersonating ? "Return to your own account before scheduling deletion." : nil
+    }
+
 
     func submitAccountSignup(name: String, username: String, email: String, password: String, challengeID: String? = nil, code: String? = nil) async throws -> AccountSignupResult {
         guard !isLoggingIn else { throw AccountSignupError.requestFailed("Account creation is already in progress.") }
@@ -350,6 +354,10 @@ extension DesktopAgentModel {
     }
 
     func scheduleAccountDeletion() async {
+        if let denial = Self.accountDeletionImpersonationDenial(isImpersonating: isProfileIdentityImpersonating) {
+            nativeDashboardStatus = denial
+            return
+        }
         guard hasHanasandAuth else {
             nativeDashboardStatus = "Hanasand session is not ready. Log in again if this persists."
             return

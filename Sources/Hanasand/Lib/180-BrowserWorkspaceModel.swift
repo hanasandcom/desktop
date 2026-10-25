@@ -268,6 +268,13 @@ final class BrowserWorkspaceModel: ObservableObject {
         let queryItems = urlComponents?.queryItems ?? []
         func queryValue(_ key: String) -> String? { queryItems.first(where: { $0.name == key })?.value }
         var routeQuery = Dictionary(queryItems.compactMap { item in item.value.map { (item.name, $0) } }, uniquingKeysWith: { first, _ in first })
+        let accountFragmentSecretKey: String?
+        switch path {
+        case "/reset-password", "/reset-password-again", "/secure-account": accountFragmentSecretKey = "token"
+        case "/account-pending-deletion": accountFragmentSecretKey = "restoreToken"
+        default: accountFragmentSecretKey = nil
+        }
+        if let accountFragmentSecretKey { routeQuery.removeValue(forKey: accountFragmentSecretKey) }
         if websiteBrowserReportAlias {
             // The Website redirect carries only these two share-report inputs
             // to its canonical page. Keep the same narrow contract for direct
@@ -285,7 +292,8 @@ final class BrowserWorkspaceModel: ObservableObject {
         // Images panel validates albumId against the signed-in user's albums.
         if !websiteBrowserReportAlias, let fragment = urlComponents?.fragment, !fragment.isEmpty,
            let fragmentComponents = URLComponents(string: "https://fragment.invalid/?\(fragment)") {
-            for item in fragmentComponents.queryItems ?? [] where routeQuery[item.name] == nil {
+            for item in fragmentComponents.queryItems ?? []
+            where routeQuery[item.name] == nil && item.name == accountFragmentSecretKey {
                 if let value = item.value { routeQuery[item.name] = value }
             }
         }

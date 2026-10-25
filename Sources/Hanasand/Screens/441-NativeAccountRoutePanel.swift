@@ -115,6 +115,18 @@ private struct NativePasswordResetAgainResponse: Decodable {
     let resetToken: String
 }
 
+struct NativeAccountRouteSecretCapture: Equatable {
+    let values: [String: String]
+    let sanitizedQuery: [String: String]
+
+    static func capture(from query: [String: String], removing keys: Set<String>) -> Self {
+        let values = query.filter { keys.contains($0.key) }
+        var sanitizedQuery = query
+        keys.forEach { sanitizedQuery.removeValue(forKey: $0) }
+        return Self(values: values, sanitizedQuery: sanitizedQuery)
+    }
+}
+
 private final class NativeAccountRedirectBlocker: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
@@ -136,7 +148,7 @@ private enum NativeAccountRouteSession {
 
 struct NativeAccountRoutePanel: View {
     let path: String
-    let query: [String: String]
+    @State private var query: [String: String]
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -162,6 +174,11 @@ struct NativeAccountRoutePanel: View {
     @State private var savedProfiles: [NativeSavedAccountProfile] = []
     @State private var profilesError = ""
     @State private var addingProfile = false
+
+    init(path: String, query: [String: String]) {
+        self.path = path
+        _query = State(initialValue: query)
+    }
 
     private var kind: NativeAccountRouteKind? {
         if path == "/login", query["mode"]?.lowercased() == "signup" { return .signup }
@@ -523,12 +540,10 @@ struct NativeAccountRoutePanel: View {
             if model.hasHanasandAuth { await signOut() }
             else { message = "This Desktop session is signed out." }
         case .secureAccount, .resetPasswordAgain:
-            actionToken = safeRouteSecret(query["token"]) ?? ""
-            removeSensitiveRouteValues(["token"])
+            actionToken = safeRouteSecret(consumeSensitiveRouteValues(["token"])["token"]) ?? ""
         case .resetPassword:
             resetUserID = safeAccountID(query["id"]) ?? ""
-            let token = safeRouteSecret(query["token"]) ?? ""
-            removeSensitiveRouteValues(["token"])
+            let token = safeRouteSecret(consumeSensitiveRouteValues(["token"])["token"]) ?? ""
             if !resetUserID.isEmpty, !token.isEmpty {
                 model.passwordResetUsername = resetUserID
                 model.passwordResetToken = token
@@ -541,10 +556,9 @@ struct NativeAccountRoutePanel: View {
             }
         case .pendingDeletion:
             model.pendingDeletionUserID = safeAccountID(query["id"]) ?? ""
-            model.pendingDeletionRestoreToken = safeRouteSecret(query["restoreToken"]) ?? ""
+            model.pendingDeletionRestoreToken = safeRouteSecret(consumeSensitiveRouteValues(["restoreToken"])["restoreToken"]) ?? ""
             model.pendingDeletionScheduledAt = String((query["deletionScheduledAt"] ?? "").prefix(100))
             model.pendingDeletionStatus = ""
-            removeSensitiveRouteValues(["restoreToken"])
         case .switchAccount:
             await loadProfiles()
         case .loadTest:
@@ -771,8 +785,11 @@ struct NativeAccountRoutePanel: View {
         _ = model.openNativeHanasandRoute(route)
     }
 
-    @MainActor private func removeSensitiveRouteValues(_ keys: Set<String>) {
+    @MainActor private func consumeSensitiveRouteValues(_ keys: Set<String>) -> [String: String] {
+        let capture = NativeAccountRouteSecretCapture.capture(from: query, removing: keys)
+        query = capture.sanitizedQuery
         for key in keys { model.selectedNativeDashboardQuery.removeValue(forKey: key) }
+        return capture.values
     }
 
     private func safeLocalPath(_ value: String?) -> String? {
