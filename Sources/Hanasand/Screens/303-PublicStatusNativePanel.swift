@@ -123,9 +123,9 @@ struct PublicStatusNativePanel: View {
         if payload.checks.isEmpty {
             NativeEmptyState(title: "No service checks", message: "The public status feed has no current checks.")
         } else {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(payload.checks) { check in
-                    NativeGroupPanel(title: check.checkName, subtitle: check.displayService) {
+                    NativeGroupPanel(title: check.checkName, subtitle: check.displayService, fillsAvailableWidth: true) {
                         HStack {
                             Label(statusLabel(check.status), systemImage: statusSymbol(check.status))
                                 .font(.system(size: 12, weight: .semibold))
@@ -140,17 +140,97 @@ struct PublicStatusNativePanel: View {
                             .foregroundStyle(theme.textSecondary)
                             .textSelection(.enabled)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("\(check.uptime90Days == nil ? "30" : "90") day uptime: \(check.uptime90Days ?? check.uptime30Days ?? "unverified")")
                             Text(formatDateText(check.checkedAt, fallback: "Not verified"))
                                 .lineLimit(2)
                                 .textSelection(.enabled)
                         }
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(theme.textTertiary)
+                        statusTimeline(for: check, in: payload)
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder private func statusTimeline(for check: PublicStatusCheck, in payload: PublicStatusPayload) -> some View {
+        let days = PublicStatusTimeline.days(for: check, in: payload)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("90-day history")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+                Spacer(minLength: 4)
+                Text("\(check.uptime90Days ?? check.uptime30Days ?? "Unverified") uptime")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            HStack(spacing: 1) {
+                ForEach(days) { day in
+                    if let incident = day.incident {
+                        Button {
+                            section = .incidents
+                            Task { await model.selectIncident(incident) }
+                        } label: {
+                            timelineBar(for: day)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(timelineLabel(for: day, hasIncident: true))
+                        .help(timelineLabel(for: day, hasIncident: true))
+                    } else {
+                        timelineBar(for: day)
+                            .accessibilityLabel(timelineLabel(for: day, hasIncident: false))
+                    }
+                }
+            }
+            .frame(height: 28)
+            HStack {
+                Text("90 days ago")
+                Spacer(minLength: 4)
+                Text("Today")
+            }
+            .font(.system(size: 8, weight: .medium))
+            .foregroundStyle(theme.textTertiary)
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func timelineBar(for day: PublicStatusTimelineDay) -> some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(timelineFill(for: day))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+    }
+
+    private func timelineFill(for day: PublicStatusTimelineDay) -> LinearGradient {
+        guard let healthy = day.healthyFraction, let healthyAndDegraded = day.healthyAndDegradedFraction else {
+            let color: Color
+            switch day.displayStatus.lowercased() {
+            case "up", "normal": color = theme.green
+            case "degraded", "investigating": color = theme.accent
+            case "down", "outage": color = theme.danger
+            default: color = theme.textTertiary.opacity(0.6)
+            }
+            return LinearGradient(colors: [color], startPoint: .top, endPoint: .bottom)
+        }
+        let healthyBoundary = 1 - min(max(healthy, 0), 1)
+        let dangerBoundary = 1 - min(max(healthyAndDegraded, healthy), 1)
+        return LinearGradient(stops: [
+            .init(color: theme.danger, location: 0),
+            .init(color: theme.accent, location: dangerBoundary),
+            .init(color: theme.green, location: healthyBoundary),
+            .init(color: theme.green, location: 1),
+        ], startPoint: .top, endPoint: .bottom)
+    }
+
+    private func timelineLabel(for day: PublicStatusTimelineDay, hasIncident: Bool) -> String {
+        let date = formatDateText(day.date, fallback: day.date)
+        let status = statusLabel(day.displayStatus)
+        if hasIncident { return "\(date): \(status). View incident details." }
+        return "\(date): \(status). No linked incident details."
     }
 
     @ViewBuilder private func incidents(_ payload: PublicStatusPayload) -> some View {

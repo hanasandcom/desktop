@@ -336,4 +336,52 @@ final class PublicStatusTests: XCTestCase {
         XCTAssertNotEqual(formatted, "2026-10-23T19:51:19.658Z")
         XCTAssertNotEqual(formatted, "unverified")
     }
+
+    func testPublicStatusTimelineCoversTheLatest90UTCDateKeys() throws {
+        let formatter = ISO8601DateFormatter()
+        let now = try XCTUnwrap(formatter.date(from: "2026-10-25T23:59:00Z"))
+
+        let dates = PublicStatusTimeline.dateKeys(now: now)
+
+        XCTAssertEqual(dates.count, 90)
+        XCTAssertEqual(dates.first, "2026-07-28")
+        XCTAssertEqual(dates.last, "2026-10-25")
+    }
+
+    func testPublicStatusTimelineAssociatesOnlyVisibleMatchingIncidents() throws {
+        let fixture = Data(#"""
+        {
+          "overall":"degraded","monitoring":"live",
+          "checks":[{"service":"infrastructure","check_name":"Browser Web","status":"down","uptime_90d":"98.6"}],
+          "incidents":[
+            {"id":"incident-42","aliases":["legacy-42"],"service":"infrastructure","check_name":"Browser Web","title":"Browser Web interruption","impact":"Degraded","status":"resolved","started_at":"2026-07-28T09:00:00Z","summary":"Requests recovered.","updates":[]},
+            {"id":"unsafe-incident","service":"infrastructure","check_name":"Browser Web","title":"Browser Worker 2ee166a failed","impact":"Outage","status":"resolved","started_at":"2026-07-29T09:00:00Z","summary":"Worker 2ee166a recovered.","updates":[]}
+          ],
+          "history":[
+            {"service":"infrastructure","check_name":"Browser Web","date":"2026-07-28","status":"down","incident_ids":["legacy-42"],"samples":24,"healthy_samples":20,"degraded_samples":1,"failed_samples":3},
+            {"service":"infrastructure","check_name":"Browser Web","date":"2026-07-29","status":"down","incident_ids":["unsafe-incident"],"samples":24,"healthy_samples":20,"degraded_samples":1,"failed_samples":3},
+            {"service":"infrastructure","check_name":"Browser Web","date":"2026-07-30","status":"down","incident_ids":["not-in-visible-feed"],"samples":24,"healthy_samples":0,"degraded_samples":0,"failed_samples":24},
+            {"service":"infrastructure","check_name":"Browser Web","date":"2026-07-31","status":"down","incident_ids":["incident-42"]},
+            {"service":"website","check_name":"Browser Web","date":"2026-07-28","status":"up","incident_ids":["incident-42"]}
+          ]
+        }
+        """#.utf8)
+        let payload = try JSONDecoder().decode(PublicStatusPayload.self, from: fixture)
+        let check = try XCTUnwrap(payload.checks.first)
+        let now = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-25T23:59:00Z"))
+        let days = PublicStatusTimeline.days(for: check, in: payload, now: now)
+        let byDate = Dictionary(uniqueKeysWithValues: days.map { ($0.date, $0) })
+
+        XCTAssertEqual(payload.incidents.map(\.id), ["incident-42"])
+        XCTAssertEqual(byDate["2026-07-28"]?.incident?.id, "incident-42")
+        XCTAssertEqual(byDate["2026-07-28"]?.displayStatus, "degraded")
+        XCTAssertEqual(byDate["2026-07-28"]?.samples, 24)
+        XCTAssertEqual(try XCTUnwrap(byDate["2026-07-28"]?.healthyFraction), 20.0 / 24.0, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(byDate["2026-07-28"]?.healthyAndDegradedFraction), 21.0 / 24.0, accuracy: 0.0001)
+        XCTAssertNil(byDate["2026-07-29"]?.incident)
+        XCTAssertNil(byDate["2026-07-30"]?.incident)
+        XCTAssertEqual(byDate["2026-07-31"]?.incident?.id, "incident-42")
+        XCTAssertNil(byDate["2026-07-27"])
+        XCTAssertEqual(byDate["2026-07-28"]?.id, "2026-07-28")
+    }
 }

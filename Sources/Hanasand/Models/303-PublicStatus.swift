@@ -59,6 +59,84 @@ struct PublicStatusPayload: Codable, Equatable {
     )
 }
 
+struct PublicStatusTimelineDay: Equatable, Identifiable {
+    let date: String
+    let status: String
+    let samples: Int?
+    let healthyFraction: Double?
+    let healthyAndDegradedFraction: Double?
+    let incident: PublicStatusIncident?
+
+    var id: String { date }
+
+    var displayStatus: String {
+        guard status.lowercased() == "down", incident?.impact != "Outage" else { return status }
+        return "degraded"
+    }
+}
+
+enum PublicStatusTimeline {
+    static let dayCount = 90
+
+    static func days(for check: PublicStatusCheck, in payload: PublicStatusPayload, now: Date = Date()) -> [PublicStatusTimelineDay] {
+        let incidentByID = visibleIncidentIndex(payload.incidents)
+        var historyByDate: [String: PublicStatusDay] = [:]
+        for day in payload.history where PublicStatusSuite.allows(history: day)
+            && day.service == check.service && day.checkName == check.checkName {
+            historyByDate[day.date] = day
+        }
+
+        return dateKeys(now: now).map { date in
+            let history = historyByDate[date]
+            let incident = history?.incidentIDs.lazy.compactMap { incidentByID[$0] }.first
+            let samples = history?.samples.flatMap { $0 > 0 ? $0 : nil }
+            let healthy = boundedCount(history?.healthySamples, samples: samples)
+            let healthyAndDegraded = boundedCount((healthy ?? 0) + (history?.degradedSamples ?? 0), samples: samples)
+            let healthyFraction = samples.map { Double(healthy ?? 0) / Double($0) }
+            let healthyAndDegradedFraction = samples.map { Double(healthyAndDegraded ?? 0) / Double($0) }
+            return PublicStatusTimelineDay(
+                date: date,
+                status: history?.status ?? "unknown",
+                samples: samples,
+                healthyFraction: healthyFraction,
+                healthyAndDegradedFraction: healthyAndDegradedFraction,
+                incident: incident
+            )
+        }
+    }
+
+    static func dateKeys(now: Date = Date()) -> [String] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        let today = calendar.startOfDay(for: now)
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return (0..<dayCount).compactMap { index in
+            guard let date = calendar.date(byAdding: .day, value: index - (dayCount - 1), to: today) else { return nil }
+            return formatter.string(from: date)
+        }
+    }
+
+    private static func visibleIncidentIndex(_ incidents: [PublicStatusIncident]) -> [String: PublicStatusIncident] {
+        var result: [String: PublicStatusIncident] = [:]
+        for incident in incidents where PublicStatusSuite.allows(incident: incident) {
+            result[incident.id] = incident
+            for alias in incident.aliases ?? [] where !alias.isEmpty {
+                result[alias] = incident
+            }
+        }
+        return result
+    }
+
+    private static func boundedCount(_ value: Int?, samples: Int?) -> Int? {
+        guard let value, let samples, samples > 0 else { return nil }
+        return min(max(value, 0), samples)
+    }
+}
+
 struct PublicStatusCheck: Codable, Equatable, Identifiable {
     var id: String { "\(service)|\(checkName)" }
     var displayService: String { PublicStatusSuite.displayName(service) }
