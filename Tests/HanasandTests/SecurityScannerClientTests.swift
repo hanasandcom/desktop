@@ -124,7 +124,15 @@ final class SecurityScannerClientTests: XCTestCase {
         let olderServer = try decodeCoverage()
         XCTAssertEqual(olderServer.lastCompleteRun, .notReported)
         XCTAssertNil(olderServer.lastCompleteRunSummary)
+        XCTAssertNil(olderServer.authorizationScopeWarning, "An unreported scope comparison must not invent a warning.")
         XCTAssertFalse(try encodedCoverage(olderServer).keys.contains("lastCompleteRun"))
+
+        payload["scopeMatchesAuthorizedSnapshot"] = false
+        let mismatchedScope = try decodeCoverage()
+        XCTAssertEqual(mismatchedScope.authorizationScopeWarning, "Last run used a different authorized IP scope.")
+        payload["scopeMatchesAuthorizedSnapshot"] = true
+        XCTAssertNil(try decodeCoverage().authorizationScopeWarning)
+        payload.removeValue(forKey: "scopeMatchesAuthorizedSnapshot")
 
         payload["lastCompleteRun"] = NSNull()
         let noSnapshot = try decodeCoverage()

@@ -171,6 +171,10 @@ struct SecurityScannerCoverage: Codable, Identifiable, Equatable {
         }
     }
 
+    var authorizationScopeWarning: String? {
+        scopeMatchesAuthorizedSnapshot == false ? "Last run used a different authorized IP scope." : nil
+    }
+
     private enum CodingKeys: String, CodingKey {
         case assetId, engine, state, freshness, lastRunId, lastRunAt, source, profile, status
         case authorizedAddresses, requestedAddresses, coverageKnown, attemptedAddresses

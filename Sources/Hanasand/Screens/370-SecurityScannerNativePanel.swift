@@ -151,6 +151,9 @@ struct SecurityScannerNativePanel: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("\(assetName(coverage.assetId)) · \(engineName(coverage.engine))").font(.subheadline.weight(.semibold))
                                 Text("\(coverage.state.replacingOccurrences(of: "_", with: " ")) · \(coverage.freshness) · \(coverage.freshnessReason)").font(.caption).foregroundStyle(.secondary)
+                                if let warning = coverage.authorizationScopeWarning {
+                                    Text(warning).font(.caption2).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                                }
                                 if let lastCompleteRunSummary = coverage.lastCompleteRunSummary {
                                     Text(coverage.lastCompleteRunAt.map { "\(lastCompleteRunSummary) · \(formatDateText($0, fallback: $0))" } ?? lastCompleteRunSummary)
                                         .font(.caption2).foregroundStyle(.secondary)
