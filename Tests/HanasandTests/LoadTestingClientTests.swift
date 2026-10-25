@@ -3,6 +3,50 @@ import XCTest
 @testable import Hanasand
 
 final class LoadTestingClientTests: XCTestCase {
+    func testResultReportParsesTrendSeriesAndPreviousRunComparison() throws {
+        let payload = #"{"id":"run-17","url":"https://example.com","status":"done","latest_run_summary":{"requests":120,"checks":100,"failures":3,"failureRate":0.03,"duration":{"p50":42,"p95":187},"rps":[{"time":"0s","value":4},{"time":"10s","value":12}],"latency":[{"time":"0s","p50":40,"p95":120},{"time":"10s","p50":45,"p95":187}],"errors":[{"time":"10s","count":3}]},"previous_run_summary":{"requests":100,"failureRate":0.02,"duration":{"p50":50,"p95":210},"rps":[{"time":"0s","value":10}]},"p95_delta_ms":23}"#
+        let test = try JSONDecoder().decode(DashboardRecentTest.self, from: Data(payload.utf8))
+
+        let latest = try XCTUnwrap(test.reportSummary)
+        XCTAssertEqual(latest.requests, 120)
+        XCTAssertEqual(latest.checks, 100)
+        XCTAssertEqual(latest.failures, 3)
+        XCTAssertEqual(latest.failureRate, 0.03)
+        XCTAssertEqual(latest.duration("p50"), 42)
+        XCTAssertEqual(latest.duration("p95"), 187)
+        XCTAssertEqual(latest.series.map(\.name), ["rps", "latency", "errors"])
+        XCTAssertEqual(latest.series[0].title, "Requests per second")
+        XCTAssertEqual(latest.series[0].points[1].time, "10s")
+        XCTAssertEqual(latest.series[0].points[1].values["value"], 12)
+        XCTAssertEqual(latest.series[1].points[1].values["p50"], 45)
+        XCTAssertEqual(latest.series[1].points[1].values["p95"], 187)
+        XCTAssertEqual(latest.series[2].points[0].values["count"], 3)
+        XCTAssertTrue(latest.hasTimeSeries)
+
+        let previous = try XCTUnwrap(test.previousReportSummary)
+        XCTAssertEqual(previous.requests, 100)
+        XCTAssertEqual(previous.duration("p95"), 210)
+        XCTAssertEqual(test.p95DeltaLabel, "faster 23ms")
+    }
+
+    func testResultReportHandlesEmptyAndBoundedChartData() throws {
+        let emptyPayload = #"{"id":"run-empty","url":"https://example.com","status":"done","summary":{"requests":4,"duration":{"p95":90},"rps":[],"latency":[{"time":"bad","p50":-1},{"time":"also bad"}],"errors":[]}}"#
+        let empty = try JSONDecoder().decode(DashboardRecentTest.self, from: Data(emptyPayload.utf8))
+        let summary = try XCTUnwrap(empty.reportSummary)
+        XCTAssertFalse(summary.hasTimeSeries)
+        XCTAssertTrue(summary.series.isEmpty)
+        XCTAssertEqual(summary.requests, 4)
+        XCTAssertEqual(summary.duration("p95"), 90)
+
+        let points = (0..<302).map { "{\"time\":\"\($0)s\",\"value\":\($0)}" }.joined(separator: ",")
+        let boundedPayload = "{\"id\":\"run-many\",\"url\":\"https://example.com\",\"status\":\"done\",\"summary\":{\"rps\":[\(points)]}}"
+        let bounded = try JSONDecoder().decode(DashboardRecentTest.self, from: Data(boundedPayload.utf8))
+        let rps = try XCTUnwrap(bounded.reportSummary?.series.first)
+        XCTAssertEqual(rps.name, "rps")
+        XCTAssertEqual(rps.points.count, 300)
+        XCTAssertEqual(rps.points.last?.time, "299s")
+    }
+
     func testAnonymousQuotaHistoryAndCreateUseOnlyPersistentClientIdentity() async throws {
         let clientID = "4e57a3bf-41da-46d8-9d85-0a29d7e87d43"
         var requests: [URLRequest] = []

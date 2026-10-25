@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Charts
 import Combine
 import CryptoKit
 import Darwin
@@ -21,8 +22,6 @@ extension RecentTestsNativePanel {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                 FeatureCard(title: "Status", value: displayedStatus.capitalized, icon: statusIcon(displayedStatus))
                 FeatureCard(title: "Timeout", value: test.timeout.map { "\($0)s" } ?? "Default", icon: "timer")
-                FeatureCard(title: "Requests", value: displayedSummary?.numberValue(for: ["requests"]).map { String(Int($0)) } ?? "Unknown", icon: "arrow.left.arrow.right")
-                FeatureCard(title: "p95", value: displayedSummary?.numberValue(for: ["duration", "p95"]).map { "\(Int($0.rounded())) ms" } ?? "Collecting", icon: "waveform.path.ecg")
                 if liveForTest, let duration = liveSession.durationMilliseconds {
                     FeatureCard(title: "Duration", value: "\(duration)ms", icon: "stopwatch")
                 }
@@ -69,16 +68,23 @@ extension RecentTestsNativePanel {
                     Task { await openResult(id: test.id) }
                 }
             }
-            if let summary = displayedSummary {
-                Text(summary.pretty)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(theme.textSecondary)
-                    .lineLimit(10)
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(theme.backgroundElevated.opacity(0.72))
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            LoadTestSummaryPanel(
+                title: "Latest run metrics",
+                summary: DashboardLoadTestSummary(value: displayedSummary),
+                isCollecting: ["queued", "running", "pending"].contains(displayedStatus.lowercased())
+            )
+            if let previousSummary = test.previousReportSummary {
+                LoadTestSummaryPanel(title: "Previous run for this endpoint", summary: previousSummary, isCollecting: false)
+                if let delta = test.p95DeltaMs, delta.isFinite {
+                    Label(
+                        delta == 0 ? "p95 unchanged from previous run" : "Latest p95 is \(metricNumber(abs(delta)))ms \(delta > 0 ? "faster" : "slower") than previous run",
+                        systemImage: delta >= 0 ? "arrow.down.right" : "arrow.up.right"
+                    )
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(delta >= 0 ? theme.green : theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(delta == 0 ? "p95 unchanged from previous run" : "Latest p95 is \(metricNumber(abs(delta))) milliseconds \(delta > 0 ? "faster" : "slower") than previous run")
+                }
             }
             if !displayedErrors.isEmpty {
                 if showLiveErrors {
@@ -201,4 +207,156 @@ extension RecentTestsNativePanel {
         NSPasteboard.general.setString(url, forType: .string)
         noticeMessage = "Copied result link."
     }
+}
+
+private struct LoadTestSummaryPanel: View {
+    let title: String
+    let summary: DashboardLoadTestSummary?
+    let isCollecting: Bool
+
+    private let metricColumns = [GridItem(.adaptive(minimum: 140), spacing: 8, alignment: .top)]
+
+    var body: some View {
+        NativeGroupPanel(title: title, subtitle: "Aggregate measurements and chronological samples") {
+            if let summary {
+                LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 8) {
+                    FeatureCard(title: "Requests", value: summary.requests.map(String.init) ?? "Unavailable", icon: "arrow.left.arrow.right")
+                    FeatureCard(title: "p95 latency", value: summary.duration("p95").map { "\(metricNumber($0)) ms" } ?? "Unavailable", icon: "waveform.path.ecg")
+                    FeatureCard(title: "Failure rate", value: summary.failureRate.map { String(format: "%.1f%%", $0 * 100) } ?? "Unavailable", icon: "exclamationmark.triangle")
+                    if let checks = summary.checks {
+                        FeatureCard(title: "Checks", value: String(checks), icon: "checklist")
+                    }
+                    if let failures = summary.failures {
+                        FeatureCard(title: "Failures", value: String(failures), icon: failures > 0 ? "xmark.octagon" : "checkmark.circle")
+                    }
+                    ForEach(Array(summary.durations.filter { $0.0 != "p95" }.enumerated()), id: \.offset) { _, duration in
+                        FeatureCard(title: "Duration \(duration.0)", value: "\(metricNumber(duration.1)) ms", icon: "timer")
+                    }
+                }
+                if summary.series.isEmpty {
+                    NativeEmptyState(
+                        title: isCollecting ? "Chart data is collecting" : "No chart data",
+                        message: isCollecting ? "Charts appear as the runner records request, latency, or error samples." : "This run has aggregate measurements but no time-series samples."
+                    )
+                } else {
+                    ForEach(summary.series) { series in
+                        LoadTestMetricSeriesPanel(series: series)
+                    }
+                }
+            } else {
+                NativeEmptyState(
+                    title: isCollecting ? "Metrics are collecting" : "No aggregate metrics",
+                    message: isCollecting ? "Keep this result open while the runner reports measurements." : "The run did not return an aggregate summary. Logs and errors may still contain useful evidence."
+                )
+            }
+        }
+        .accessibilityIdentifier("load-test.summary.\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+    }
+}
+
+private struct LoadTestMetricSeriesPanel: View {
+    @Environment(\.desktopTheme) private var theme
+    @State private var samplePage = 0
+
+    let series: DashboardLoadTestMetricSeries
+
+    private let pageSize = 25
+
+    private var pageCount: Int {
+        max(1, Int(ceil(Double(series.points.count) / Double(pageSize))))
+    }
+
+    private var currentPage: Int {
+        min(samplePage, pageCount - 1)
+    }
+
+    private var visiblePoints: [DashboardLoadTestMetricPoint] {
+        Array(series.points.dropFirst(currentPage * pageSize).prefix(pageSize))
+    }
+
+    var body: some View {
+        NativeGroupPanel(title: series.title, subtitle: "\(series.points.count) chronological samples · showing page \(currentPage + 1) of \(pageCount)") {
+            Chart {
+                ForEach(Array(series.points.enumerated()), id: \.offset) { index, point in
+                    ForEach(series.metricKeys, id: \.self) { key in
+                        if let value = point.values[key] {
+                            if series.name == "errors" {
+                                BarMark(x: .value("Sample", index), y: .value(series.metricLabel(for: key), value))
+                                    .foregroundStyle(by: .value("Metric", series.metricLabel(for: key)))
+                            } else {
+                                LineMark(x: .value("Sample", index), y: .value(series.metricLabel(for: key), value))
+                                    .interpolationMethod(.monotone)
+                                    .foregroundStyle(by: .value("Metric", series.metricLabel(for: key)))
+                            }
+                        }
+                    }
+                }
+            }
+            .chartLegend(position: .bottom, alignment: .leading)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel()
+                }
+            }
+            .frame(height: 170)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(series.title) chart, \(series.points.count) chronological samples. Sample values are listed below.")
+
+            if let first = series.points.first?.time, let last = series.points.last?.time {
+                Text("\(first)  →  \(last)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.textTertiary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(visiblePoints) { point in
+                    let values = series.metricKeys.compactMap { key in
+                        point.values[key].map { "\(series.metricLabel(for: key)): \(metricNumber($0))" }
+                    }.joined(separator: " · ")
+                    Text("\(point.time) · \(values)")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("\(point.time), \(values)")
+                }
+            }
+
+            if pageCount > 1 {
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        pageButtons
+                        Spacer(minLength: 4)
+                        Text("Samples \(currentPage * pageSize + 1)–\(min((currentPage + 1) * pageSize, series.points.count)) of \(series.points.count)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        pageButtons
+                        Text("Samples \(currentPage * pageSize + 1)–\(min((currentPage + 1) * pageSize, series.points.count)) of \(series.points.count)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                }
+            }
+        }
+        .onChange(of: series.points) { _, _ in samplePage = 0 }
+    }
+
+    private var pageButtons: some View {
+        HStack(spacing: 8) {
+            ActionButton(title: "Previous samples", icon: "chevron.left") { samplePage = max(0, currentPage - 1) }
+                .disabled(currentPage == 0)
+            ActionButton(title: "Next samples", icon: "chevron.right") { samplePage = min(pageCount - 1, currentPage + 1) }
+                .disabled(currentPage + 1 >= pageCount)
+        }
+    }
+}
+
+private func metricNumber(_ value: Double) -> String {
+    String(format: "%.0f", value)
 }
