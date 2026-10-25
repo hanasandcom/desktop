@@ -97,8 +97,10 @@ struct SystemNativePanel: View {
                 Image(systemName: "clock")
                 Text(container.createdLabel)
                 Spacer()
-                ActionButton(title: "Restart", icon: "arrow.clockwise") {
-                    restartCandidate = container
+                if !container.isProtectedLogsContainer {
+                    ActionButton(title: "Restart", icon: "arrow.clockwise") {
+                        restartCandidate = container
+                    }
                 }
             }
             .font(.system(size: 12, weight: .semibold))

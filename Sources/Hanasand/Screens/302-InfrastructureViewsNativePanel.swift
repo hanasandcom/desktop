@@ -169,8 +169,10 @@ struct InfrastructureContainersNativePanel: View {
 
     @ViewBuilder
     private func containerActions(_ container: InfrastructureContainer) -> some View {
-        ActionButton(title: "Review restart", icon: "arrow.clockwise") { restartCandidate = container }
-            .disabled(access?.canWrite != true || !clientIsCurrent)
+        if !container.isProtectedLogsContainer {
+            ActionButton(title: "Review restart", icon: "arrow.clockwise") { restartCandidate = container }
+                .disabled(access?.canWrite != true || !clientIsCurrent)
+        }
         ActionButton(title: "Refresh runtime logs", icon: "doc.text.magnifyingglass") { Task { await loadLogs(container) } }
         ActionButton(title: "Open full Logs", icon: "list.bullet.rectangle") {
             model.openNativeHanasandRoute(InfrastructureContainerLogsRoute.nativeRoute(for: container))

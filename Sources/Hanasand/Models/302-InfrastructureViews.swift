@@ -26,6 +26,16 @@ struct InfrastructureContainer: Identifiable, Equatable {
 
     var isRunning: Bool { state.localizedCaseInsensitiveContains("running") }
     var displayName: String { name.isEmpty ? String(id.prefix(12)) : name }
+    var isProtectedLogsContainer: Bool {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "")
+            .lowercased()
+        return normalized == "processor"
+            || normalized == "logs"
+            || normalized == "hanasand-log-collector"
+            || normalized.hasPrefix("logs-")
+            || normalized.hasPrefix("logs_")
+    }
     var cpuLabel: String { cpuPercent.map { String(format: "%.1f%%", $0) } ?? "Unavailable" }
     var memoryLabel: String { memoryBytes.map(Self.byteLabel) ?? "Unavailable" }
     var memoryLimitLabel: String { memoryLimitBytes.map(Self.byteLabel) ?? "Unavailable" }

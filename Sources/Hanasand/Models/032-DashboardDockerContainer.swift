@@ -46,6 +46,21 @@ struct DashboardDockerContainer: Decodable, Identifiable {
         (status ?? "").localizedCaseInsensitiveContains("running")
     }
 
+    var isProtectedLogsContainer: Bool {
+        Self.isProtectedLogsName(name ?? "")
+    }
+
+    private static func isProtectedLogsName(_ name: String) -> Bool {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "")
+            .lowercased()
+        return normalized == "processor"
+            || normalized == "logs"
+            || normalized == "hanasand-log-collector"
+            || normalized.hasPrefix("logs-")
+            || normalized.hasPrefix("logs_")
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
