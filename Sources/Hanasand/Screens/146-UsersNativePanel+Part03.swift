@@ -29,6 +29,9 @@ extension UsersNativePanel {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
             } else if let user = model.selectedUserProfile {
+                if !organizationNavigationStatus.isEmpty {
+                    NativeNotice(message: organizationNavigationStatus, title: "Organization unavailable")
+                }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], alignment: .leading, spacing: 12) {
                     profileValue("User ID", user.id, symbol: "number")
                     profileValue("Username", user.username ?? "Not set", symbol: "at")
@@ -65,6 +68,23 @@ extension UsersNativePanel {
                             .padding(9)
                             .background(theme.cardRaised)
                             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            if UsersNativePanelPresentation.canOpenOrganization(
+                                organization,
+                                as: model.users.first { $0.id == model.userIDForRequests },
+                                isImpersonating: model.isImpersonatingForOrganizationSwitch
+                            ) {
+                                Button {
+                                    openUserOrganization(organization)
+                                } label: {
+                                    Label("Open organization", systemImage: "arrow.up.right")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(theme.accent)
+                                .accessibilityLabel("Open organization \(organization.name)")
+                            }
                         }
                     }
                 }
@@ -74,6 +94,30 @@ extension UsersNativePanel {
                     message: model.nativeDashboardStatus.isEmpty ? "The user profile could not be loaded. Refresh and try again." : model.nativeDashboardStatus
                 )
             }
+        }
+    }
+
+    private func openUserOrganization(_ organization: DashboardUserOrganization) {
+        guard UsersNativePanelPresentation.canOpenOrganization(
+            organization,
+            as: model.users.first { $0.id == model.userIDForRequests },
+            isImpersonating: model.isImpersonatingForOrganizationSwitch
+        ) else { return }
+
+        let profileID = model.selectedUserProfileID
+        let accountID = model.userIDForRequests
+        let sessionToken = model.authTokenForRequests
+        organizationNavigationStatus = ""
+        Task {
+            let selected = await model.selectOrganizationFromDeepLink(organization.id)
+            guard model.selectedUserProfileID == profileID,
+                  model.userIDForRequests == accountID,
+                  model.authTokenForRequests == sessionToken else { return }
+            guard selected else {
+                organizationNavigationStatus = model.organizationDirectoryError ?? "Refresh organizations and verify your active membership before opening this workspace."
+                return
+            }
+            model.openNativeDashboard(path: "/organizations", label: organization.name)
         }
     }
 

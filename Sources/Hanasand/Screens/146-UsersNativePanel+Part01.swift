@@ -11,6 +11,15 @@ import UniformTypeIdentifiers
 import WebKit
 
 enum UsersNativePanelPresentation {
+    static func canOpenOrganization(
+        _ organization: DashboardUserOrganization,
+        as actor: DashboardUser?,
+        isImpersonating: Bool
+    ) -> Bool {
+        guard !isImpersonating, organization.status == "active", let actor, actor.active == true else { return false }
+        return actor.organizations.contains { $0.id == organization.id && $0.status == "active" }
+    }
+
     static func organizationSummary(_ organizations: [DashboardUserOrganization]) -> String {
         guard !organizations.isEmpty else { return "No organization memberships" }
         let details = organizations.map { organization in
@@ -147,6 +156,7 @@ extension UsersNativePanel {
             await model.loadSelectedUserRoles()
         }
         .task(id: model.selectedUserProfileID) {
+            organizationNavigationStatus = ""
             await model.loadSelectedUserProfile()
         }
         .alert(statusAlertTitle, isPresented: Binding(

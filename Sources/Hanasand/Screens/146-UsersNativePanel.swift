@@ -17,4 +17,5 @@ struct UsersNativePanel: View {
 
     @State var searchText = ""; @State var showReserved = false; @State var pendingStatusUser: DashboardUser?; @State var pendingDeleteUser: DashboardUser?; @State var pendingImpersonationUser: DashboardUser?
     @State var impersonationReason = ""; @State var impersonationReasonError = ""
+    @State var organizationNavigationStatus = ""
 }
