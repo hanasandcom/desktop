@@ -41,6 +41,35 @@ private struct WebsiteWeightedColumns: Layout {
     }
 }
 
+struct NativePublicInfoFAQGroup: Identifiable, Equatable {
+    let category: String
+    let items: [NativePublicInfoFAQ]
+
+    var id: String { category }
+}
+
+enum NativePublicInfoFAQLayout {
+    static func groups(from items: [NativePublicInfoFAQ]) -> [NativePublicInfoFAQGroup] {
+        var categories: [String] = []
+        var itemsByCategory: [String: [NativePublicInfoFAQ]] = [:]
+        for item in items {
+            if itemsByCategory[item.category] == nil {
+                categories.append(item.category)
+                itemsByCategory[item.category] = []
+            }
+            itemsByCategory[item.category, default: []].append(item)
+        }
+        return categories.compactMap { category in
+            guard let items = itemsByCategory[category], !items.isEmpty else { return nil }
+            return NativePublicInfoFAQGroup(category: category, items: items)
+        }
+    }
+
+    static var initialExpandedQuestion: String? {
+        NativePublicInfoPage.faqItems.first?.question
+    }
+}
+
 struct NativePublicInfoPanel: View {
     let page: NativePublicInfoPage
     let onNavigate: (String) -> Void
@@ -64,6 +93,7 @@ struct NativePublicInfoPanel: View {
     @State private var isSubmitting = false
     @State private var search = ""
     @State private var selectedFAQCategory = "All"
+    @State private var expandedFAQQuestion = NativePublicInfoFAQLayout.initialExpandedQuestion
     @State private var faqFeedback: [String: NativeFAQFeedbackVote]
     @StateObject private var planCheckout = NativePlanCheckoutCoordinator()
 
@@ -89,8 +119,18 @@ struct NativePublicInfoPanel: View {
         }
     }
 
+    private var faqGroups: [NativePublicInfoFAQGroup] {
+        NativePublicInfoFAQLayout.groups(from: NativePublicInfoPage.faqItems).compactMap { group in
+            let items = group.items.filter { item in
+                (selectedFAQCategory == "All" || item.category == selectedFAQCategory)
+                    && (search.isEmpty || "\(item.question) \(item.answer)".localizedCaseInsensitiveContains(search))
+            }
+            return items.isEmpty ? nil : NativePublicInfoFAQGroup(category: group.category, items: items)
+        }
+    }
+
     private var faqCategories: [String] {
-        ["All"] + Array(Set(NativePublicInfoPage.faqItems.map(\.category))).sorted()
+        ["All"] + NativePublicInfoFAQLayout.groups(from: NativePublicInfoPage.faqItems).map(\.category)
     }
 
     private var heroTitleSize: CGFloat {
@@ -626,56 +666,145 @@ struct NativePublicInfoPanel: View {
     }
 
     private var faqControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("Search questions", text: $search).textFieldStyle(.roundedBorder)
-            ViewThatFits(in: .horizontal) {
-                Picker("Category", selection: $selectedFAQCategory) {
-                    ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+        TextField("Search questions", text: $search)
+            .textFieldStyle(.roundedBorder)
+            .onChange(of: search) { _, _ in
+                if !filteredFAQs.contains(where: { $0.question == expandedFAQQuestion }) {
+                    expandedFAQQuestion = filteredFAQs.first?.question
                 }
-                .pickerStyle(.segmented)
-                Picker("Category", selection: $selectedFAQCategory) {
-                    ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+            }
+    }
+
+    private var faqContent: some View {
+        NativeGroupPanel(title: "Frequently asked questions", subtitle: "\(filteredFAQs.count) answers", fillsAvailableWidth: true) {
+            if filteredFAQs.isEmpty {
+                NativeEmptyState(title: "No matching answers", message: "Try a different search or category.")
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    WebsiteWeightedColumns(
+                        leadingFraction: 0.22,
+                        spacing: 24,
+                        minimumLeadingWidth: 184,
+                        minimumTrailingWidth: 380
+                    ) {
+                        faqCategoryNavigation
+                        faqGroupedQuestions
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        faqCompactCategoryPicker
+                        faqGroupedQuestions
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.menu)
             }
         }
     }
 
-    private var faqContent: some View {
-        NativeGroupPanel(title: "Frequently asked questions", subtitle: "\(filteredFAQs.count) answers") {
-            if filteredFAQs.isEmpty {
-                NativeEmptyState(title: "No matching answers", message: "Try a different search or category.")
-            } else {
-                ForEach(filteredFAQs) { item in
-                    DisclosureGroup {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(item.answer)
-                                .font(.system(size: 12))
-                                .foregroundStyle(theme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                            HStack(spacing: 8) {
-                                Text("Was this useful?")
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(theme.textSecondary)
-                                faqFeedbackButton("Yes", vote: .yes, question: item.question, icon: "hand.thumbsup")
-                                faqFeedbackButton("No", vote: .no, question: item.question, icon: "hand.thumbsdown")
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(theme.cardRaised, in: Capsule())
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.question).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
-                            Text(item.category.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(theme.textTertiary)
+    private var faqCategoryNavigation: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(faqCategories, id: \.self) { category in
+                faqCategoryButton(category)
+            }
+        }
+    }
+
+    private var faqCompactCategoryPicker: some View {
+        ViewThatFits(in: .horizontal) {
+            Picker("Category", selection: faqCategorySelection) {
+                ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Picker("Category", selection: faqCategorySelection) {
+                ForEach(faqCategories, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.menu)
+        }
+    }
+
+    private var faqCategorySelection: Binding<String> {
+        Binding(
+            get: { selectedFAQCategory },
+            set: { selectFAQCategory($0) }
+        )
+    }
+
+    private func faqCategoryButton(_ category: String) -> some View {
+        Button {
+            selectFAQCategory(category)
+        } label: {
+            Text(category)
+                .font(.system(size: 13, weight: selectedFAQCategory == category ? .semibold : .medium))
+                .foregroundStyle(selectedFAQCategory == category ? theme.text : theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                .padding(.horizontal, 10)
+                .background(selectedFAQCategory == category ? theme.cardRaised : .clear, in: RoundedRectangle(cornerRadius: 7))
+                .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selectedFAQCategory == category ? .isSelected : [])
+    }
+
+    private var faqGroupedQuestions: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            ForEach(faqGroups) { group in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.category)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(theme.text)
+                        .padding(.bottom, 4)
+                    ForEach(group.items) { item in
+                        faqQuestion(item)
+                        if item.id != group.items.last?.id {
+                            Divider().overlay(theme.divider)
                         }
                     }
-                    .padding(.vertical, 5)
-                    if item.id != filteredFAQs.last?.id { Divider().overlay(theme.divider) }
                 }
             }
         }
+    }
+
+    private func faqQuestion(_ item: NativePublicInfoFAQ) -> some View {
+        DisclosureGroup(
+            isExpanded: Binding(
+                get: { expandedFAQQuestion == item.question },
+                set: { isExpanded in expandedFAQQuestion = isExpanded ? item.question : nil }
+            )
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(item.answer)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    Text("Was this useful?")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    faqFeedbackButton("Yes", vote: .yes, question: item.question, icon: "hand.thumbsup")
+                    faqFeedbackButton("No", vote: .no, question: item.question, icon: "hand.thumbsdown")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(theme.cardRaised, in: Capsule())
+            }
+        } label: {
+            Text(item.question)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 5)
+        .accessibilityIdentifier("faq-question-\(item.id)")
+    }
+
+    private func selectFAQCategory(_ category: String) {
+        selectedFAQCategory = category
+        expandedFAQQuestion = NativePublicInfoPage.faqItems.first { item in
+            (category == "All" || item.category == category)
+                && (search.isEmpty || "\(item.question) \(item.answer)".localizedCaseInsensitiveContains(search))
+        }?.question
     }
 
     private func faqFeedbackButton(

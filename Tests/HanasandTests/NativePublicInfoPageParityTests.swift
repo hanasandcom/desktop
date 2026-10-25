@@ -19,6 +19,15 @@ final class NativePublicInfoPageParityTests: XCTestCase {
         XCTAssertTrue(faq.sections.isEmpty)
     }
 
+    func testFAQGroupsFollowWebsiteCategoryOrderAndExpandTheFirstQuestion() {
+        let groups = NativePublicInfoFAQLayout.groups(from: NativePublicInfoPage.faqItems)
+
+        XCTAssertEqual(groups.map(\.category), ["Basics", "Monitoring", "Alerts", "Routing", "Trust"])
+        XCTAssertEqual(groups.map { $0.items.count }, [4, 4, 5, 1, 2])
+        XCTAssertEqual(Set(groups.flatMap(\.items)), Set(NativePublicInfoPage.faqItems))
+        XCTAssertEqual(NativePublicInfoFAQLayout.initialExpandedQuestion, "What is a threat actor?")
+    }
+
     func testSolutionCallsToActionMatchWebsiteDestinations() throws {
         let scanner = try XCTUnwrap(NativePublicInfoPage.resolve("/solutions/scanner"))
         XCTAssertEqual(scanner.links.map(\.route), ["/scanner"])
