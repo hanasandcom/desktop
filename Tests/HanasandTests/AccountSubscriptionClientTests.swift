@@ -47,6 +47,18 @@ final class AccountSubscriptionClientTests: XCTestCase {
         XCTAssertNil(SubscriptionCheckoutReturn(queryValue: "SUCCESS"))
     }
 
+    func testWebsiteCheckoutReturnPreservesQueryForNativePanelRefresh() throws {
+        for status in ["success", "cancelled"] {
+            let route = try XCTUnwrap(BrowserWorkspaceModel.nativeRoute(
+                for: "https://hanasand.com/subscription?checkout=\(status)",
+                configuredWebsiteBaseURL: "https://hanasand.com"
+            ))
+            XCTAssertEqual(route.path, "/subscription")
+            XCTAssertEqual(route.query["checkout"], status)
+            XCTAssertEqual(SubscriptionCheckoutReturn(queryValue: route.query["checkout"])?.rawValue, status)
+        }
+    }
+
     func testSubscriptionCheckoutReturnRefreshesOncePerStatusAndAllowsNextReturn() {
         var tracker = SubscriptionCheckoutReturnTracker()
 
