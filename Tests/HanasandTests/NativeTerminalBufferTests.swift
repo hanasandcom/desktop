@@ -53,6 +53,47 @@ final class NativeTerminalBufferTests: XCTestCase {
                        [true, true, true, true, true, true, true, true])
     }
 
+    func testANSI256AndColonTrueColorSGRFormsAreRendered() {
+        var terminal = NativeTerminalBuffer(columns: 30, rows: 8)
+        terminal.feed("\u{1b}[38;5;196;48;5;33mindexed \u{1b}[38:2::12:34:56;48:2:0:78:90:123mcolon \u{1b}[38:5:201mindexed-colon")
+
+        let row = terminal.visibleRows[0]
+        let indexed = row.runs.first { $0.text.contains("indexed") }
+        XCTAssertEqual(indexed?.foreground, 196)
+        XCTAssertEqual(indexed?.background, 33)
+        let colon = row.runs.first { $0.text.contains("colon") }
+        XCTAssertEqual(colon?.foreground, 0x1000000 | 0x0c2238)
+        XCTAssertEqual(colon?.background, 0x1000000 | 0x4e5a7b)
+        XCTAssertEqual(row.runs.first { $0.text.contains("indexed-colon") }?.foreground, 201)
+    }
+
+    func testUnicodeCombiningMarkAtPendingWrapStaysWithFinalCell() {
+        var terminal = NativeTerminalBuffer(columns: 20, rows: 8)
+        terminal.feed(String(repeating: "a", count: 19) + "d")
+        terminal.feed("\u{301}")
+
+        XCTAssertTrue(terminal.visibleRows[0].runs.contains { $0.text.contains("d́") })
+        terminal.feed("x")
+        XCTAssertTrue(terminal.visibleRows[1].runs.first?.text.hasPrefix("x") == true)
+    }
+
+    func testWideUnicodeGraphemeWrapsBeforeSingleRemainingColumn() {
+        var terminal = NativeTerminalBuffer(columns: 20, rows: 8)
+        terminal.feed(String(repeating: "a", count: 19) + "\u{1b}[1;20H界")
+
+        XCTAssertTrue(terminal.visibleRows[0].runs.first?.text.hasPrefix(String(repeating: "a", count: 19)) == true)
+        XCTAssertTrue(terminal.visibleRows[1].runs.first?.text.hasPrefix("界") == true)
+        XCTAssertEqual(terminal.cursorColumnPosition, 2)
+    }
+
+    func testEmojiJoinerAndVariationSelectorRemainSingleWideGraphemes() {
+        var terminal = NativeTerminalBuffer(columns: 12, rows: 8)
+        terminal.feed("👩‍💻✈️")
+
+        XCTAssertEqual(terminal.cursorColumnPosition, 4)
+        XCTAssertTrue(terminal.visibleRows[0].runs.first?.text.hasPrefix("👩‍💻✈️") == true)
+    }
+
     func testScrollRegionKeepsRowsOutsideTheRegionAndCharacterEditingWorks() {
         var terminal = NativeTerminalBuffer(columns: 20, rows: 8)
         terminal.feed("\u{1b}[1;1Htop\u{1b}[2;1Hkeep\u{1b}[3;1Hone\u{1b}[4;1Htwo\u{1b}[5;1Hthree\u{1b}[6;1Hend")

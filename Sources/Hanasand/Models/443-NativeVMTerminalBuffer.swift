@@ -79,6 +79,7 @@ struct NativeTerminalBuffer {
     private var scrollback: [[Cell]] = []
     private var cursorRow = 0
     private var cursorColumn = 0
+    private var wrapPending = false
     private var savedCursor = (row: 0, column: 0)
     private var alternateScreen: [[Cell]]?
     private var parserState: ParserState = .ground
@@ -204,6 +205,7 @@ struct NativeTerminalBuffer {
         scrollback.removeAll(keepingCapacity: true)
         cursorRow = 0
         cursorColumn = 0
+        wrapPending = false
     }
 
     mutating func reset() { resetTerminal() }
@@ -253,27 +255,43 @@ struct NativeTerminalBuffer {
     private mutating func consumeGround(_ character: Character) {
         switch character {
         case "\u{1b}": parserState = .escape
-        case "\r": cursorColumn = 0
+        case "\r": cursorColumn = 0; wrapPending = false
         case "\n": lineFeed()
-        case "\u{08}": cursorColumn = max(0, cursorColumn - 1)
-        case "\t": cursorColumn = min(columns - 1, ((cursorColumn / 8) + 1) * 8)
+        case "\u{08}": cursorColumn = max(0, cursorColumn - 1); wrapPending = false
+        case "\t": cursorColumn = min(columns - 1, ((cursorColumn / 8) + 1) * 8); wrapPending = false
         default:
             guard character.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7f }) else { return }
-            if isCombining(character), cursorColumn > 0 {
-                var previous = cursorColumn - 1
+            if isZeroWidth(character) {
+                var previous = wrapPending ? cursorColumn : cursorColumn - 1
+                guard previous >= 0 else { return }
                 if screen[cursorRow][previous].continuation, previous > 0 { previous -= 1 }
                 screen[cursorRow][previous].character.append(String(character))
                 return
             }
-            let width = isWide(character) ? 2 : 1
+            if wrapPending {
+                cursorColumn = 0
+                lineFeed()
+                wrapPending = false
+            }
+            let width = characterWidth(character)
+            // A wide grapheme may not occupy only the final column. Match xterm's
+            // autowrap behavior by moving it intact to the next row first.
+            if width == 2, cursorColumn == columns - 1 {
+                cursorColumn = 0
+                lineFeed()
+            }
             screen[cursorRow][cursorColumn] = currentCell(character: String(character))
-            if width == 2, cursorColumn + 1 < columns {
+            if width == 2 {
                 var continuation = currentCell(character: " ")
                 continuation.continuation = true
                 screen[cursorRow][cursorColumn + 1] = continuation
             }
-            cursorColumn += width
-            if cursorColumn >= columns { cursorColumn = 0; lineFeed() }
+            if cursorColumn + width >= columns {
+                cursorColumn = columns - 1
+                wrapPending = true
+            } else {
+                cursorColumn += width
+            }
         }
     }
 
@@ -284,24 +302,35 @@ struct NativeTerminalBuffer {
             inverse: currentInverse, invisible: currentInvisible)
     }
 
-    private func isCombining(_ character: Character) -> Bool {
-        guard let scalar = character.unicodeScalars.first else { return false }
-        switch scalar.properties.generalCategory {
-        case .nonspacingMark, .spacingMark, .enclosingMark: return true
-        default: return false
+    private func isZeroWidth(_ character: Character) -> Bool {
+        guard !character.unicodeScalars.isEmpty else { return false }
+        return character.unicodeScalars.allSatisfy { scalar in
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .spacingMark, .enclosingMark, .format: return true
+            default: return (0xfe00...0xfe0f).contains(scalar.value) || (0xe0100...0xe01ef).contains(scalar.value)
+            }
         }
     }
 
-    private func isWide(_ character: Character) -> Bool {
-        guard let scalar = character.unicodeScalars.first else { return false }
+    private func characterWidth(_ character: Character) -> Int {
+        guard let scalar = character.unicodeScalars.first(where: { !isZeroWidthScalar($0) }) else { return 0 }
+        if character.unicodeScalars.contains(where: { $0.value == 0xfe0f }) { return 2 }
         let value = scalar.value
         return (0x1100...0x115f).contains(value) || (0x2e80...0xa4cf).contains(value)
             || (0xac00...0xd7a3).contains(value) || (0xf900...0xfaff).contains(value)
             || (0xfe10...0xfe6f).contains(value) || (0xff01...0xff60).contains(value)
-            || (0x1f300...0x1faff).contains(value) || (0x20000...0x3fffd).contains(value)
+            || (0x1f300...0x1faff).contains(value) || (0x20000...0x3fffd).contains(value) ? 2 : 1
+    }
+
+    private func isZeroWidthScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark, .format: return true
+        default: return (0xfe00...0xfe0f).contains(scalar.value) || (0xe0100...0xe01ef).contains(scalar.value)
+        }
     }
 
     private mutating func lineFeed() {
+        wrapPending = false
         if cursorRow == scrollBottom {
             if scrollTop == 0 && scrollBottom == rows - 1 {
                 if alternateScreen == nil {
@@ -323,6 +352,7 @@ struct NativeTerminalBuffer {
         let values = csiBuffer.drop(while: { $0 == "?" }).split(separator: ";", omittingEmptySubsequences: false)
             .map { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 }
         let first = values.first ?? 0
+        if final != "m" { wrapPending = false }
         switch final {
         case "A": cursorRow = max(0, cursorRow - max(1, first))
         case "B": cursorRow = min(rows - 1, cursorRow + max(1, first))
@@ -333,7 +363,7 @@ struct NativeTerminalBuffer {
             cursorColumn = min(columns - 1, max(0, (values.dropFirst().first ?? 1) - 1))
         case "J": eraseDisplay(mode: first)
         case "K": eraseLine(mode: first)
-        case "m": setGraphics(values.isEmpty ? [0] : values)
+        case "m": setGraphics(csiBuffer.isEmpty ? "0" : csiBuffer)
         case "r":
             scrollTop = min(rows - 1, max(0, (values.first ?? 1) - 1))
             scrollBottom = min(rows - 1, max(scrollTop, (values.dropFirst().first ?? rows) - 1))
@@ -524,5 +554,57 @@ struct NativeTerminalBuffer {
             }
             index += 1
         }
+    }
+
+    /// Handles both xterm's semicolon extended-color syntax and the ECMA-48
+    /// colon form, including the optional empty colorspace field used by
+    /// sequences such as `38:2::r:g:b`.
+    private mutating func setGraphics(_ parameters: String) {
+        let parts = parameters.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+        var index = 0
+        while index < parts.count {
+            if parts[index].contains(":"), let color = parseColonColor(parts[index]) {
+                applyExtendedColor(color)
+                index += 1
+                continue
+            }
+            guard let value = Int(parts[index]), value >= 0 else { index += 1; continue }
+            if value == 38 || value == 48, index + 1 < parts.count,
+               let mode = Int(parts[index + 1]) {
+                if mode == 5, index + 2 < parts.count, let color = Int(parts[index + 2]) {
+                    applyExtendedColor((foreground: value == 38, color: min(255, max(0, color))))
+                    index += 3
+                    continue
+                }
+                if mode == 2, index + 4 < parts.count,
+                   let red = Int(parts[index + 2]), let green = Int(parts[index + 3]), let blue = Int(parts[index + 4]) {
+                    applyExtendedColor((foreground: value == 38, color: 0x1000000 | (clampByte(red) << 16) | (clampByte(green) << 8) | clampByte(blue)))
+                    index += 5
+                    continue
+                }
+            }
+            setGraphics([value])
+            index += 1
+        }
+    }
+
+    private func parseColonColor(_ parameter: String) -> (foreground: Bool, color: Int)? {
+        let values = parameter.split(separator: ":", omittingEmptySubsequences: false).map { Int($0) }
+        guard values.count >= 3, let kind = values[0], kind == 38 || kind == 48, let mode = values[1] else { return nil }
+        if mode == 5, values.count == 3, let color = values[2] {
+            return (kind == 38, min(255, max(0, color)))
+        }
+        guard mode == 2 else { return nil }
+        let rgbStart = values.count >= 6 ? 3 : 2
+        guard values.count >= rgbStart + 3,
+              let red = values[rgbStart], let green = values[rgbStart + 1], let blue = values[rgbStart + 2] else { return nil }
+        return (kind == 38, 0x1000000 | (clampByte(red) << 16) | (clampByte(green) << 8) | clampByte(blue))
+    }
+
+    private func clampByte(_ value: Int) -> Int { min(255, max(0, value)) }
+
+    private mutating func applyExtendedColor(_ color: (foreground: Bool, color: Int)) {
+        if color.foreground { currentForeground = color.color }
+        else { currentBackground = color.color }
     }
 }
