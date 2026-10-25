@@ -85,9 +85,11 @@ struct ThreatIntelligenceOperationsClient {
 
     /// Reads the source-operations projection used by the website's admin inventory.
     /// The API enforces source_admin/source_operator for the global fleet.
-    func loadOperationalSources(query: String, page: Int) async throws -> ThreatIntelligenceOperationalSourcePage {
+    func loadOperationalSources(query: String, page: Int, sourceID: String? = nil) async throws -> ThreatIntelligenceOperationalSourcePage {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (1...20_000).contains(page), clean.count <= 200 else {
+        guard (1...20_000).contains(page), clean.count <= 200,
+            sourceID == nil || sourceID?.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil
+        else {
             throw ThreatIntelligenceOperationsError.invalidRequest
         }
         var components = try components(path: "v1/intel/source-operations")
@@ -98,6 +100,7 @@ struct ThreatIntelligenceOperationsClient {
             URLQueryItem(name: "sort", value: "source"),
             URLQueryItem(name: "dir", value: "asc"),
         ]
+        if let sourceID { components.queryItems?.append(URLQueryItem(name: "sourceId", value: sourceID)) }
         if !clean.isEmpty { components.queryItems?.append(URLQueryItem(name: "q", value: clean)) }
         let snapshot: ThreatIntelligenceOperationalSourcePage = try await get(components)
         guard snapshot.rows.count <= 50, snapshot.total >= snapshot.rows.count,
@@ -118,6 +121,38 @@ struct ThreatIntelligenceOperationsClient {
     func loadCaptures(query: String, page: Int) async throws -> ThreatIntelligenceCapturePage {
         let result: StructuredListEnvelope<ThreatIntelligenceCapturePage.Capture> = try await loadStructuredRows(path: "v1/intel/captures", rowsKey: "captures", query: query, page: page)
         return ThreatIntelligenceCapturePage(captures: result.rows, total: result.total, nextCursor: result.nextCursor, previousCursor: result.previousCursor)
+    }
+
+    /// Query matches narrow the server result; source ownership is always checked locally before display.
+    func loadRecentRuns(sourceID: String, limit: Int = 10) async throws -> [ThreatIntelligenceCollectionRunPage.Run] {
+        guard sourceID.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil,
+            (1...20).contains(limit)
+        else { throw ThreatIntelligenceOperationsError.invalidRequest }
+        var matched: [ThreatIntelligenceCollectionRunPage.Run] = []
+        for page in 1...5 {
+            let snapshot = try await loadCollectionRuns(query: sourceID, page: page)
+            matched.append(contentsOf: snapshot.collectionRuns.filter { $0.exactlyBelongs(to: sourceID) })
+            matched = Array(Dictionary(grouping: matched, by: \.id).compactMap { $0.value.first }
+                .sorted { ($0.startedAt ?? "") > ($1.startedAt ?? "") }.prefix(limit))
+            if matched.count >= limit || (snapshot.nextCursor == nil && snapshot.total <= page * 50) { break }
+        }
+        return matched
+    }
+
+    /// Query matches narrow the server result; exact sourceId equality prevents substring leakage.
+    func loadRecentCaptures(sourceID: String, limit: Int = 10) async throws -> [ThreatIntelligenceCapturePage.Capture] {
+        guard sourceID.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil,
+            (1...20).contains(limit)
+        else { throw ThreatIntelligenceOperationsError.invalidRequest }
+        var matched: [ThreatIntelligenceCapturePage.Capture] = []
+        for page in 1...5 {
+            let snapshot = try await loadCaptures(query: sourceID, page: page)
+            matched.append(contentsOf: snapshot.captures.filter { $0.exactlyBelongs(to: sourceID) })
+            matched = Array(Dictionary(grouping: matched, by: \.id).compactMap { $0.value.first }
+                .sorted { ($0.collectedAt ?? "") > ($1.collectedAt ?? "") }.prefix(limit))
+            if matched.count >= limit || (snapshot.nextCursor == nil && snapshot.total <= page * 50) { break }
+        }
+        return matched
     }
 
     func updateSourceStatus(source: ThreatIntelligenceOperationalSourcePage.Source, status: String) async throws {

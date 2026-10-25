@@ -160,6 +160,7 @@ struct ThreatIntelligenceOperationalSourcePage: Decodable, Equatable {
             let lastUsefulItemAt: String?
             let lastFailureReason: String?
             let consecutiveFailures: Int?
+            let backoffUntil: String?
         }
         struct Coverage: Decodable, Equatable {
             let captureCount: Int?
@@ -171,6 +172,17 @@ struct ThreatIntelligenceOperationalSourcePage: Decodable, Equatable {
             let reasons: [String]?
             let lastUsefulAt: String?
             let productiveCheckCount: Int?
+            let backoffUntil: String?
+        }
+        struct Collection: Decodable, Equatable {
+            let cadenceSeconds: Int?
+
+            enum CodingKeys: String, CodingKey { case cadenceSeconds }
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                let value = try values.decodeIfPresent(Int.self, forKey: .cadenceSeconds)
+                cadenceSeconds = value.flatMap { $0 >= 0 ? $0 : nil }
+            }
         }
 
         let id: String
@@ -181,10 +193,68 @@ struct ThreatIntelligenceOperationalSourcePage: Decodable, Equatable {
         let lifecycleStatus: String?
         let executable: Bool?
         let url: String?
+        let nextRunAt: String?
         let operatingMode: ThreatIntelligenceSourcePage.Source.OperatingMode?
         let health: Health?
         let coverage: Coverage?
         let qualification: Qualification?
+        let collection: Collection?
+
+        enum CodingKeys: String, CodingKey {
+            case id, tenantId, name, family, type, lifecycleStatus, executable, url, nextRunAt
+            case operatingMode, health, coverage, qualification, collection
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(String.self, forKey: .id)
+            tenantId = try values.decodeIfPresent(String.self, forKey: .tenantId)
+            name = try values.decodeIfPresent(String.self, forKey: .name)
+            family = try values.decodeIfPresent(String.self, forKey: .family)
+            type = try values.decodeIfPresent(String.self, forKey: .type)
+            lifecycleStatus = try values.decodeIfPresent(String.self, forKey: .lifecycleStatus)
+            executable = try values.decodeIfPresent(Bool.self, forKey: .executable)
+            url = try values.decodeIfPresent(String.self, forKey: .url)
+            nextRunAt = Self.validTimestamp(try values.decodeIfPresent(String.self, forKey: .nextRunAt))
+            operatingMode = try values.decodeIfPresent(ThreatIntelligenceSourcePage.Source.OperatingMode.self, forKey: .operatingMode)
+            health = try values.decodeIfPresent(Health.self, forKey: .health)
+            coverage = try values.decodeIfPresent(Coverage.self, forKey: .coverage)
+            qualification = try values.decodeIfPresent(Qualification.self, forKey: .qualification)
+            collection = try values.decodeIfPresent(Collection.self, forKey: .collection)
+        }
+
+        private static func validTimestamp(_ value: String?) -> String? {
+            guard let value, ISO8601DateFormatter().date(from: value) != nil else { return nil }
+            return value
+        }
+
+        var cadenceDescription: String {
+            guard let seconds = collection?.cadenceSeconds else { return "Not reported" }
+            if seconds == 0 { return "No interval" }
+            let minutes = max(1, Int((Double(seconds) / 60).rounded()))
+            if minutes >= 60 { return "\(max(1, Int((Double(minutes) / 60).rounded()))) hr" }
+            return "\(minutes) min"
+        }
+
+        var displayedNextCheckAt: String? {
+            let formatter = ISO8601DateFormatter()
+            let explicit = nextRunAt.flatMap(formatter.date(from:))
+            let backoff = (qualification?.backoffUntil ?? health?.backoffUntil).flatMap(formatter.date(from:))
+            let fallback: Date? = {
+                guard let seconds = collection?.cadenceSeconds, seconds > 0,
+                    let lastAttempt = health?.lastAttemptAt,
+                    let date = formatter.date(from: lastAttempt)
+                else { return nil }
+                let roundedCadenceMinutes = max(1, Int((Double(seconds) / 60).rounded()))
+                return date.addingTimeInterval(TimeInterval(roundedCadenceMinutes) * 60)
+            }()
+            guard let next = [explicit, fallback, backoff].compactMap({ $0 }).max() else { return nil }
+            return ISO8601DateFormatter().string(from: next)
+        }
+
+        var displayedBackoffUntil: String? {
+            Self.validTimestamp(qualification?.backoffUntil ?? health?.backoffUntil)
+        }
 
         static func allowedStatusChange(source: Self, status: String) -> Bool {
             source.id.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil
@@ -277,6 +347,9 @@ struct ThreatIntelligenceCollectionRunPage: Decodable, Equatable {
 
         var captureTotal: Int { captures ?? captureCount ?? 0 }
         var rowTotal: Int { rows ?? rowCount ?? 0 }
+        func exactlyBelongs(to sourceID: String) -> Bool {
+            sourceId == sourceID || sourceIds?.contains(sourceID) == true
+        }
     }
     let collectionRuns: [Run]
     let total: Int
@@ -329,6 +402,27 @@ struct ThreatIntelligenceCapturePage: Decodable, Equatable {
             let actor: String?
             let domain: String?
             let threatActor: String?
+            let summary: String?
+            let excerpt: String?
+            let safeExcerpt: String?
+            let screenshotId: String?
+            let screenshotHash: String?
+            let screenshotTakenAt: String?
+            let pageType: String?
+            let adapter: String?
+            let kind: String?
+        }
+        struct NormalizedEvidence: Decodable, Equatable {
+            let status: String?
+            let failureReason: String?
+            let title: String?
+            let author: String?
+            let publishedAt: String?
+            let headings: [String]?
+            let namedEntities: [String]?
+            let incidentLanguage: [String]?
+            let text: String?
+            let excerpt: String?
         }
         let id: String
         let sourceId: String?
@@ -339,6 +433,22 @@ struct ThreatIntelligenceCapturePage: Decodable, Equatable {
         let storageKind: String?
         let locatorRedacted: Bool?
         let metadata: Metadata?
+        let normalizedEvidence: NormalizedEvidence?
+        let redactionReason: String?
+
+        func exactlyBelongs(to sourceID: String) -> Bool { sourceId == sourceID }
+
+        var safeExcerpt: String? {
+            let candidates = [normalizedEvidence?.excerpt, normalizedEvidence?.text,
+                             metadata?.safeExcerpt, metadata?.excerpt, metadata?.summary,
+                             metadata?.headline, redactionReason]
+            return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty && $0.count <= 240 && $0.range(of: #"(?:window\.|WIZ_global_data|__NEXT_DATA__|<html|<script)"#, options: [.regularExpression, .caseInsensitive]) == nil })
+        }
+
+        var screenshotLabel: String? {
+            metadata?.screenshotId ?? metadata?.screenshotHash
+        }
     }
     let captures: [Capture]
     let total: Int

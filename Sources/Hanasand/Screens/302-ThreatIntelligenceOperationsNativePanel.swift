@@ -60,6 +60,16 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @State private var operationalSources: ThreatIntelligenceOperationalSourcePage?
     @State private var collectionRuns: ThreatIntelligenceCollectionRunPage?
     @State private var captures: ThreatIntelligenceCapturePage?
+    @State private var focusedSourceRuns: [ThreatIntelligenceCollectionRunPage.Run]?
+    @State private var focusedSourceCaptures: [ThreatIntelligenceCapturePage.Capture]?
+    @State private var focusedRunsLoading = false
+    @State private var focusedCapturesLoading = false
+    @State private var focusedRunsUnavailable = false
+    @State private var focusedCapturesUnavailable = false
+    @State private var focusedRunsSourceID: String?
+    @State private var focusedCapturesSourceID: String?
+    @State private var focusedRunsRequestID = UUID()
+    @State private var focusedCapturesRequestID = UUID()
     @State private var sourceView: ThreatSourceView = .operations
     @State private var timeliness: ThreatIntelligenceTimelinessSnapshot?
     @State private var query = ""
@@ -144,7 +154,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         }
         .confirmationDialog("Queue a collection query?", isPresented: $showRunConfirmation, titleVisibility: .visible) {
             if pendingSourceRun != nil {
-                Button("Queue query") {
+                Button("Queue global query") {
                     let source = pendingSourceRun
                     pendingSourceRun = nil
                     if let source { Task { await queueRun(source) } }
@@ -279,7 +289,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                                 }
                                 .disabled(isLoading || isMutating || !canMutateLoadedSources)
                                 if source.lifecycleStatus == "active" {
-                                    Button("Run query") {
+                                    Button("Queue global query") {
                                         pendingSourceRun = source
                                         showRunConfirmation = true
                                     }
@@ -313,7 +323,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 .foregroundStyle(theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let health = source.health {
-                Text("Health: \(health.state ?? "not observed") · last check \(date(health.lastAttemptAt ?? "") ) · useful output \(date(health.lastUsefulItemAt ?? ""))")
+                Text("Health: \(health.state ?? "not observed") · last check \(date(health.lastAttemptAt ?? health.lastSuccessAt ?? "")) · useful output \(date(health.lastUsefulItemAt ?? ""))")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -324,6 +334,16 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
+            }
+            Text("Schedule: every \(source.cadenceDescription) · next check \(source.lifecycleStatus == "paused" ? "Paused" : date(source.displayedNextCheckAt ?? ""))")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let backoffUntil = source.displayedBackoffUntil, !backoffUntil.isEmpty {
+                Text("Retry backoff until \(date(backoffUntil))")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let coverage = source.coverage {
                 Text("\(coverage.captureCount ?? 0) captures · \(coverage.customerMatchCount ?? 0) customer matches · \(source.executable == true ? "executable" : "not executable")")
@@ -344,7 +364,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 }
                 .disabled(isLoading || isMutating || !canMutateLoadedSources)
                 if source.lifecycleStatus == "active" {
-                    Button("Run query") {
+                    Button("Queue global query") {
                         pendingSourceRun = source
                         showRunConfirmation = true
                     }
@@ -352,9 +372,113 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 }
             }
             .font(.system(size: 10, weight: .semibold))
+            focusedSourceRunHistory(source)
+            focusedSourceCaptureHistory(source)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder private func focusedSourceRunHistory(_ source: ThreatIntelligenceOperationalSourcePage.Source) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent runs").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+            if focusedRunsSourceID != source.id || focusedRunsLoading {
+                ProgressView("Loading source run history").controlSize(.small)
+            } else if focusedRunsUnavailable {
+                Text("Run history unavailable. Refresh to try again.").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            } else if let runs = focusedSourceRuns, !runs.isEmpty {
+                ForEach(runs) { run in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(run.status ?? "unknown") · \(date(run.startedAt ?? ""))")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary)
+                        Text("\(run.captureTotal) captures · \(run.rowTotal) rows\(run.message ?? run.error.map { " · \($0)" } ?? "")")
+                            .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("No runs recorded for this source.").font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+            }
+        }
+        .task(id: "\(source.id)|\(requestID.uuidString)") { await loadFocusedSourceRuns(source.id) }
+        .padding(.top, 6)
+    }
+
+    @ViewBuilder private func focusedSourceCaptureHistory(_ source: ThreatIntelligenceOperationalSourcePage.Source) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Recent evidence").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text)
+            if focusedCapturesSourceID != source.id || focusedCapturesLoading {
+                ProgressView("Loading source evidence").controlSize(.small)
+            } else if focusedCapturesUnavailable {
+                Text("Evidence unavailable. Refresh to try again.").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+            } else if let captures = focusedSourceCaptures, !captures.isEmpty {
+                ForEach(captures) { capture in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(capture.metadata?.title ?? capture.metadata?.headline ?? capture.normalizedEvidence?.title ?? capture.sourceName ?? "Source capture")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let excerpt = capture.safeExcerpt {
+                            Text(excerpt).font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        }
+                        Text("\(capture.metadata?.actor ?? capture.metadata?.threatActor ?? "Source") · published \(date(capture.publishedAt ?? capture.normalizedEvidence?.publishedAt ?? "")) · captured \(date(capture.collectedAt ?? ""))")
+                            .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                        if let domain = capture.metadata?.domain, !domain.isEmpty {
+                            Text(domain).font(.system(size: 10)).foregroundStyle(theme.textSecondary)
+                        }
+                        if let screenshotLabel = capture.screenshotLabel {
+                            Text("Screenshot: \(screenshotLabel) · \(date(capture.metadata?.screenshotTakenAt ?? capture.collectedAt ?? ""))")
+                                .font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("No evidence collected for this source.").font(.system(size: 10)).foregroundStyle(theme.textTertiary)
+            }
+        }
+        .task(id: "\(source.id)|\(requestID.uuidString)") { await loadFocusedSourceCaptures(source.id) }
+        .padding(.top, 6)
+    }
+
+    @MainActor private func loadFocusedSourceRuns(_ sourceID: String) async {
+        let settings = model.settings
+        let current = UUID()
+        focusedRunsRequestID = current
+        focusedRunsSourceID = sourceID
+        focusedRunsLoading = true
+        focusedRunsUnavailable = false
+        focusedSourceRuns = nil
+        defer { if focusedRunsRequestID == current { focusedRunsLoading = false } }
+        do {
+            let client = try ThreatIntelligenceOperationsClient(settings: settings)
+            let rows = try await client.loadRecentRuns(sourceID: sourceID)
+            guard !Task.isCancelled, focusedRunsRequestID == current, focusedSourceID == sourceID, model.settings == settings else { return }
+            focusedSourceRuns = rows.filter { $0.exactlyBelongs(to: sourceID) }
+        } catch {
+            guard !Task.isCancelled, focusedRunsRequestID == current, focusedSourceID == sourceID, model.settings == settings else { return }
+            focusedRunsUnavailable = true
+        }
+    }
+
+    @MainActor private func loadFocusedSourceCaptures(_ sourceID: String) async {
+        let settings = model.settings
+        let current = UUID()
+        focusedCapturesRequestID = current
+        focusedCapturesSourceID = sourceID
+        focusedCapturesLoading = true
+        focusedCapturesUnavailable = false
+        focusedSourceCaptures = nil
+        defer { if focusedCapturesRequestID == current { focusedCapturesLoading = false } }
+        do {
+            let client = try ThreatIntelligenceOperationsClient(settings: settings)
+            let rows = try await client.loadRecentCaptures(sourceID: sourceID)
+            guard !Task.isCancelled, focusedCapturesRequestID == current, focusedSourceID == sourceID, model.settings == settings else { return }
+            focusedSourceCaptures = rows.filter { $0.exactlyBelongs(to: sourceID) }
+        } catch {
+            guard !Task.isCancelled, focusedCapturesRequestID == current, focusedSourceID == sourceID, model.settings == settings else { return }
+            focusedCapturesUnavailable = true
+        }
     }
 
     private var collectionRunContent: some View {
@@ -913,7 +1037,10 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 switch sourceView {
                 case .operations:
                     let sourceLookupID = focusedSourceID
-                    let snapshot = try await client.loadOperationalSources(query: sourceLookupID ?? submittedQuery, page: sourceLookupID == nil ? page : 1)
+                    let snapshot = try await client.loadOperationalSources(
+                        query: sourceLookupID == nil ? submittedQuery : "",
+                        page: sourceLookupID == nil ? page : 1,
+                        sourceID: sourceLookupID)
                     guard stillCurrent(current, settings: requestedSettings) else { return }
                     operationalSources = snapshot
                     loadedSourceSettings = requestedSettings

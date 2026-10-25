@@ -172,6 +172,23 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         assertAuthenticatedRead(captured)
     }
 
+    func testOperationalSourceLookupUsesExactSourceIDParameter() async throws {
+        var captured: URLRequest?
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"schemaVersion":"ti.source_operations.v1","tenantId":"global","total":1,"rows":[{"id":"feed-1","collection":{"cadenceSeconds":1800},"nextRunAt":"2026-10-23T11:00:00Z"}]}"#), self.response(for: request.url!))
+        }
+
+        let result = try await client.loadOperationalSources(query: "", page: 1, sourceID: "feed-1")
+
+        XCTAssertEqual(result.rows.map(\.id), ["feed-1"])
+        let queryItems = URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(queryItems.first(where: { $0.name == "sourceId" })?.value, "feed-1")
+        XCTAssertNil(queryItems.first(where: { $0.name == "q" }))
+        XCTAssertEqual(result.rows.first?.collection?.cadenceSeconds, 1800)
+        XCTAssertEqual(result.rows.first?.nextRunAt, "2026-10-23T11:00:00Z")
+    }
+
     func testCollectionRunsAndCapturesUseBoundedSafeReadEndpoints() async throws {
         var requests: [URLRequest] = []
         let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
@@ -268,6 +285,87 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         XCTAssertEqual(body["sourceId"] as? String, "feed-1")
         XCTAssertEqual(body["query"] as? String, "example.test")
         XCTAssertEqual(body["targets"] as? [String], ["example.test", "another.test"])
+    }
+
+    func testFocusedSourceScheduleParsesCadenceBackoffAndRejectsMalformedNextCheck() throws {
+        let source = try JSONDecoder().decode(
+            ThreatIntelligenceOperationalSourcePage.Source.self,
+            from: responseData(#"{"id":"feed-1","lifecycleStatus":"active","collection":{"cadenceSeconds":3600},"nextRunAt":"not-a-date","health":{"lastAttemptAt":"2026-10-23T10:00:00Z","backoffUntil":"2026-10-23T12:30:00Z"}}"#))
+
+        XCTAssertEqual(source.collection?.cadenceSeconds, 3600)
+        XCTAssertEqual(source.cadenceDescription, "1 hr")
+        XCTAssertNil(source.nextRunAt)
+        XCTAssertEqual(source.displayedBackoffUntil, "2026-10-23T12:30:00Z")
+        XCTAssertEqual(source.displayedNextCheckAt, "2026-10-23T12:30:00Z")
+
+        let delayed = try JSONDecoder().decode(
+            ThreatIntelligenceOperationalSourcePage.Source.self,
+            from: responseData(#"{"id":"feed-1","nextRunAt":"2026-10-23T11:00:00Z","health":{"backoffUntil":"2026-10-23T12:30:00Z"}}"#))
+        XCTAssertEqual(delayed.displayedNextCheckAt, "2026-10-23T12:30:00Z")
+
+        let roundedCadence = try JSONDecoder().decode(
+            ThreatIntelligenceOperationalSourcePage.Source.self,
+            from: responseData(#"{"id":"feed-3","collection":{"cadenceSeconds":5400}}"#))
+        XCTAssertEqual(roundedCadence.cadenceDescription, "2 hr")
+
+        let invalid = try JSONDecoder().decode(
+            ThreatIntelligenceOperationalSourcePage.Source.self,
+            from: responseData(#"{"id":"feed-2","collection":{"cadenceSeconds":-30}}"#))
+        XCTAssertNil(invalid.collection?.cadenceSeconds)
+        XCTAssertEqual(invalid.cadenceDescription, "Not reported")
+        XCTAssertNil(invalid.displayedNextCheckAt)
+    }
+
+    func testFocusedSourceHistoryUsesNarrowingQueryAndExactSourceFiltering() async throws {
+        var capturedPaths: [URL] = []
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            capturedPaths.append(request.url!)
+            let page = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "page" })?.value
+            let body: String
+            if request.url?.path == "/v1/intel/collection-runs" {
+                body = page == "2"
+                    ? #"{"collectionRuns":[{"id":"run-page-2","sourceId":"feed-1","startedAt":"2026-10-24T12:00:00Z"}],"total":51}"#
+                    : #"{"collectionRuns":[{"id":"run-exact","sourceId":"feed-1","startedAt":"2026-10-23T12:00:00Z"},{"id":"run-prefix","sourceId":"feed-10","startedAt":"2026-10-23T13:00:00Z"},{"id":"run-array","sourceIds":["feed-1","feed-2"],"createdAt":"2026-10-23T11:00:00Z"}],"total":51,"nextCursor":"cursor-2"}"#
+            } else {
+                body = page == "2"
+                    ? #"{"captures":[{"id":"capture-page-2","sourceId":"feed-1","collectedAt":"2026-10-24T12:00:00Z"}],"total":51}"#
+                    : #"{"captures":[{"id":"capture-exact","sourceId":"feed-1","collectedAt":"2026-10-23T12:00:00Z","normalizedEvidence":{"excerpt":"Safe report excerpt","text":"Detailed normalized report text"},"metadata":{"screenshotId":"hash-1","screenshotTakenAt":"2026-10-23T12:01:00Z"}},{"id":"capture-prefix","sourceId":"feed-10","collectedAt":"2026-10-23T13:00:00Z"}],"total":51,"nextCursor":"cursor-2"}"#
+            }
+            return (self.responseData(body), self.response(for: request.url!))
+        }
+
+        let runs = try await client.loadRecentRuns(sourceID: "feed-1")
+        let captures = try await client.loadRecentCaptures(sourceID: "feed-1")
+
+        XCTAssertEqual(Set(runs.map(\.id)), ["run-exact", "run-array", "run-page-2"])
+        XCTAssertTrue(runs.allSatisfy { $0.exactlyBelongs(to: "feed-1") })
+        XCTAssertEqual(Set(captures.map(\.id)), ["capture-exact", "capture-page-2"])
+        XCTAssertTrue(captures.allSatisfy { $0.exactlyBelongs(to: "feed-1") })
+        let captureWithExcerpt = try XCTUnwrap(captures.first(where: { $0.id == "capture-exact" }))
+        XCTAssertEqual(captureWithExcerpt.safeExcerpt, "Safe report excerpt")
+        XCTAssertEqual(captureWithExcerpt.screenshotLabel, "hash-1")
+        XCTAssertEqual(capturedPaths.count, 4)
+        for url in capturedPaths {
+            let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(queryItems.first(where: { $0.name == "q" })?.value, "feed-1")
+        }
+    }
+
+    func testFocusedSourceRunAndCaptureFailuresRemainIndependent() async throws {
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            if request.url?.path == "/v1/intel/collection-runs" {
+                return (self.responseData(#"{"error":"unavailable"}"#), self.response(url: request.url!, status: 503))
+            }
+            return (self.responseData(#"{"captures":[{"id":"capture-1","sourceId":"feed-1"}],"total":1}"#), self.response(for: request.url!))
+        }
+
+        async let runRequest = client.loadRecentRuns(sourceID: "feed-1")
+        async let captureRequest = client.loadRecentCaptures(sourceID: "feed-1")
+        let runs: [ThreatIntelligenceCollectionRunPage.Run]? = try? await runRequest
+        let captures: [ThreatIntelligenceCapturePage.Capture]? = try? await captureRequest
+        XCTAssertNil(runs, "Run history should be unavailable in this fixture.")
+        XCTAssertEqual(captures?.map(\.id), ["capture-1"], "Capture history should load independently.")
     }
 
     func testMutationsFailClosedOnRoleDenialAndRequireRefreshAfterAmbiguousOutcome() async throws {
@@ -381,6 +479,10 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
 
     private func response(url: URL) -> HTTPURLResponse {
         HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+    }
+
+    private func response(url: URL, status: Int) -> HTTPURLResponse {
+        HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
     }
 
     private func assertAuthenticatedRead(_ request: URLRequest?, expectedHost: String = "ti.hanasand.com", file: StaticString = #filePath, line: UInt = #line) {
