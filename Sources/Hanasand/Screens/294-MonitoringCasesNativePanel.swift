@@ -144,6 +144,12 @@ struct MonitoringCasesNativePanel: View {
 
     @ViewBuilder private func detail(_ item: MonitoringCase) -> some View {
         NativeGroupPanel(title: item.title, subtitle: "\(item.id) · Assigned owner: \(item.assignedOwner.isEmpty ? "Unassigned" : item.assignedOwner)") {
+            if let context = model.nativeMonitoringCaseContext {
+                Text("Opened from \(context.route ?? "case link") · Alert \(context.alertID ?? "not specified") · Organization \(context.organizationID ?? "current")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textTertiary)
+                    .textSelection(.enabled)
+            }
             HStack(spacing: 8) {
                 ForEach(MonitoringCasePanel.allCases, id: \.self) { value in
                     FilterChip(title: value.rawValue, active: panel == value) { panel = value }

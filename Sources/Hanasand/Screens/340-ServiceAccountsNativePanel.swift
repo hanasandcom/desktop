@@ -13,6 +13,7 @@ struct ServiceAccountsNativePanel: View {
     @State private var scopeQuery = ""
     @State private var selectedScopes: Set<String> = []
     @State private var secret = ""
+    @State private var secretCopyMessage = ""
     @State private var error = ""
     @State private var message = ""
     @State private var loading = false
@@ -94,13 +95,26 @@ struct ServiceAccountsNativePanel: View {
                 NativeGroupPanel(title: "Save this key now", subtitle: "It cannot be recovered after this panel closes or you refresh.") {
                     Text("Send it in the X-API-Key request header.").font(.system(size: 12)).foregroundStyle(theme.textSecondary)
                     Text(secret).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                    ActionButton(title: "Dismiss key", icon: "xmark") { secret = "" }
+                    HStack {
+                        ActionButton(title: secretCopyMessage == "Copied" ? "Copied" : "Copy key", icon: secretCopyMessage == "Copied" ? "checkmark" : "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            if NSPasteboard.general.setString(secret, forType: .string) {
+                                secretCopyMessage = "Copied"
+                            } else {
+                                secretCopyMessage = "Could not copy key. Select the text above and press Command-C."
+                            }
+                        }
+                        ActionButton(title: "Dismiss key", icon: "xmark") { secret = ""; secretCopyMessage = "" }
+                    }
+                    if !secretCopyMessage.isEmpty && secretCopyMessage != "Copied" {
+                        Text(secretCopyMessage).font(.system(size: 11)).foregroundStyle(theme.textSecondary)
+                    }
                 }
             }
         }
         .task(id: scope) { await refresh() }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onDisappear { secret = "" }
+        .onDisappear { secret = ""; secretCopyMessage = "" }
         .confirmationDialog(dialogTitle, isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), titleVisibility: .visible) {
             Button(dialogConfirm, role: pending == .revoke ? .destructive : nil) { let action = pending; pending = nil; Task { await perform(action) } }
             Button("Cancel", role: .cancel) { pending = nil }
@@ -172,7 +186,7 @@ struct ServiceAccountsNativePanel: View {
 
     @MainActor private func refresh() async {
         guard model.hasHanasandAuth else { directory = nil; access = nil; error = "Sign in to view service accounts."; return }
-        loading = true; error = ""; message = ""; secret = ""
+        loading = true; error = ""; message = ""; secret = ""; secretCopyMessage = ""
         defer { loading = false }
         do {
             let client = try client()
@@ -198,6 +212,7 @@ struct ServiceAccountsNativePanel: View {
                 let scopes = directory.endpoints.filter { selectedScopes.contains($0.id) }
                 let receipt = try await client.create(access: freshAccess, name: nameForCreate, description: descriptionForCreate, scopes: scopes)
                 secret = receipt.secret
+                secretCopyMessage = ""
                 nameForCreate = ""; descriptionForCreate = ""; selectedScopes.removeAll()
                 await refreshKeepingSecret()
                 message = "Created service account \(receipt.apiKey.ownerID). Save the key now; it cannot be recovered later."

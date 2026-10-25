@@ -7,13 +7,30 @@ enum ThreatIntelligenceOperationsSection: Equatable {
     case timeliness
 }
 
+enum ThreatSourceView: String, CaseIterable, Identifiable {
+    case operations = "Operations"
+    case catalogue = "Public catalogue"
+    case runs = "Collection runs"
+    case captures = "Captures"
+    var id: String { rawValue }
+}
+
 struct ThreatIntelligenceOperationsNativePanel: View {
     let section: ThreatIntelligenceOperationsSection
+
+    init(section: ThreatIntelligenceOperationsSection, initialSourceView: ThreatSourceView = .operations) {
+        self.section = section
+        _sourceView = State(initialValue: initialSourceView)
+    }
 
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var profiles: ThreatIntelligenceOperationsPage?
     @State private var sources: ThreatIntelligenceSourcePage?
+    @State private var operationalSources: ThreatIntelligenceOperationalSourcePage?
+    @State private var collectionRuns: ThreatIntelligenceCollectionRunPage?
+    @State private var captures: ThreatIntelligenceCapturePage?
+    @State private var sourceView: ThreatSourceView = .operations
     @State private var timeliness: ThreatIntelligenceTimelinessSnapshot?
     @State private var query = ""
     @State private var submittedQuery = ""
@@ -21,13 +38,25 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @State private var page = 1
     @State private var nextCursor: String?
     @State private var isLoading = false
+    @State private var isMutating = false
+    @State private var showStatusConfirmation = false
+    @State private var showRunConfirmation = false
+    @State private var pendingSourceStatus: (source: ThreatIntelligenceOperationalSourcePage.Source, status: String)?
+    @State private var pendingSourceRun: ThreatIntelligenceOperationalSourcePage.Source?
+    @State private var loadedSourceSettings: HanasandDesktopSettings?
     @State private var message = ""
     @State private var requestID = UUID()
 
     private var title: String {
         switch section {
         case .profiles: "Actor profiles"
-        case .sources: "Intelligence sources"
+        case .sources:
+            switch sourceView {
+            case .operations: "Source operations"
+            case .catalogue: "Public source catalogue"
+            case .runs: "Collection runs"
+            case .captures: "Capture history"
+            }
         case .timeliness: "Delivery health"
         }
     }
@@ -56,21 +85,56 @@ struct ThreatIntelligenceOperationsNativePanel: View {
             }
         }
         .task(id: scopeKey) { await load(reset: true) }
+        .confirmationDialog("Change source status?", isPresented: $showStatusConfirmation, titleVisibility: .visible) {
+            if let statusAction = pendingSourceStatus {
+                Button(statusAction.status == "active" ? "Activate source" : "Pause source") {
+                    let action = statusAction
+                    pendingSourceStatus = nil
+                    Task { await updateSourceStatus(action.source, status: action.status) }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingSourceStatus = nil }
+        } message: {
+            Text("This changes collection eligibility for \(pendingSourceStatus?.source.name ?? "this source"). The server will recheck your account membership and source-operator role.")
+        }
+        .confirmationDialog("Queue a collection query?", isPresented: $showRunConfirmation, titleVisibility: .visible) {
+            if pendingSourceRun != nil {
+                Button("Queue query") {
+                    let source = pendingSourceRun
+                    pendingSourceRun = nil
+                    if let source { Task { await queueRun(source) } }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingSourceRun = nil }
+        } message: {
+            Text("This queues the configured query across collection adapters. The website control API does not restrict the run to the selected source.")
+        }
     }
 
     private var subtitle: String {
         switch section {
         case .profiles: "Search source-backed actor records · 50 per page"
-        case .sources: "Read-only public source catalogue · sensitive locators remain redacted"
+        case .sources: sourceView == .operations
+                ? "Global source health and collection activity · changes require confirmation"
+                : sourceView == .catalogue
+                    ? "Read-only public source catalogue · sensitive locators remain redacted"
+                    : sourceView == .runs ? "Read-only global collection run history" : "Read-only bounded capture history · capture bodies are never requested"
         case .timeliness: "Global analyst queue · read-only · latest 50 records"
         }
     }
 
     @ViewBuilder private var controls: some View {
+        if section == .sources {
+            Picker("Source view", selection: $sourceView) {
+                ForEach(ThreatSourceView.allCases) { view in Text(view.rawValue).tag(view) }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: sourceView) { _, _ in Task { await load(reset: true) } }
+        }
         SearchFieldRow(
             placeholder: section == .profiles
                 ? "Search actor names and aliases"
-                : section == .sources ? "Search source names and types" : "Search actor, source, incident, or capture", text: $query
+                : section == .sources ? sourceView == .runs ? "Search source or run status" : sourceView == .captures ? "Search source or capture metadata" : "Search source names and types" : "Search actor, source, incident, or capture", text: $query
         )
         .frame(minWidth: 0, maxWidth: .infinity)
         if section == .timeliness {
@@ -103,8 +167,100 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @ViewBuilder private var content: some View {
         switch section {
         case .profiles: profileContent
-        case .sources: sourceContent
+        case .sources:
+            switch sourceView {
+            case .operations: operationalSourceContent
+            case .catalogue: sourceContent
+            case .runs: collectionRunContent
+            case .captures: captureContent
+            }
         case .timeliness: timelinessContent
+        }
+    }
+
+    private var operationalSourceContent: some View {
+        NativeGroupPanel(title: "Source operations", subtitle: "\(operationalSources?.total ?? 0) sources · page \(page) · global scope") {
+            if let operationalSources, !operationalSources.rows.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(operationalSources.rows) { source in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(source.name ?? "Unnamed source").font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text).fixedSize(horizontal: false, vertical: true)
+                            Text([source.family, source.type, source.lifecycleStatus].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            let health = source.health
+                            Text("\(health?.state ?? "not observed") · last check \(date(health?.lastAttemptAt ?? "")) · useful output \(date(health?.lastUsefulItemAt ?? ""))")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                            let coverage = source.coverage
+                            Text("\(coverage?.captureCount ?? 0) captures · \(coverage?.customerMatchCount ?? 0) customer matches · \(source.executable == true ? "executable" : "not executable")")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            if let reasons = source.qualification?.reasons, !reasons.isEmpty {
+                                Text("Qualification: \(reasons.joined(separator: ", "))").font(.system(size: 10)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            }
+                            if let failure = health?.lastFailureReason, !failure.isEmpty {
+                                Text("Latest failure: \(failure)").font(.system(size: 10)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                            }
+                            HStack(spacing: 8) {
+                                Button(source.lifecycleStatus == "active" ? "Pause" : "Activate") {
+                                    pendingSourceStatus = (source, source.lifecycleStatus == "active" ? "paused" : "active")
+                                    showStatusConfirmation = true
+                                }
+                                .disabled(isLoading || isMutating || !canMutateLoadedSources)
+                                if source.lifecycleStatus == "active" {
+                                    Button("Run query") {
+                                        pendingSourceRun = source
+                                        showRunConfirmation = true
+                                    }
+                                    .disabled(isLoading || isMutating || !canMutateLoadedSources)
+                                }
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                        if source.id != operationalSources.rows.last?.id { Divider() }
+                    }
+                }
+                paginationControls(hasNext: page < max(1, Int(ceil(Double(operationalSources.total) / 50.0))))
+            } else {
+                NativeEmptyState(title: "No operational sources", message: "No source operations matched this search. Global inventory requires a source admin or source operator role.")
+            }
+        }
+    }
+
+    private var collectionRunContent: some View {
+        NativeGroupPanel(title: "Collection runs", subtitle: "\(collectionRuns?.total ?? 0) recorded runs · page \(page)") {
+            if let collectionRuns, !collectionRuns.collectionRuns.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(collectionRuns.collectionRuns) { run in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(run.sourceId ?? "Global source fleet").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text).textSelection(.enabled)
+                            Text("\(run.status ?? "status not reported") · started \(date(run.startedAt ?? "")) · \(run.captureCount ?? run.rows ?? run.rowCount ?? 0) captures/items")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            if let message = run.message ?? run.error, !message.isEmpty { Text(message).font(.system(size: 10)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true) }
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                        if run.id != collectionRuns.collectionRuns.last?.id { Divider() }
+                    }
+                }
+                paginationControls(hasNext: collectionRuns.nextCursor != nil)
+            } else { NativeEmptyState(title: "No collection runs", message: "No collection runs matched this search.") }
+        }
+    }
+
+    private var captureContent: some View {
+        NativeGroupPanel(title: "Capture history", subtitle: "\(captures?.total ?? 0) records · page \(page) · safe metadata only") {
+            if let captures, !captures.captures.isEmpty {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(captures.captures) { capture in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(capture.metadata?.title ?? capture.metadata?.headline ?? capture.sourceName ?? "Source capture").font(.system(size: 12, weight: .semibold)).foregroundStyle(theme.text).fixedSize(horizontal: false, vertical: true)
+                            Text("\(capture.metadata?.actor ?? capture.metadata?.threatActor ?? capture.sourceId ?? "Source") · \(date(capture.collectedAt ?? ""))")
+                                .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+                            Text("\(capture.metadata?.domain ?? "domain not reported") · \(capture.storageKind ?? capture.mediaType ?? "capture")\(capture.locatorRedacted == true ? " · locator redacted" : "")")
+                                .font(.system(size: 10)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                        if capture.id != captures.captures.last?.id { Divider() }
+                    }
+                }
+                paginationControls(hasNext: captures.nextCursor != nil)
+            } else { NativeEmptyState(title: "No captures", message: "No safe capture metadata matched this search. Capture bodies are intentionally not requested.") }
         }
     }
 
@@ -186,7 +342,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                             .foregroundStyle(theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                             if let url = source.url {
-                                Button("Open public source") { NSWorkspace.shared.open(url) }
+                                Button("Open public source") { model.openURL(url.absoluteString, label: "Public source") }
                                     .font(.system(size: 11, weight: .semibold))
                                     .buttonStyle(.link)
                             }
@@ -276,7 +432,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                                 }
                                 ForEach(item.sources) { source in
                                     if let url = source.url {
-                                        Button(source.title) { NSWorkspace.shared.open(url) }
+                                        Button(source.title) { model.openURL(url.absoluteString, label: source.title) }
                                             .font(.system(size: 10, weight: .semibold))
                                             .buttonStyle(.link)
                                             .fixedSize(horizontal: false, vertical: true)
@@ -378,13 +534,23 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     private var currentPageIsEmpty: Bool {
         switch section {
         case .profiles: profiles == nil
-        case .sources: sources == nil
+        case .sources:
+            switch sourceView {
+            case .operations: operationalSources == nil
+            case .catalogue: sources == nil
+            case .runs: collectionRuns == nil
+            case .captures: captures == nil
+            }
         case .timeliness: timeliness == nil
         }
     }
 
     private var messageIfFailed: String? {
         message.hasPrefix("Could not load") ? message : nil
+    }
+
+    private var canMutateLoadedSources: Bool {
+        loadedSourceSettings != nil && model.settings == loadedSourceSettings
     }
 
     private var scopeKey: String {
@@ -397,7 +563,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     private var sectionKey: String {
         switch section {
         case .profiles: "profiles"
-        case .sources: "sources"
+        case .sources: "sources-\(sourceView.rawValue)"
         case .timeliness: "timeliness"
         }
     }
@@ -414,6 +580,9 @@ struct ThreatIntelligenceOperationsNativePanel: View {
             nextCursor = nil
             profiles = nil
             sources = nil
+            operationalSources = nil
+            collectionRuns = nil
+            captures = nil
             timeliness = nil
             submittedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -427,10 +596,29 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 profiles = snapshot
                 message = "Loaded \(snapshot.profiles.count) profiles on page \(snapshot.page) of \(snapshot.total) matching."
             case .sources:
-                let snapshot = try await client.loadSources(query: submittedQuery, page: page)
-                guard stillCurrent(current, settings: requestedSettings) else { return }
-                sources = snapshot
-                message = "Loaded \(snapshot.sources.count) public sources on page \(snapshot.page) of \(snapshot.total) matching."
+                switch sourceView {
+                case .operations:
+                    let snapshot = try await client.loadOperationalSources(query: submittedQuery, page: page)
+                    guard stillCurrent(current, settings: requestedSettings) else { return }
+                    operationalSources = snapshot
+                    loadedSourceSettings = requestedSettings
+                    message = "Loaded \(snapshot.rows.count) operational sources on page \(page) of \(snapshot.total) matching. Changes require confirmation."
+                case .catalogue:
+                    let snapshot = try await client.loadSources(query: submittedQuery, page: page)
+                    guard stillCurrent(current, settings: requestedSettings) else { return }
+                    sources = snapshot
+                    message = "Loaded \(snapshot.sources.count) public sources on page \(snapshot.page) of \(snapshot.total) matching."
+                case .runs:
+                    let snapshot = try await client.loadCollectionRuns(query: submittedQuery, page: page)
+                    guard stillCurrent(current, settings: requestedSettings) else { return }
+                    collectionRuns = snapshot
+                    message = "Loaded \(snapshot.collectionRuns.count) collection runs on page \(page) of \(snapshot.total) matching. This view is read-only."
+                case .captures:
+                    let snapshot = try await client.loadCaptures(query: submittedQuery, page: page)
+                    guard stillCurrent(current, settings: requestedSettings) else { return }
+                    captures = snapshot
+                    message = "Loaded \(snapshot.captures.count) capture metadata records on page \(page) of \(snapshot.total) matching. This view is read-only."
+                }
             case .timeliness:
                 let snapshot = try await client.loadTimeliness(
                     status: statusFilter, query: submittedQuery, cursor: reset ? nil : nextCursor)
@@ -449,6 +637,59 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         !Task.isCancelled && requestID == current && model.settings == settings
     }
 
+    private func updateSourceStatus(_ source: ThreatIntelligenceOperationalSourcePage.Source, status: String) async {
+        guard canMutateLoadedSources, operationalSources?.rows.contains(where: { $0.id == source.id }) == true else {
+            message = "The signed-in account or source inventory changed. Refresh before changing this source."
+            return
+        }
+        isMutating = true
+        defer { isMutating = false }
+        do {
+            let client = try ThreatIntelligenceOperationsClient(settings: model.settings)
+            try await client.updateSourceStatus(source: source, status: status)
+            guard model.settings == loadedSourceSettings else {
+                message = "The account changed while the request was completing. Refresh the source inventory to verify its status."
+                return
+            }
+            message = "Source status confirmed as \(status)."
+            await load(reset: true)
+        } catch {
+            if case ThreatIntelligenceOperationsError.mutationOutcomeUnknown = error {
+                await load(reset: true)
+                let observed = operationalSources?.rows.first(where: { $0.id == source.id })?.lifecycleStatus
+                message = observed == status
+                    ? "Source status was verified after refreshing the inventory."
+                    : "The change was not confirmed. Refreshed status: \(observed ?? "unavailable"). Do not retry until you verify current state."
+            } else {
+                message = "Could not confirm the source change: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+            }
+        }
+    }
+
+    private func queueRun(_ source: ThreatIntelligenceOperationalSourcePage.Source) async {
+        guard canMutateLoadedSources, operationalSources?.rows.contains(where: { $0.id == source.id }) == true else {
+            message = "The signed-in account or source inventory changed. Refresh before queuing a run."
+            return
+        }
+        isMutating = true
+        defer { isMutating = false }
+        do {
+            let client = try ThreatIntelligenceOperationsClient(settings: model.settings)
+            try await client.queueCollectionQuery(source: source, queries: source.coverage?.observedDomains ?? [])
+            guard model.settings == loadedSourceSettings else {
+                message = "The account changed while the request was completing. Check collection history before retrying."
+                return
+            }
+            message = "Collection query was queued. This control route records runs in the dashboard tenant, separate from the global run list."
+        } catch {
+            if case ThreatIntelligenceOperationsError.mutationOutcomeUnknown = error {
+                message = "The run receipt is ambiguous. This route writes to the dashboard tenant, which is not exposed in this global history view. Verify that tenant's run records before retrying."
+            } else {
+                message = "Could not confirm the collection request: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+            }
+        }
+    }
+
     private func metric(_ title: String, _ value: Int?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.system(size: 9, weight: .semibold)).foregroundStyle(theme.textTertiary)
@@ -457,6 +698,27 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    @ViewBuilder
+    private func paginationControls(hasNext: Bool) -> some View {
+        if page > 1 || hasNext {
+            HStack {
+                if page > 1 {
+                    ActionButton(title: "Previous page", icon: "chevron.left") {
+                        page = max(1, page - 1)
+                        Task { await load(reset: false) }
+                    }.disabled(isLoading)
+                }
+                Spacer(minLength: 8)
+                if hasNext {
+                    ActionButton(title: "Next page", icon: "chevron.right") {
+                        page += 1
+                        Task { await load(reset: false) }
+                    }.disabled(isLoading)
+                }
+            }
+        }
     }
 
     private func date(_ value: String) -> String {

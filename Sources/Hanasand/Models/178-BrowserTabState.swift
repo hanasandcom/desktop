@@ -20,6 +20,8 @@ final class BrowserTabState: NSObject, ObservableObject, WKNavigationDelegate, I
     @Published var agentY = "120"; @Published var agentStatus = "Agent controls ready"; @Published var agentElements: [BrowserAgentElement] = []; let webView: WKWebView
     var progressObservation: NSKeyValueObservation?
     var urlObservation: NSKeyValueObservation?
+    var onOpenNativeHanasandRoute: ((String) -> Bool)?
+    var configuredWebsiteBaseURL: String?
 
     init(label: String, url: String) {
         self.label = label

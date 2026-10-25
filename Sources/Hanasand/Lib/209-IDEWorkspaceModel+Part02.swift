@@ -86,7 +86,6 @@ extension IDEWorkspaceModel {
         }
         let base = settings.websiteBaseURL.normalizedBaseURL
         let sharesURL = base.appendingPathComponent("s").absoluteString
-        previewTab = BrowserTabState(label: "Shares", url: sharesURL)
         terminal.cwd = hanasandSafeIDEWorkspacePath()
         codePlugins = Self.defaultCodePlugins()
         enabledPluginIDs = Set(codePlugins.map(\.id))

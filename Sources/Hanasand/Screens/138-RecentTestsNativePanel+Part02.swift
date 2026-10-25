@@ -35,7 +35,12 @@ extension RecentTestsNativePanel {
                     .disabled(!canRerun)
                 }
                 ActionButton(title: "Copy link", icon: "doc.on.doc") { copyResultLink(test) }
-                ActionButton(title: "Open", icon: "arrow.up.right") { model.openWebsite(path: "/test/\(test.id)", label: "Test \(test.id)") }
+                ActionButton(title: "Open", icon: "arrow.up.right") {
+                    guard NativeRouteSelection.resolve(test.id, among: [test.id]) != nil else { return }
+                    selectedTest = test
+                    model.openNativeDashboard(path: "/test", label: "Test \(test.id)")
+                    Task { await openResult(id: test.id) }
+                }
             }
             if let summary = test.activeSummary {
                 Text(summary.pretty)

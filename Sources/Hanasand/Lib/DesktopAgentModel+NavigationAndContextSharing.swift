@@ -12,9 +12,11 @@ import WebKit
 
 extension DesktopAgentModel {
 
-    func openNativeDashboard(path: String, label: String) {
+    func openNativeDashboard(path: String, label: String, detailID: String? = nil) {
         selectedDashboardPath = path
         selectedDashboardTitle = label
+        selectedNativeDashboardDetailID = detailID ?? ""
+        if path != "/cases" { nativeMonitoringCaseContext = nil }
         selectedSection = .dashboard
         append(meta: "Dashboard", body: "Opened native \(label)", kind: .command)
         recordRun(title: label, detail: path, kind: .command)
@@ -37,9 +39,48 @@ extension DesktopAgentModel {
         trafficMetrics = nil
     }
 
+    @discardableResult
+    func openNativeHanasandRoute(_ route: BrowserNativeRoute) -> Bool {
+        nativeMonitoringCaseContext = route.path == "/cases" ? route.caseContext : nil
+        if let detailID = route.detailID {
+            switch route.path {
+            case "/s": selectedShareID = detailID
+            case "/content/articles": selectedArticleID = detailID
+            case "/content/thoughts": selectedThoughtID = detailID
+            case "/users": selectedUserID = detailID
+            case "/g":
+                linkDraftID = detailID
+                linkLookupID = detailID
+            default: break
+            }
+        }
+        if route.path == "/mail" {
+            selectedSection = .mail
+        } else if route.path == "/ai" {
+            selectedSection = .command
+        } else {
+            openNativeDashboard(path: route.path, label: route.label, detailID: route.detailID)
+            if route.path == "/g", route.detailID != nil { Task { await lookupShortcutLink() } }
+        }
+        return true
+    }
+
     func openURL(_ rawValue: String, label: String) {
         guard let url = URL(string: rawValue) else {
             append(meta: label, body: "Invalid URL: \(rawValue)", kind: .error)
+            return
+        }
+        if BrowserWorkspaceModel.isHanasandOwnedURL(rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) {
+            guard let route = BrowserWorkspaceModel.nativeRoute(for: rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) else {
+                append(meta: label, body: "This Hanasand page does not have a native Desktop route yet.", kind: .note)
+                return
+            }
+            _ = openNativeHanasandRoute(BrowserNativeRoute(
+                path: route.path,
+                label: route.label.isEmpty ? label : route.label,
+                detailID: route.detailID,
+                caseContext: route.caseContext
+            ))
             return
         }
         NSWorkspace.shared.open(url)
@@ -123,17 +164,13 @@ extension DesktopAgentModel {
     }
 
     func openServerLogsPage() {
-        if settings.serverLogsPath.lowercased().hasPrefix("http"),
-           let url = URL(string: settings.serverLogsPath) {
-            NSWorkspace.shared.open(url)
-            append(meta: "Opened logs", body: url.absoluteString, kind: .command)
-            return
-        }
-        openWebsite(path: "/logs", label: "Logs")
+        selectedSection = .server
+        append(meta: "Server logs", body: "Loading logs in the native Server workspace.", kind: .command)
+        Task { await checkServerLogs() }
     }
 
     func configureMacMiniRemoteDesktop() {
-        settings.rdpHost = "localhost:5900"
+        settings.vncHost = "localhost:5900"
         settings.rdpUser = "macmini"
         settings.remoteDesktopProtocol = RemoteDesktopProtocol.screenSharing.rawValue
         settings.remoteDesktopTunnelCommand = HanasandDesktopSettings.macMiniTunnelCommand

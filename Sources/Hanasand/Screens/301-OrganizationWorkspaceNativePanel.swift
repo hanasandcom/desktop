@@ -16,7 +16,7 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var confirmSave = false
     @State private var search = ""
 
-    init(section: OrganizationWorkspaceSection = .settings) {
+    init(section: OrganizationWorkspaceSection = .overview) {
         _section = State(initialValue: section)
     }
 
@@ -54,6 +54,8 @@ struct OrganizationWorkspaceNativePanel: View {
                 NativeEmptyState(title: "Select an organization", message: "Choose an active organization to view its settings and monitoring records.")
             } else if section == .settings {
                 settingsContent
+            } else if section == .overview {
+                overviewContent
             } else {
                 recordsContent
             }
@@ -65,6 +67,58 @@ struct OrganizationWorkspaceNativePanel: View {
         } message: {
             Text("This updates the selected organization’s name, slug, event and webhook policies, lifecycle, and retention period.")
         }
+    }
+
+    private var overviewContent: some View {
+        let overview = OrganizationWorkspaceOverview(events: events, cases: cases)
+        return VStack(alignment: .leading, spacing: 14) {
+            if let page = settingsPage {
+                NativeGroupPanel(title: page.organization.name, subtitle: "Organization overview · \(page.organization.role?.capitalized ?? "Member") · \(page.organization.status.capitalized)") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)], alignment: .leading, spacing: 10) {
+                        overviewMetric("Events", value: overview.eventCount, symbol: "bell.badge")
+                        overviewMetric("Cases", value: overview.caseCount, symbol: "folder")
+                        overviewMetric("Open cases", value: overview.openCaseCount, symbol: "exclamationmark.bubble")
+                    }
+                    if let latestActivity = overview.latestActivity {
+                        Label("Latest activity · \(formatDateText(latestActivity, fallback: latestActivity))", systemImage: "clock")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    } else if !isLoading {
+                        Text("No organization events or cases have been recorded yet.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                }
+            }
+
+            NativeGroupPanel(title: "Recent activity", subtitle: "Latest events and cases in the selected organization") {
+                if visibleRecords.isEmpty && !isLoading {
+                    NativeEmptyState(title: error.isEmpty ? "No recent activity" : "Activity unavailable",
+                                     message: error.isEmpty ? "New organization events and cases will appear here." : "Refresh to retry the organization-scoped feeds.")
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 12, alignment: .top)], alignment: .leading, spacing: 10) {
+                        ForEach(Array(visibleRecords.prefix(6))) { record in recordCard(record) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func overviewMetric(_ title: String, value: Int, symbol: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol).foregroundStyle(theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.textTertiary)
+                Text(value.formatted()).font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(theme.text)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     @ViewBuilder private var settingsContent: some View {
@@ -115,12 +169,16 @@ struct OrganizationWorkspaceNativePanel: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12, alignment: .top)], alignment: .leading, spacing: 10) {
                 ForEach(visibleRecords) { record in
-                    NativeGroupPanel(title: record.title, subtitle: [record.status, record.severity].filter { !$0.isEmpty }.joined(separator: " · ")) {
-                        Text(record.id).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).lineLimit(2).textSelection(.enabled)
-                        Text(record.updatedAt.isEmpty ? record.createdAt : record.updatedAt).font(.system(size: 10)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
-                    }
+                    recordCard(record)
                 }
             }
+        }
+    }
+
+    private func recordCard(_ record: OrganizationWorkspaceRecord) -> some View {
+        NativeGroupPanel(title: record.title, subtitle: [record.status, record.severity].filter { !$0.isEmpty }.joined(separator: " · ")) {
+            Text(record.id).font(.system(size: 10, weight: .medium, design: .monospaced)).foregroundStyle(theme.textTertiary).lineLimit(2).textSelection(.enabled)
+            Text(record.updatedAt.isEmpty ? record.createdAt : record.updatedAt).font(.system(size: 10)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
         }
     }
 

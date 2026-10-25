@@ -50,6 +50,54 @@ struct APIReferenceDocument: Decodable {
         return schemas
     }
 
+    func resolvingComponentReferences(in value: APIReferenceJSONValue) -> APIReferenceJSONValue {
+        func target(for reference: String) -> APIReferenceJSONValue? {
+            guard reference.hasPrefix("#/components/") else { return nil }
+            let tokens = reference.dropFirst(2).split(separator: "/").map {
+                $0.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
+            }
+            guard tokens.first == "components", let components else { return nil }
+            var current: APIReferenceJSONValue = .object(components)
+            for token in tokens.dropFirst() {
+                switch current {
+                case .object(let values):
+                    guard let next = values[token] else { return nil }
+                    current = next
+                case .array(let values):
+                    guard let index = Int(token), values.indices.contains(index) else { return nil }
+                    current = values[index]
+                default:
+                    return nil
+                }
+            }
+            return current
+        }
+
+        func resolve(_ value: APIReferenceJSONValue, visited: Set<String>, depth: Int) -> APIReferenceJSONValue {
+            guard depth < 16 else { return value }
+            switch value {
+            case .array(let values):
+                return .array(values.map { resolve($0, visited: visited, depth: depth + 1) })
+            case .object(let values):
+                if case .string(let reference)? = values["$ref"],
+                   !visited.contains(reference),
+                   let referencedValue = target(for: reference) {
+                    let resolvedTarget = resolve(referencedValue, visited: visited.union([reference]), depth: depth + 1)
+                    guard case .object(var merged) = resolvedTarget else { return resolvedTarget }
+                    for (key, sibling) in values where key != "$ref" {
+                        merged[key] = resolve(sibling, visited: visited.union([reference]), depth: depth + 1)
+                    }
+                    return .object(merged)
+                }
+                return .object(values.mapValues { resolve($0, visited: visited, depth: depth + 1) })
+            case .string, .number, .bool, .null:
+                return value
+            }
+        }
+
+        return resolve(value, visited: [], depth: 0)
+    }
+
     static func decode(_ data: Data) throws -> APIReferenceDocument {
         guard data.count <= APIReferenceClient.documentLimit else { throw APIReferenceError.tooLarge }
         let document: APIReferenceDocument

@@ -25,6 +25,7 @@ extension DesktopAgentModel {
         let isUpdate = !selectedNoteID.isEmpty
         let path = isUpdate ? "notes/\(selectedNoteID)" : "notes"
         let method = isUpdate ? "PUT" : "POST"
+        let draftID = isUpdate ? selectedNoteID : DashboardNoteDraftStore.newNoteID
 
         do {
             _ = try await requestPrettyText(
@@ -33,6 +34,7 @@ extension DesktopAgentModel {
                 body: body,
                 authenticated: true
             )
+            DashboardNoteDraftStore().remove(noteID: draftID, for: userIDForRequests)
             nativeDashboardStatus = "Saved note."
             await loadNativeDashboardData()
         } catch {
@@ -48,6 +50,7 @@ extension DesktopAgentModel {
                 method: "DELETE",
                 authenticated: true
             )
+            DashboardNoteDraftStore().remove(noteID: selectedNoteID, for: userIDForRequests)
             nativeDashboardStatus = "Deleted note."
             selectedNoteID = ""
             noteDraftTitle = ""
@@ -59,6 +62,13 @@ extension DesktopAgentModel {
     }
 
     func loadSelectedNoteIntoDraft() {
+        let draftStore = DashboardNoteDraftStore()
+        let draftID = selectedNoteID.isEmpty ? DashboardNoteDraftStore.newNoteID : selectedNoteID
+        if let draft = draftStore.draft(noteID: draftID, for: userIDForRequests) {
+            noteDraftTitle = draft.title
+            noteDraftContent = draft.content
+            return
+        }
         guard let selected = notes.first(where: { $0.id == selectedNoteID }) else {
             noteDraftTitle = ""
             noteDraftContent = ""
@@ -118,8 +128,9 @@ extension DesktopAgentModel {
     }
 
     func openShare(_ share: DashboardShare) {
-        let target = share.path?.trimmingCharacters(in: .whitespacesAndNewlines)
-        openWebsite(path: "/s/\((target?.isEmpty == false ? target : share.id) ?? share.id)", label: share.displayName)
+        guard NativeRouteSelection.resolve(share.id, among: shares.map(\.id)) != nil else { return }
+        loadShareIntoEditor(share)
+        openNativeDashboard(path: "/s", label: share.displayName)
     }
 
     func loadShareIntoEditor(_ share: DashboardShare) {

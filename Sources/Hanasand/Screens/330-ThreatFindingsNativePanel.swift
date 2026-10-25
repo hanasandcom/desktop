@@ -24,6 +24,15 @@ struct ThreatFindingsNativePanel: View {
             .sorted { (Date.ISO8601($0.observedAt) ?? .distantPast) > (Date.ISO8601($1.observedAt) ?? .distantPast) }
     }
     private var selected: ThreatFinding? { findings.first { $0.id == selectedID } }
+    private var selectedCaseURL: URL? {
+        guard let selected else { return nil }
+        return ThreatFindingCaseLink.url(
+            siteBaseURL: model.settings.websiteBaseURL,
+            caseID: selected.caseID,
+            alertID: selected.id,
+            organizationID: selected.organizationID
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -100,7 +109,14 @@ struct ThreatFindingsNativePanel: View {
             Text(item.recommendedAction.isEmpty ? "No recommended action was recorded." : item.recommendedAction)
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
             if !item.actor.isEmpty { Text("Actor: \(item.actor)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled) }
-            if !item.caseID.isEmpty { Text("Linked case: \(item.caseID)").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled) }
+            if let caseURL = selectedCaseURL {
+                ActionButton(title: "Open case", icon: "arrow.up.right") {
+                    model.openURL(caseURL.absoluteString, label: "Linked case")
+                }
+            } else {
+                Text(item.caseID.isEmpty ? "No case yet" : "The linked case is not available for this workspace.")
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
+            }
             Text("Findings are source reports for analyst review. Severity and review labels describe recorded workflow state; they do not confirm attribution.")
                 .font(.system(size: 10, weight: .medium)).foregroundStyle(theme.textTertiary).textSelection(.enabled)
         }

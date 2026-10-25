@@ -166,8 +166,7 @@ extension DesktopAgentModel {
     func openWebsite(path: String, label: String) {
         let normalizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
         let url = settings.websiteBaseURL.normalizedBaseURL.appendingPathComponent(normalizedPath)
-        NSWorkspace.shared.open(url)
-        append(meta: "Opened \(label)", body: url.absoluteString, kind: .command)
+        openURL(url.absoluteString, label: label)
     }
 
     func recordUIEvent(meta: String, body: String, kind: AgentEvent.Kind = .note) {

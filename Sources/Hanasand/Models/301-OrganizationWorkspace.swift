@@ -129,10 +129,30 @@ struct OrganizationWorkspaceSettingsReceipt: Decodable {
 }
 
 enum OrganizationWorkspaceSection: String, CaseIterable, Identifiable {
+    case overview = "Overview"
     case settings = "Settings"
     case events = "Events & cases"
     case activity = "Activity"
     var id: String { rawValue }
+}
+
+struct OrganizationWorkspaceOverview: Equatable {
+    let eventCount: Int
+    let caseCount: Int
+    let openCaseCount: Int
+    let latestActivity: String?
+
+    init(events: [OrganizationWorkspaceRecord], cases: [OrganizationWorkspaceRecord]) {
+        eventCount = events.count
+        caseCount = cases.count
+        openCaseCount = cases.filter { !["closed", "resolved", "false_positive", "suppressed"].contains($0.status.lowercased()) }.count
+        latestActivity = (events + cases)
+            .compactMap { record -> String? in
+                let value = record.updatedAt.isEmpty ? record.createdAt : record.updatedAt
+                return value.isEmpty ? nil : value
+            }
+            .max()
+    }
 }
 
 enum OrganizationWorkspacePolicy {

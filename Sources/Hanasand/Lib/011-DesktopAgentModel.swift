@@ -89,7 +89,7 @@ final class DesktopAgentModel: ObservableObject {
     @Published var hostUpdates: HostUpdateEnvelope?; @Published var hostUpdatesStatus = "Select Host Updates to load automatic package status."; @Published var isLoadingHostUpdates = false; @Published var selectedHostUpdatesHost: HostUpdateTarget = .inspur; @Published var selectedHostUpdatesView: HostUpdateView = .pending; @Published var hostUpdatesSearch = ""; @Published var visibleHostUpdateLimit = 30
     var hostOverviewLoadID = UUID(); var hostUpdatesLoadID = UUID()
 
-    @Published var selectedDashboardTitle = "Dashboard"; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
+    @Published var selectedDashboardTitle = "Dashboard"; @Published var selectedNativeDashboardDetailID = ""; @Published var nativeMonitoringCaseContext: BrowserCaseHandoffContext?; @Published var nativeDashboardPayload = "Select a dashboard card to load native data."; @Published var nativeDashboardStatus = "Ready"; @Published var isLoadingNativeDashboard = false
     var nativeDashboardLoadID = UUID()
 
     @Published var backupServices: [DashboardBackupService] = []; @Published var backupFiles: [DashboardBackupFile] = []; @Published var notes: [DashboardNote] = []; @Published var selectedNoteID = ""

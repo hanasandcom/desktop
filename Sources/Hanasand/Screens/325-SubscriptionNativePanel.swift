@@ -40,13 +40,59 @@ struct SubscriptionNativePanel: View {
             } else {
                 NativeEmptyState(title: "Subscription unavailable", message: "Refresh to try again.")
             }
+            availablePlansCard
         }
         .task(id: scope) { await refresh() }
         .onDisappear { requestID = UUID() }
     }
 
+    private var availablePlansCard: some View {
+        NativeGroupPanel(title: "Available plans", subtitle: "Current offers from Hanasand", fillsAvailableWidth: true) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(CommercialAccessPlans.all) { plan in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(plan.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(plan.summary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(plan.monthlyPriceLabel)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.text)
+                        Text(plan.quota)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(theme.accent)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(plan.features, id: \.self) { feature in
+                                Label(feature, systemImage: "checkmark.circle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+                    .padding(12)
+                    .background(theme.card, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.divider, lineWidth: 1))
+                }
+            }
+            if !model.settings.impersonationToken.isEmpty {
+                Text("Return to your own account to choose a plan.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            Text("Subscription management opens Stripe's secure billing portal.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textTertiary)
+        }
+    }
+
     private func planCard(_ data: AccountSubscriptionEnvelope) -> some View {
-        NativeGroupPanel(title: "Subscription", subtitle: "Current account status") {
+        NativeGroupPanel(title: "Subscription", subtitle: "Current account status", fillsAvailableWidth: true) {
             if let subscription = data.subscription {
                 detail("Plan", value: label(subscription.planId))
                 detail("Status", value: label(subscription.status))
@@ -78,7 +124,7 @@ struct SubscriptionNativePanel: View {
     }
 
     private func accessCard(_ data: AccountSubscriptionEnvelope) -> some View {
-        NativeGroupPanel(title: "Active access", subtitle: "Features reported by active entitlements") {
+        NativeGroupPanel(title: "Active access", subtitle: "Features reported by active entitlements", fillsAvailableWidth: true) {
             if data.entitlements.isEmpty {
                 Text("No active plan access was reported.")
                     .font(.system(size: 13))
@@ -101,7 +147,7 @@ struct SubscriptionNativePanel: View {
     }
 
     private func allowancesCard(_ data: AccountSubscriptionEnvelope) -> some View {
-        NativeGroupPanel(title: "Allowances", subtitle: "Usage reported by the billing service") {
+        NativeGroupPanel(title: "Allowances", subtitle: "Usage reported by the billing service", fillsAvailableWidth: true) {
             if data.quotas.isEmpty {
                 Text("Allowances were not reported.")
                     .font(.system(size: 13))

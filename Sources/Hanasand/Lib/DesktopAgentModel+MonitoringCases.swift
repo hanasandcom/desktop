@@ -54,6 +54,19 @@ extension DesktopAgentModel {
     }
 
     func loadMonitoringCases() async {
+        if let requestedOrganizationID = nativeMonitoringCaseContext?.organizationID,
+           !requestedOrganizationID.isEmpty,
+           requestedOrganizationID != settings.selectedOrganizationID {
+            nativeDashboardStatus = "This case link belongs to a different organization. Switch to that organization, then open the link again."
+            selectedMonitoringCase = nil
+            return
+        }
+        if !selectedNativeDashboardDetailID.isEmpty,
+           !isValidMonitoringCaseID(selectedNativeDashboardDetailID) {
+            nativeDashboardStatus = "This case link has an invalid case ID."
+            selectedMonitoringCase = nil
+            return
+        }
         guard hasHanasandAuth else {
             monitoringCases = []
             selectedMonitoringCase = nil
@@ -73,14 +86,27 @@ extension DesktopAgentModel {
                 selectedMonitoringCase = nil
             }
             nativeDashboardStatus = response.items.isEmpty ? "No monitoring cases" : "Loaded \(response.items.count) monitoring cases"
-            if let selectedMonitoringCase { await loadMonitoringCaseDetail(id: selectedMonitoringCase.id) }
+            if !selectedNativeDashboardDetailID.isEmpty {
+                await loadMonitoringCaseDetail(id: selectedNativeDashboardDetailID)
+            } else if let selectedMonitoringCase {
+                await loadMonitoringCaseDetail(id: selectedMonitoringCase.id)
+            }
         } catch {
             nativeDashboardStatus = "Could not load monitoring cases: \(error.localizedDescription)"
         }
     }
 
     func loadMonitoringCaseDetail(id: String) async {
-        guard hasHanasandAuth, id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil else { return }
+        guard isValidMonitoringCaseID(id) else {
+            nativeDashboardStatus = "This case link has an invalid case ID."
+            selectedMonitoringCase = nil
+            return
+        }
+        guard hasHanasandAuth else {
+            nativeDashboardStatus = "Sign in to view monitoring cases."
+            selectedMonitoringCase = nil
+            return
+        }
         isLoadingNativeDashboard = true
         nativeDashboardStatus = "Loading case details"
         defer { isLoadingNativeDashboard = false }
@@ -95,6 +121,10 @@ extension DesktopAgentModel {
         } catch {
             nativeDashboardStatus = "Could not load case details: \(error.localizedDescription)"
         }
+    }
+
+    private func isValidMonitoringCaseID(_ id: String) -> Bool {
+        id.range(of: "^(HA|MON)-[1-9][0-9]*$", options: .regularExpression) != nil
     }
 
     func loadMonitoringCaseEventPage(page: Int) async {

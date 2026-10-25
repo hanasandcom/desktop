@@ -28,7 +28,11 @@ extension BrowserWorkspace {
                         browserToolbar(tab)
                         agentControlPanel(tab)
                         ZStack(alignment: .top) {
-                            NativeBrowserView(tab: tab)
+                            NativeBrowserView(
+                                tab: tab,
+                                onOpenNativeHanasandRoute: openNativeHanasandRoute,
+                                configuredWebsiteBaseURL: model.settings.websiteBaseURL
+                            )
                                 .background(theme.background)
                             if tab.isLoading {
                                 ProgressView(value: tab.progress)
@@ -47,6 +51,7 @@ extension BrowserWorkspace {
         }
         .background(theme.background)
         .onAppear {
+            workspace.onOpenNativeRoute = openNativeDashboardRoute
             workspace.configure(settings: model.settings)
             consumeBrowserOpenRequest()
         }
@@ -58,6 +63,17 @@ extension BrowserWorkspace {
             model.browserActiveAddress = address
             model.browserActiveTitle = workspace.selectedTab?.title ?? model.browserActiveTitle
         }
+    }
+
+    func openNativeHanasandRoute(_ rawValue: String) -> Bool {
+        guard let route = BrowserWorkspaceModel.nativeRoute(for: rawValue, configuredWebsiteBaseURL: model.settings.websiteBaseURL) else { return false }
+        return openNativeDashboardRoute(route)
+    }
+
+    func openNativeDashboardRoute(_ route: BrowserNativeRoute) -> Bool {
+        guard BrowserWorkspaceModel.nativeRoute(for: "https://hanasand.com\(route.path)", configuredWebsiteBaseURL: model.settings.websiteBaseURL) != nil else { return false }
+        model.openNativeHanasandRoute(route)
+        return true
     }
 
     var browserWorkspaceRail: some View {
@@ -158,7 +174,7 @@ extension BrowserWorkspace {
                         .id(tab.id)
                     }
                     Button {
-                        workspace.open(url: model.settings.websiteBaseURL)
+                        workspace.open(url: "https://duckduckgo.com")
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .bold))

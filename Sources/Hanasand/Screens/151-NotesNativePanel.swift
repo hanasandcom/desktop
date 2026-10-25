@@ -19,6 +19,11 @@ struct NotesNativePanel: View {
         NotesSearch.filter(model.notes, query: searchQuery)
     }
 
+    private var hasSavedLocalDraft: Bool {
+        let draftID = model.selectedNoteID.isEmpty ? DashboardNoteDraftStore.newNoteID : model.selectedNoteID
+        return DashboardNoteDraftStore().draft(noteID: draftID, for: model.userIDForRequests) != nil
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
@@ -67,7 +72,10 @@ struct NotesNativePanel: View {
             .frame(width: 260, alignment: .topLeading)
 
             VStack(alignment: .leading, spacing: 12) {
-                TextField("Title", text: $model.noteDraftTitle)
+                TextField("Title", text: Binding(
+                    get: { model.noteDraftTitle },
+                    set: { model.updateNoteDraftTitle($0) }
+                ))
                     .textFieldStyle(.plain)
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(theme.text)
@@ -75,7 +83,10 @@ struct NotesNativePanel: View {
                     .background(theme.field)
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
 
-                TextEditor(text: $model.noteDraftContent)
+                TextEditor(text: Binding(
+                    get: { model.noteDraftContent },
+                    set: { model.updateNoteDraftContent($0) }
+                ))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(theme.text)
                     .scrollContentBackground(.hidden)
@@ -85,9 +96,16 @@ struct NotesNativePanel: View {
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
 
                 HStack {
-                    Text(model.selectedNoteID.isEmpty ? "New note" : "Editing note")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.selectedNoteID.isEmpty ? "New note" : "Editing note")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                        if hasSavedLocalDraft {
+                            Text("Draft saved on this Mac")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(theme.textTertiary)
+                        }
+                    }
                     Spacer()
                     if !model.selectedNoteID.isEmpty {
                         ActionButton(title: "Delete", icon: "trash", tone: .danger) {

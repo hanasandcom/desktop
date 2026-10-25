@@ -35,6 +35,7 @@ struct SettingsField: View {
             }
         }
         .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 40)
         .background(theme.field)
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))

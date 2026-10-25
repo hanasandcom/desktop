@@ -144,6 +144,100 @@ struct ThreatIntelligenceSourcePage: Decodable, Equatable {
     let nextPage: Int?
 }
 
+/// Operator-only operational source data, distinct from the public source catalogue above.
+struct ThreatIntelligenceOperationalSourcePage: Decodable, Equatable {
+    struct Source: Decodable, Equatable, Identifiable {
+        struct Health: Decodable, Equatable {
+            let state: String?
+            let lastAttemptAt: String?
+            let lastSuccessAt: String?
+            let lastUsefulItemAt: String?
+            let lastFailureReason: String?
+            let consecutiveFailures: Int?
+        }
+        struct Coverage: Decodable, Equatable {
+            let captureCount: Int?
+            let customerMatchCount: Int?
+            let observedDomains: [String]?
+        }
+        struct Qualification: Decodable, Equatable {
+            let qualifies: Bool?
+            let reasons: [String]?
+            let lastUsefulAt: String?
+            let productiveCheckCount: Int?
+        }
+
+        let id: String
+        let tenantId: String?
+        let name: String?
+        let family: String?
+        let type: String?
+        let lifecycleStatus: String?
+        let executable: Bool?
+        let url: String?
+        let operatingMode: ThreatIntelligenceSourcePage.Source.OperatingMode?
+        let health: Health?
+        let coverage: Coverage?
+        let qualification: Qualification?
+
+        static func allowedStatusChange(source: Self, status: String) -> Bool {
+            source.id.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil
+                && source.id != "." && source.id != ".."
+                && (status == "active" || status == "paused")
+                && (source.tenantId == nil || source.tenantId?.range(of: "^[A-Za-z0-9_.:-]{1,200}$", options: .regularExpression) != nil)
+        }
+    }
+
+    let rows: [Source]
+    let total: Int
+    let nextCursor: String?
+    let previousCursor: String?
+}
+
+struct ThreatIntelligenceCollectionRunPage: Decodable, Equatable {
+    struct Run: Decodable, Equatable, Identifiable {
+        let id: String
+        let sourceId: String?
+        let status: String?
+        let startedAt: String?
+        let finishedAt: String?
+        let rows: Int?
+        let rowCount: Int?
+        let captureCount: Int?
+        let message: String?
+        let error: String?
+    }
+    let collectionRuns: [Run]
+    let total: Int
+    let nextCursor: String?
+    let previousCursor: String?
+}
+
+struct ThreatIntelligenceCapturePage: Decodable, Equatable {
+    struct Capture: Decodable, Equatable, Identifiable {
+        struct Metadata: Decodable, Equatable {
+            let title: String?
+            let headline: String?
+            let actor: String?
+            let domain: String?
+            let threatActor: String?
+        }
+        let id: String
+        let sourceId: String?
+        let sourceName: String?
+        let collectedAt: String?
+        let publishedAt: String?
+        let mediaType: String?
+        let storageKind: String?
+        let locatorRedacted: Bool?
+        let metadata: Metadata?
+    }
+    let captures: [Capture]
+    let total: Int
+    let nextCursor: String?
+    let previousCursor: String?
+}
+
 struct ThreatIntelligenceTimelinessSnapshot: Decodable, Equatable {
     struct Item: Decodable, Equatable, Identifiable {
         let id: String

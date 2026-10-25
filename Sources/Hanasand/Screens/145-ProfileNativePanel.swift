@@ -490,6 +490,13 @@ struct ProfileNativePanel: View {
                                 [key.lastUsedServer, key.lastUsedIp].compactMap { $0 }.joined(separator: " · "),
                             ].filter { !$0.isEmpty }
                         )
+                        if let userAgent = key.lastUsedUserAgent, !userAgent.isEmpty {
+                            Text("Last used by: \(userAgent)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(theme.textTertiary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         HStack {
                             Spacer()
                             ActionButton(title: "Remove", icon: "trash", tone: .danger) {

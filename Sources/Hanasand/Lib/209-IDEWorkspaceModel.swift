@@ -46,7 +46,6 @@ final class IDEWorkspaceModel: ObservableObject {
     @Published var lastAutosavedAt: Date?
 
     var terminal = IDETerminalModel()
-    var previewTab: BrowserTabState?
     let draftKey = "hanasand.desktop.ide.drafts"
     let sessionKey = "hanasand.desktop.ide.session"
     var autosaveTask: Task<Void, Never>?

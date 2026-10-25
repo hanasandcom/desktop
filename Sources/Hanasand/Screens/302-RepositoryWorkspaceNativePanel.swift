@@ -182,7 +182,9 @@ struct RepositoryWorkspaceNativePanel: View {
                 Button(selectedFileID == file.id ? "Selected" : "Preview") { selectedFileID = file.id }
                     .buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
             } else {
-                Button("Open") { model.openWebsite(path: "/s/\(file.id)", label: file.displayName) }
+                Button("Open in Shares") {
+                    model.openNativeDashboard(path: "/s", label: file.displayName)
+                }
                     .buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(theme.accent)
             }
         }

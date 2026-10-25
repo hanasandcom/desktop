@@ -109,9 +109,8 @@ extension DesktopAgentModel {
     }
 
     func lookupShortcutLink() async {
-        let id = linkLookupID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty else {
-            nativeDashboardStatus = "Enter a shortcut id first."
+        guard let id = NativeRouteSelection.resolve(linkLookupID, among: [linkLookupID]) else {
+            nativeDashboardStatus = "Enter a valid shortcut id first."
             return
         }
 

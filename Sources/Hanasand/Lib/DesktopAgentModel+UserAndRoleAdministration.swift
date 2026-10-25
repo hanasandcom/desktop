@@ -43,11 +43,16 @@ extension DesktopAgentModel {
     }
 
     func openArticle(_ article: DashboardArticle) {
-        openWebsite(path: "/articles/\(article.id.replacingOccurrences(of: ".md", with: ""))", label: article.title)
+        guard NativeRouteSelection.resolve(article.id, among: articles.map(\.id)) != nil else { return }
+        loadArticleIntoEditor(article)
+        openNativeDashboard(path: "/content/articles", label: article.title)
     }
 
     func openUserProfile(_ user: DashboardUser) {
-        openWebsite(path: "/profile/\(user.id)", label: user.displayName)
+        guard let userID = NativeRouteSelection.resolve(user.id, among: users.map(\.id)) else { return }
+        selectedUserID = userID
+        openNativeDashboard(path: "/management", label: user.displayName)
+        Task { await loadSelectedUserRoles() }
     }
 
     func selectDashboardUser(_ user: DashboardUser) {

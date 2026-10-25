@@ -45,19 +45,37 @@ extension BrowserWorkspace {
                 openAddress(browser.address, in: browser)
             }
             BrowserIconButton(systemName: "house") {
-                browser.load(model.settings.websiteBaseURL)
+                openAddress(model.settings.websiteBaseURL, in: browser)
             }
             BrowserIconButton(systemName: "arrow.up.forward.square") {
                 if let url = browser.webView.url {
-                    NSWorkspace.shared.open(url)
+                    if BrowserWorkspaceModel.isHanasandOwnedURL(url.absoluteString, configuredWebsiteBaseURL: model.settings.websiteBaseURL) {
+                        browser.statusText = openNativeHanasandRoute(url.absoluteString)
+                            ? "Opened in native Desktop"
+                            : "This Hanasand page does not have a native Desktop route yet."
+                    } else {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
             }
             BrowserIconButton(systemName: "rectangle.inset.filled.and.person.filled") {
-                model.openMiniBrowser(url: browser.address, title: browser.title, minified: false)
+                if BrowserWorkspaceModel.isHanasandOwnedURL(browser.address, configuredWebsiteBaseURL: model.settings.websiteBaseURL) {
+                    browser.statusText = openNativeHanasandRoute(browser.address)
+                        ? "Opened in native Desktop"
+                        : "This Hanasand page does not have a native Desktop route yet."
+                } else {
+                    model.openMiniBrowser(url: browser.address, title: browser.title, minified: false)
+                }
             }
             .help("Pop out floating browser")
             BrowserIconButton(systemName: "minus") {
-                model.openMiniBrowser(url: browser.address, title: browser.title, minified: true)
+                if BrowserWorkspaceModel.isHanasandOwnedURL(browser.address, configuredWebsiteBaseURL: model.settings.websiteBaseURL) {
+                    browser.statusText = openNativeHanasandRoute(browser.address)
+                        ? "Opened in native Desktop"
+                        : "This Hanasand page does not have a native Desktop route yet."
+                } else {
+                    model.openMiniBrowser(url: browser.address, title: browser.title, minified: true)
+                }
             }
             .help("Open minified overlay")
         }
@@ -72,6 +90,10 @@ extension BrowserWorkspace {
     }
 
     func openAddress(_ rawValue: String, in browser: BrowserTabState) {
+        if BrowserWorkspaceModel.isHanasandOwnedURL(rawValue, configuredWebsiteBaseURL: model.settings.websiteBaseURL) {
+            browser.statusText = openNativeHanasandRoute(rawValue) ? "Opened in native Desktop" : "This Hanasand page does not have a native Desktop route yet."
+            return
+        }
         if let externalURL = BrowserTargetResolver.externalURL(from: rawValue) {
             NSWorkspace.shared.open(externalURL)
             browser.statusText = "Opened externally"
@@ -84,8 +106,13 @@ extension BrowserWorkspace {
         workspace.configure(settings: model.settings)
         guard let request = model.browserOpenRequest else { return }
         workspace.open(request)
-        model.browserActiveAddress = request.url
-        model.browserActiveTitle = request.title
+        if BrowserWorkspaceModel.isHanasandOwnedURL(request.url, configuredWebsiteBaseURL: model.settings.websiteBaseURL) {
+            model.browserActiveAddress = workspace.selectedTab?.address ?? ""
+            model.browserActiveTitle = workspace.selectedTab?.title ?? "Browser"
+        } else {
+            model.browserActiveAddress = request.url
+            model.browserActiveTitle = request.title
+        }
         model.browserOpenRequest = nil
     }
 

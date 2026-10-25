@@ -37,6 +37,8 @@ final class LoopbackAgentServerTests: XCTestCase {
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "support-desk", body: Data()), "open_support_desk")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "thesis-workspace", body: Data()), "open_dashboard_thesis")
         XCTAssertEqual(LoopbackAgentServer.commandName(from: "host-updates", body: Data()), "open_dashboard_host_updates")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "ti-runs", body: Data()), "open_dashboard_ti_runs")
+        XCTAssertEqual(LoopbackAgentServer.commandName(from: "ti-captures", body: Data()), "open_dashboard_ti_captures")
     }
 
     func testRequestReadStateExtractsExactBodyBytes() {

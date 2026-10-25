@@ -241,6 +241,12 @@ extension DesktopAgentModel {
         } else if command == "open_dashboard_ti_sources" {
             openNativeDashboard(path: "/ti/sources", label: "Intelligence Sources")
             append(meta: "Dashboard", body: "Opened native Intelligence Sources panel.", kind: .command)
+        } else if command == "open_dashboard_ti_runs" {
+            openNativeDashboard(path: "/ti/runs", label: "Collection Runs")
+            append(meta: "Dashboard", body: "Opened native Collection Runs panel.", kind: .command)
+        } else if command == "open_dashboard_ti_captures" {
+            openNativeDashboard(path: "/ti/captures", label: "Capture History")
+            append(meta: "Dashboard", body: "Opened native Capture History panel.", kind: .command)
         } else if command == "open_dashboard_ti_timeliness" {
             openNativeDashboard(path: "/ti/timeliness", label: "Threat Delivery Health")
             append(meta: "Dashboard", body: "Opened native Threat Delivery Health panel.", kind: .command)

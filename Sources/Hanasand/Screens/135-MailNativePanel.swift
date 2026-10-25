@@ -15,5 +15,5 @@ struct MailNativePanel: View {
 
     @Environment(\.desktopTheme) var theme
 
-    @State var searchText = ""; @State var showAccountSetup = false; @State var now = Date(); @FocusState var searchFocused: Bool
+    @State var searchText = ""; @State var showAccountSetup = false; @State var now = Date(); @State var quickFilter = MailQuickFilter.all; @FocusState var searchFocused: Bool
 }

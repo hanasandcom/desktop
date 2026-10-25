@@ -3,6 +3,12 @@ import XCTest
 @testable import Hanasand
 
 final class TrafficRecentClientTests: XCTestCase {
+    func testAutomaticRefreshOnlyRunsOnLatestPageWhenIdle() {
+        XCTAssertTrue(TrafficRecentClient.shouldAutoRefresh(page: 1, isLoading: false))
+        XCTAssertFalse(TrafficRecentClient.shouldAutoRefresh(page: 2, isLoading: false))
+        XCTAssertFalse(TrafficRecentClient.shouldAutoRefresh(page: 1, isLoading: true))
+    }
+
     func testDomainAndRecordURLsUseTrafficAPIAndEncodedFilters() throws {
         let base = URL(string: "https://api.hanasand.com/api")!
         XCTAssertEqual(try TrafficRecentClient.domainsURL(apiBaseURL: base).path, "/api/traffic/domains")

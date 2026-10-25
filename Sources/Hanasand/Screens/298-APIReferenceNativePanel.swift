@@ -126,10 +126,10 @@ struct APIReferenceNativePanel: View {
             Text(description).font(.system(size: 12, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled)
         }
         if let parameters = operation.parameters, !parameters.isEmpty {
-            jsonSection("Parameters", .array(parameters))
+            jsonSection("Parameters", document.resolvingComponentReferences(in: .array(parameters)))
         }
         if let requestBody = operation.requestBody {
-            jsonSection("Request body", requestBody)
+            jsonSection("Request body", document.resolvingComponentReferences(in: requestBody))
         } else {
             Text("No request body documented.").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
         }
@@ -137,7 +137,9 @@ struct APIReferenceNativePanel: View {
             Text("No response schema documented.").font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textTertiary)
         } else {
             ForEach(operation.responses.keys.sorted(), id: \.self) { status in
-                if let response = operation.responses[status] { jsonSection("Response · HTTP \(status)", response) }
+                if let response = operation.responses[status] {
+                    jsonSection("Response · HTTP \(status)", document.resolvingComponentReferences(in: response))
+                }
             }
         }
         if let example {

@@ -34,7 +34,8 @@ extension DesktopAgentModel {
     }
 
     var remoteDesktopTargetSummary: String {
-        let host = settings.rdpHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let protocolKind = RemoteDesktopProtocol(rawValue: settings.remoteDesktopProtocol) ?? .screenSharing
+        let host = protocolKind.connectionHost(in: settings).trimmingCharacters(in: .whitespacesAndNewlines)
         let user = settings.rdpUser.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty else { return "No target configured" }
         return user.isEmpty ? host : "\(user)@\(host)"
@@ -62,6 +63,7 @@ extension DesktopAgentModel {
     }
 
     func openMiniBrowser(url: String = "https://www.youtube.com/@fern-tv", title: String = "Fern", minified: Bool = false) {
+        guard !routeOwnedHanasandBrowserURL(url, source: "Mini browser") else { return }
         MiniBrowserWindowController.shared.open(url: url, title: title, minified: minified)
         selectedSection = .browser
         append(meta: "Mini browser", body: minified ? "Opened minified \(title)." : "Opened floating \(title).", kind: .command)
@@ -69,6 +71,7 @@ extension DesktopAgentModel {
 
     func openInlineBrowser(url rawValue: String, title rawTitle: String? = nil, source: String = "Agent") {
         let resolved = BrowserTargetResolver.resolve(rawValue)
+        guard !routeOwnedHanasandBrowserURL(resolved.url, source: source) else { return }
         let title = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? rawTitle! : resolved.title
         browserActiveAddress = resolved.url
         browserActiveTitle = title
@@ -85,6 +88,7 @@ extension DesktopAgentModel {
         } else {
             resolved = (browserActiveAddress, rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? rawTitle! : browserActiveTitle)
         }
+        guard !routeOwnedHanasandBrowserURL(resolved.url, source: source) else { return }
         browserActiveAddress = resolved.url
         browserActiveTitle = resolved.title
         openMiniBrowser(url: resolved.url, title: resolved.title, minified: minified)
@@ -93,6 +97,7 @@ extension DesktopAgentModel {
 
     func openAIInlineBrowser(url rawValue: String, title rawTitle: String? = nil, source: String = "AI") {
         let resolved = BrowserTargetResolver.resolve(rawValue)
+        guard !routeOwnedHanasandBrowserURL(resolved.url, source: source) else { return }
         let title = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? rawTitle! : resolved.title
         browserActiveAddress = resolved.url
         browserActiveTitle = title
@@ -104,6 +109,19 @@ extension DesktopAgentModel {
         aiInlineBrowserVisible = true
         selectedSection = .command
         append(meta: "AI browser", body: "\(source) opened \(resolved.url) inline.", kind: .command)
+    }
+
+    /// Intercept Hanasand destinations before they reach a floating or inline web view.
+    /// Returns true for every owned URL, including unsupported paths, so callers never load it.
+    @discardableResult
+    func routeOwnedHanasandBrowserURL(_ rawValue: String, source: String) -> Bool {
+        guard BrowserWorkspaceModel.isHanasandOwnedURL(rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) else { return false }
+        guard let route = BrowserWorkspaceModel.nativeRoute(for: rawValue, configuredWebsiteBaseURL: settings.websiteBaseURL) else {
+            append(meta: source, body: "This Hanasand page does not have a native Desktop route yet.", kind: .note)
+            return true
+        }
+        _ = openNativeHanasandRoute(route)
+        return true
     }
 
     func toggleAIRightRailFromHeader() {

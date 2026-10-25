@@ -100,37 +100,19 @@ extension DesktopAgentModel {
 
     func openRemoteDesktop(protocol override: RemoteDesktopProtocol? = nil) {
         currentTaskState = "Opening remote desktop"
-        let host = settings.rdpHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !host.isEmpty else {
-            remoteControlSummary = "Configure a remote host first."
+        let protocolKind = override ?? RemoteDesktopProtocol(rawValue: settings.remoteDesktopProtocol) ?? .screenSharing
+        guard let target = protocolKind.connectionTarget(in: settings) else {
+            remoteControlSummary = "Configure a \(protocolKind.hostLabel) first."
             remoteControlLastCommand = "Connect error"
-            append(meta: "Remote desktop", body: "Configure a remote host first.", kind: .error)
-            recordRun(title: "Remote desktop error", detail: "Missing remote host", kind: .error)
+            append(meta: "Remote desktop", body: remoteControlSummary, kind: .error)
+            recordRun(title: "Remote desktop error", detail: "Missing \(protocolKind.hostLabel.lowercased())", kind: .error)
             currentTaskState = "Idle"
             return
         }
-
-        let protocolKind = override ?? RemoteDesktopProtocol(rawValue: settings.remoteDesktopProtocol) ?? .screenSharing
-        let user = settings.rdpUser.trimmingCharacters(in: .whitespacesAndNewlines)
-        let target = user.isEmpty ? host : "\(user)@\(host)"
-        let urlString: String
-        switch protocolKind {
-        case .screenSharing:
-            let allowed = CharacterSet.urlUserAllowed
-                .union(.urlHostAllowed)
-                .union(CharacterSet(charactersIn: ":@[]"))
-            let encodedTarget = target.addingPercentEncoding(withAllowedCharacters: allowed) ?? target
-            urlString = "vnc://\(encodedTarget)"
-        case .microsoftRDP:
-            let allowed = CharacterSet.urlQueryAllowed.union(CharacterSet(charactersIn: ":@"))
-            let encodedTarget = target.addingPercentEncoding(withAllowedCharacters: allowed) ?? target
-            urlString = "rdp://full%20address=s:\(encodedTarget)"
-        }
-
-        guard let url = URL(string: urlString) else {
+        guard let url = protocolKind.connectionURL(in: settings) else {
             remoteControlSummary = "Invalid remote target."
             remoteControlLastCommand = "Connect error"
-            append(meta: "Remote desktop", body: "Invalid remote target.", kind: .error)
+            append(meta: "Remote desktop", body: remoteControlSummary, kind: .error)
             recordRun(title: "Remote desktop error", detail: "Invalid remote target", kind: .error)
             currentTaskState = "Idle"
             return

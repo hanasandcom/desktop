@@ -69,10 +69,35 @@ extension MailNativePanel {
         }
     }
 
-    var filteredMessages: [MailOverviewEnvelope.Message] {
+    var mailFilterSourceMessages: [MailOverviewEnvelope.Message] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !query.isEmpty else { return overview?.messages ?? [] }
+        if query.isEmpty {
+            return overview?.messages ?? []
+        }
         guard model.mailSearchQuery.lowercased() == query else { return [] }
         return model.mailSearchResults
+    }
+
+    var filteredMessages: [MailOverviewEnvelope.Message] {
+        mailFilterSourceMessages.filter { message in
+            quickFilter.matches(
+                isRead: message.isRead,
+                isFlagged: message.isFlagged,
+                hasAttachment: message.hasAttachment == true || !(message.attachments ?? []).isEmpty
+            )
+        }
+    }
+
+    var quickFilterCounts: [MailQuickFilter: Int] {
+        return Dictionary(uniqueKeysWithValues: MailQuickFilter.allCases.map { filter in
+            let count = mailFilterSourceMessages.filter { message in
+                filter.matches(
+                    isRead: message.isRead,
+                    isFlagged: message.isFlagged,
+                    hasAttachment: message.hasAttachment == true || !(message.attachments ?? []).isEmpty
+                )
+            }.count
+            return (filter, count)
+        })
     }
 }

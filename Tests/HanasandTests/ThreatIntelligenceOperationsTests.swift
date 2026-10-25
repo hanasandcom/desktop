@@ -51,6 +51,120 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         assertAuthenticatedRead(captured)
     }
 
+    func testOperationalInventoryUsesGlobalOperatorEndpointAndReadOnlyProjection() async throws {
+        var captured: URLRequest?
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (
+                self.responseData(#"{"schemaVersion":"ti.source_operations.v1","tenantId":"global","total":1,"rows":[{"id":"feed-1","name":"Synthetic feed","family":"advisory","type":"rss","lifecycleStatus":"active","executable":true,"operatingMode":{"accessMethod":"public_web","metadataOnly":false},"health":{"state":"healthy","lastAttemptAt":"2026-10-23T10:00:00Z","lastUsefulItemAt":"2026-10-23T09:00:00Z","consecutiveFailures":0},"coverage":{"captureCount":8,"customerMatchCount":2},"qualification":{"qualifies":true,"reasons":[],"productiveCheckCount":3}}],"summary":{"sourceCount":1},"safeOutput":{"sourceUrlsExposed":false,"rawCapturesExposed":false,"restrictedPayloadsExposed":false}}"#), self.response(for: request.url!)
+            )
+        }
+
+        let result = try await client.loadOperationalSources(query: "feed", page: 1)
+
+        XCTAssertEqual(result.rows.first?.name, "Synthetic feed")
+        XCTAssertEqual(result.rows.first?.health?.state, "healthy")
+        XCTAssertEqual(result.rows.first?.coverage?.captureCount, 8)
+        XCTAssertEqual(captured?.httpMethod, "GET")
+        XCTAssertEqual(URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.path, "/v1/intel/source-operations")
+        let query = URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertNil(query.first(where: { $0.name == "tenantId" }))
+        XCTAssertEqual(query.first(where: { $0.name == "includeCandidates" })?.value, "true")
+        assertAuthenticatedRead(captured)
+    }
+
+    func testCollectionRunsAndCapturesUseBoundedSafeReadEndpoints() async throws {
+        var requests: [URLRequest] = []
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            requests.append(request)
+            let body: String
+            if request.url?.path == "/v1/intel/collection-runs" {
+                body = #"{"collectionRuns":[{"id":"run-1","sourceId":"feed-1","status":"completed","startedAt":"2026-10-23T10:00:00Z","captureCount":2}],"total":1}"#
+            } else {
+                body = #"{"captures":[{"id":"capture-1","sourceId":"feed-1","sourceName":"Synthetic feed","collectedAt":"2026-10-23T10:00:00Z","storageKind":"metadata_only","locatorRedacted":true,"metadata":{"title":"Synthetic event","actor":"Example group","domain":"example.test"},"bodyRedacted":true}],"total":1}"#
+            }
+            return (self.responseData(body), self.response(for: request.url!))
+        }
+
+        let runs = try await client.loadCollectionRuns(query: "feed", page: 1)
+        let captures = try await client.loadCaptures(query: "feed", page: 1)
+
+        XCTAssertEqual(runs.collectionRuns.first?.status, "completed")
+        XCTAssertEqual(captures.captures.first?.metadata?.title, "Synthetic event")
+        XCTAssertEqual(captures.captures.first?.locatorRedacted, true)
+        XCTAssertEqual(requests.map { URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.path }, ["/v1/intel/collection-runs", "/v1/intel/captures"])
+        XCTAssertTrue(requests.allSatisfy { $0.httpMethod == "GET" && $0.httpBody == nil })
+        requests.forEach { assertAuthenticatedRead($0) }
+    }
+
+    func testOperationalInventoryFailsClosedWhenServerDeniesOperatorRole() async throws {
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil)!
+            return (self.responseData(#"{"error":"source_operator_forbidden"}"#), response)
+        }
+        do {
+            _ = try await client.loadOperationalSources(query: "", page: 1)
+            XCTFail("Expected server role denial to fail the read rather than return an empty inventory.")
+        } catch {
+            XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .requestFailed(403))
+        }
+    }
+
+    func testSourceStatusWriteUsesWebsiteControlGateAndRequiresMatchingReceipt() async throws {
+        var captured: URLRequest?
+        let source = try operationalSource()
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"ok":true,"status":200,"payload":{"source":{"id":"feed-1","status":"paused"}}}"#), self.response(for: request.url!))
+        }
+
+        try await client.updateSourceStatus(source: source, status: "paused")
+
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured?.url?.absoluteString, "https://hanasand.com/api/ti/scraper/control")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        XCTAssertEqual(captured?.value(forHTTPHeaderField: "id"), "user-1")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: captured!.httpBody!) as? [String: String], [
+            "action": "source_status", "sourceId": "feed-1", "tenantId": "default", "status": "paused",
+        ])
+    }
+
+    func testManualRunWriteMatchesWebsitePayloadAndRequiresQueuedReceipt() async throws {
+        var captured: URLRequest?
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"ok":true,"status":201,"payload":{"run":{"id":"run-1","status":"queued"},"scheduler":{"queued":2}}}"#), self.response(for: request.url!))
+        }
+
+        try await client.queueCollectionQuery(source: operationalSource(), queries: ["example.test", "example.test", "another.test"])
+
+        XCTAssertEqual(captured?.httpMethod, "POST")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: captured!.httpBody!) as? [String: Any])
+        XCTAssertEqual(body["action"] as? String, "run_query")
+        XCTAssertEqual(body["sourceId"] as? String, "feed-1")
+        XCTAssertEqual(body["query"] as? String, "example.test")
+        XCTAssertEqual(body["targets"] as? [String], ["example.test", "another.test"])
+    }
+
+    func testMutationsFailClosedOnRoleDenialAndRequireRefreshAfterAmbiguousOutcome() async throws {
+        let source = try operationalSource()
+        let denied = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            (self.responseData(#"{"error":"internal_access_required"}"#), HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: "HTTP/1.1", headerFields: nil)!)
+        }
+        do {
+            try await denied.updateSourceStatus(source: source, status: "paused")
+            XCTFail("Expected fresh server-side authorization denial.")
+        } catch { XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .requestFailed(403)) }
+
+        let uncertain = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            (self.responseData(#"{"ok":false,"status":0}"#), HTTPURLResponse(url: request.url!, statusCode: 502, httpVersion: "HTTP/1.1", headerFields: nil)!)
+        }
+        do {
+            try await uncertain.queueCollectionQuery(source: source, queries: ["example.test"])
+            XCTFail("Expected ambiguous mutation receipt to require a history refresh.")
+        } catch { XCTAssertEqual(error as? ThreatIntelligenceOperationsError, .mutationOutcomeUnknown) }
+    }
+
     func testTimelinessUsesGlobalScopeAndParsesReadOnlySnapshot() async throws {
         var captured: URLRequest?
         let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
@@ -131,6 +245,10 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         settings.userID = "user-1"
         settings.authToken = "test-token"
         return settings
+    }
+
+    private func operationalSource() throws -> ThreatIntelligenceOperationalSourcePage.Source {
+        try JSONDecoder().decode(ThreatIntelligenceOperationalSourcePage.Source.self, from: responseData(#"{"id":"feed-1","tenantId":"default","name":"Synthetic feed","family":"advisory","lifecycleStatus":"active","executable":true,"coverage":{"observedDomains":["example.test","another.test"]}}"#))
     }
 
     private func responseData(_ body: String) -> Data { Data(body.utf8) }

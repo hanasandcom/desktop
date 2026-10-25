@@ -132,6 +132,33 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
                              "Retry must resolve the same delivery ID and alert ID in the fresh page.")
     }
 
+    func testSendAndTestRequireTheSelectedFindingToMatchFreshConfirmationState() throws {
+        let selected = ThreatDeliveryHistory.Finding(id: "alert-1", title: "Acme", actor: "actor", matchedTerm: "acme",
+            reviewState: "needs_review", deliveryState: "pending", caseID: "HA-1", organizationID: "org-1", full: ["id": "alert-1"])
+        var page = ThreatDeliveryHistory(deliveries: [], organizationID: "org-1")
+        page.canTest = true
+        page.canSend = true
+
+        page.findings = [selected]
+        XCTAssertNoThrow(try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: selected))
+
+        let changedDeliveryState = ThreatDeliveryHistory.Finding(id: selected.id, title: selected.title, actor: selected.actor,
+            matchedTerm: selected.matchedTerm, reviewState: selected.reviewState, deliveryState: "muted",
+            caseID: selected.caseID, organizationID: selected.organizationID, full: ["id": selected.id, "deliveryState": "muted"])
+        page.findings = [changedDeliveryState]
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: selected),
+                             "A confirmation must stop if the finding's delivery state changed during refresh.")
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.test, page: page, finding: selected),
+                             "Dry-run tests use the same fresh-finding confirmation guard.")
+
+        let changedPayload = ThreatDeliveryHistory.Finding(id: selected.id, title: selected.title, actor: selected.actor,
+            matchedTerm: selected.matchedTerm, reviewState: selected.reviewState, deliveryState: selected.deliveryState,
+            caseID: selected.caseID, organizationID: selected.organizationID, full: ["id": selected.id, "evidence": ["new source"]])
+        page.findings = [changedPayload]
+        XCTAssertThrowsError(try ThreatDeliveryHistoryClient.actionPayload(.send, page: page, finding: selected),
+                             "The refreshed API alert payload must match the payload the user selected.")
+    }
+
     func testScopeChangeBlocksWriteAtFinalSendBoundary() async throws {
         var expectedSettings = makeSettings()
         expectedSettings.selectedOrganizationID = "org-123"

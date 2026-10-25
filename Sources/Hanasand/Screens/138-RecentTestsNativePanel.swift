@@ -12,6 +12,7 @@ import WebKit
 
 struct RecentTestsNativePanel: View {
     @EnvironmentObject var model: DesktopAgentModel
+    var initialTestID: String? = nil
 
     @Environment(\.desktopTheme) var theme
 
