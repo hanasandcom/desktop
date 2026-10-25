@@ -10,6 +10,28 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+struct SelectedDashboardUserRolesRequestContext: Equatable {
+    let requestID: UUID
+    let userID: String
+    let actorID: String
+    let authToken: String
+    let impersonationToken: String
+
+    func matches(
+        requestID: UUID?,
+        userID: String,
+        actorID: String,
+        authToken: String,
+        impersonationToken: String
+    ) -> Bool {
+        self.requestID == requestID
+            && self.userID == userID
+            && self.actorID == actorID
+            && self.authToken == authToken
+            && self.impersonationToken == impersonationToken
+    }
+}
+
 extension DesktopAgentModel {
 
     func deleteSelectedArticle(_ article: DashboardArticle) async {
@@ -86,7 +108,9 @@ extension DesktopAgentModel {
 
     func selectDashboardUser(_ user: DashboardUser) {
         selectedUserID = user.id
-        Task { await loadSelectedUserRoles() }
+        selectedUserRoles = []
+        selectedUserRolesRequestContext = nil
+        isLoadingSelectedUserRoles = true
     }
 
     struct DesktopImpersonationStartPayload: Encodable {
@@ -179,16 +203,49 @@ extension DesktopAgentModel {
     func loadSelectedUserRoles() async {
         guard !selectedUserID.isEmpty else {
             selectedUserRoles = []
+            selectedUserRolesRequestContext = nil
+            isLoadingSelectedUserRoles = false
             return
         }
 
+        let requestContext = SelectedDashboardUserRolesRequestContext(
+            requestID: UUID(),
+            userID: selectedUserID,
+            actorID: userIDForRequests,
+            authToken: authTokenForRequests,
+            impersonationToken: settings.impersonationToken
+        )
+        selectedUserRolesRequestContext = requestContext
+        selectedUserRoles = []
+        isLoadingSelectedUserRoles = true
+        defer {
+            if selectedUserRolesRequestContext == requestContext {
+                isLoadingSelectedUserRoles = false
+            }
+        }
+
         do {
-            selectedUserRoles = try await requestJSON(
-                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("roles/user/\(selectedUserID)"),
+            let roles: [DashboardUserRoleAssignment] = try await requestJSON(
+                settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("roles/user/\(requestContext.userID)"),
                 authenticated: true
             )
-            nativeDashboardStatus = "Loaded roles for \(selectedUserID)"
+            guard requestContext.matches(
+                requestID: selectedUserRolesRequestContext?.requestID,
+                userID: selectedUserID,
+                actorID: userIDForRequests,
+                authToken: authTokenForRequests,
+                impersonationToken: settings.impersonationToken
+            ) else { return }
+            selectedUserRoles = roles
+            nativeDashboardStatus = "Loaded roles for \(requestContext.userID)"
         } catch {
+            guard requestContext.matches(
+                requestID: selectedUserRolesRequestContext?.requestID,
+                userID: selectedUserID,
+                actorID: userIDForRequests,
+                authToken: authTokenForRequests,
+                impersonationToken: settings.impersonationToken
+            ) else { return }
             selectedUserRoles = []
             nativeDashboardStatus = error.localizedDescription
         }

@@ -19,6 +19,53 @@ final class UserRoleAdministrationTests: XCTestCase {
         XCTAssertFalse(ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername("  regular  ")))
     }
 
+    func testSelectedUserRolesResponseMustMatchCurrentUserAndSession() {
+        let requestID = UUID()
+        let context = SelectedDashboardUserRolesRequestContext(
+            requestID: requestID,
+            userID: "target-user",
+            actorID: "admin-user",
+            authToken: "session-token",
+            impersonationToken: ""
+        )
+
+        XCTAssertTrue(context.matches(
+            requestID: requestID,
+            userID: "target-user",
+            actorID: "admin-user",
+            authToken: "session-token",
+            impersonationToken: ""
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: UUID(),
+            userID: "target-user",
+            actorID: "admin-user",
+            authToken: "session-token",
+            impersonationToken: ""
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            userID: "another-user",
+            actorID: "admin-user",
+            authToken: "session-token",
+            impersonationToken: ""
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            userID: "target-user",
+            actorID: "admin-user",
+            authToken: "refreshed-token",
+            impersonationToken: ""
+        ))
+        XCTAssertFalse(context.matches(
+            requestID: requestID,
+            userID: "target-user",
+            actorID: "admin-user",
+            authToken: "session-token",
+            impersonationToken: "new-impersonation-token"
+        ))
+    }
+
     private func user(id: String, username: String?, active: Bool) throws -> DashboardUser {
         let fields: [String: Any] = [
             "id": id,

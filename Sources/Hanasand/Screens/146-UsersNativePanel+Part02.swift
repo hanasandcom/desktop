@@ -14,7 +14,14 @@ extension UsersNativePanel {
 
     func userRolesPanel(_ user: DashboardUser) -> some View {
         NativeGroupPanel(title: "Roles for \(user.displayName)", subtitle: user.id) {
-            if model.roles.isEmpty {
+            if model.isLoadingSelectedUserRoles || model.selectedUserRolesRequestContext?.userID != user.id {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading assigned roles…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            } else if model.roles.isEmpty {
                 Text("Load roles before assigning access.")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(theme.textSecondary)
@@ -49,7 +56,7 @@ extension UsersNativePanel {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        .disabled(model.isLoadingNativeDashboard)
+                        .disabled(model.isLoadingSelectedUserRoles || model.isLoadingNativeDashboard)
                     }
                 }
             }
