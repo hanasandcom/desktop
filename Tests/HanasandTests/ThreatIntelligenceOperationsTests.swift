@@ -189,6 +189,60 @@ final class ThreatIntelligenceOperationsTests: XCTestCase {
         XCTAssertEqual(result.rows.first?.nextRunAt, "2026-10-23T11:00:00Z")
     }
 
+    func testOperationalSourceFiltersAndWebsiteRouteContextReachNativeQuery() async throws {
+        var captured: URLRequest?
+        let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in
+            captured = request
+            return (self.responseData(#"{"schemaVersion":"ti.source_operations.v1","tenantId":"global","total":0,"rows":[],"summary":{},"safeOutput":{"sourceUrlsExposed":false,"rawCapturesExposed":false,"restrictedPayloadsExposed":false}}"#), self.response(for: request.url!))
+        }
+        let routeQuery = [
+            "scope": "global", "available": "true", "q": "bot feed", "page": "3",
+            "family": "rss", "lifecycle": "candidate",
+            "access": "public_rss", "health": "not observed", "output": "yes", "matches": "no",
+            "sort": "useful", "dir": "desc",
+        ]
+        let filters = ThreatIntelligenceOperationsRouteContext.sourceFilters(routeQuery)
+        XCTAssertEqual(filters.family, "rss")
+        XCTAssertEqual(filters.lifecycle, "candidate")
+        XCTAssertEqual(filters.sort, "useful")
+        XCTAssertEqual(filters.direction, "desc")
+        let searchQuery = ThreatIntelligenceOperationsRouteContext.sourceSearchQuery(routeQuery, fallback: "detail-id")
+        let page = ThreatIntelligenceOperationsRouteContext.sourcePage(routeQuery["page"])
+        XCTAssertEqual(searchQuery, "bot feed")
+        XCTAssertEqual(page, 3)
+
+        _ = try await client.loadOperationalSources(query: searchQuery, page: page, filters: filters)
+
+        let query = URLComponents(url: captured!.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(query.first(where: { $0.name == "q" })?.value, "bot feed")
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "3")
+        XCTAssertEqual(query.first(where: { $0.name == "includeCandidates" })?.value, "true")
+        XCTAssertEqual(query.first(where: { $0.name == "family" })?.value, "rss")
+        XCTAssertEqual(query.first(where: { $0.name == "lifecycle" })?.value, "candidate")
+        XCTAssertEqual(query.first(where: { $0.name == "access" })?.value, "public_rss")
+        XCTAssertEqual(query.first(where: { $0.name == "health" })?.value, "not observed")
+        XCTAssertEqual(query.first(where: { $0.name == "output" })?.value, "yes")
+        XCTAssertEqual(query.first(where: { $0.name == "matches" })?.value, "no")
+        XCTAssertEqual(query.first(where: { $0.name == "sort" })?.value, "useful")
+        XCTAssertEqual(query.first(where: { $0.name == "dir" })?.value, "desc")
+        assertAuthenticatedRead(captured)
+    }
+
+    func testOperationalSourceFilterRouteRejectsUnsupportedWebsiteValues() {
+        let filters = ThreatIntelligenceOperationsRouteContext.sourceFilters([
+            "family": "unexpected", "lifecycle": "retired", "sort": "id", "dir": "sideways",
+        ])
+        XCTAssertEqual(filters.family, "")
+        XCTAssertEqual(filters.lifecycle, "")
+        XCTAssertEqual(filters.sort, "source")
+        XCTAssertEqual(filters.direction, "asc")
+        XCTAssertEqual(ThreatIntelligenceOperationsRouteContext.sourcePage("3x"), 1)
+        XCTAssertEqual(ThreatIntelligenceOperationsRouteContext.sourcePage("0"), 1)
+        XCTAssertEqual(ThreatIntelligenceOperationsRouteContext.sourcePage("20001"), 1)
+        XCTAssertEqual(ThreatIntelligenceOperationsRouteContext.sourcePage("20000"), 20_000)
+        XCTAssertEqual(ThreatIntelligenceOperationsRouteContext.sourceSearchQuery([:], fallback: "source-id"), "source-id")
+    }
+
     func testCollectionRunsAndCapturesUseBoundedSafeReadEndpoints() async throws {
         var requests: [URLRequest] = []
         let client = try ThreatIntelligenceOperationsClient(settings: makeSettings()) { request in

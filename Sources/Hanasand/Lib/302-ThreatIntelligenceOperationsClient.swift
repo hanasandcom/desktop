@@ -1,5 +1,37 @@
 import Foundation
 
+struct ThreatIntelligenceSourceOperationsFilters: Equatable {
+    var family = ""
+    var lifecycle = ""
+    var access = ""
+    var health = ""
+    var output = ""
+    var matches = ""
+    var sort = "source"
+    var direction = "asc"
+
+    static let sortFields = ["source", "access", "status", "useful", "matches"]
+    static let directions = ["asc", "desc"]
+    static let families = ["rss", "web", "telegram_public", "darkweb_metadata"]
+    static let lifecycles = ["active", "candidate", "review", "paused"]
+    static let accesses = ["public_http", "public_rss", "public_telegram", "tor_metadata"]
+    static let healthStates = ["healthy", "stale", "failed", "not observed"]
+    static let yesNo = ["yes", "no"]
+
+    func validated() -> Self {
+        var value = self
+        if !Self.families.contains(value.family) { value.family = "" }
+        if !Self.lifecycles.contains(value.lifecycle) { value.lifecycle = "" }
+        if !Self.accesses.contains(value.access) { value.access = "" }
+        if !Self.healthStates.contains(value.health) { value.health = "" }
+        if !Self.yesNo.contains(value.output) { value.output = "" }
+        if !Self.yesNo.contains(value.matches) { value.matches = "" }
+        if !Self.sortFields.contains(value.sort) { value.sort = "source" }
+        if !Self.directions.contains(value.direction) { value.direction = "asc" }
+        return value
+    }
+}
+
 struct ThreatIntelligenceOperationsClient {
     private let settings: HanasandDesktopSettings
     private let send: (URLRequest) async throws -> (Data, URLResponse)
@@ -85,8 +117,14 @@ struct ThreatIntelligenceOperationsClient {
 
     /// Reads the source-operations projection used by the website's admin inventory.
     /// The API enforces source_admin/source_operator for the global fleet.
-    func loadOperationalSources(query: String, page: Int, sourceID: String? = nil) async throws -> ThreatIntelligenceOperationalSourcePage {
+    func loadOperationalSources(
+        query: String,
+        page: Int,
+        sourceID: String? = nil,
+        filters: ThreatIntelligenceSourceOperationsFilters = .init()
+    ) async throws -> ThreatIntelligenceOperationalSourcePage {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filters = filters.validated()
         guard (1...20_000).contains(page), clean.count <= 200,
             sourceID == nil || sourceID?.range(of: "^[A-Za-z0-9_.:@-]{1,200}$", options: .regularExpression) != nil
         else {
@@ -97,9 +135,15 @@ struct ThreatIntelligenceOperationsClient {
             URLQueryItem(name: "limit", value: "50"),
             URLQueryItem(name: "page", value: String(page)),
             URLQueryItem(name: "includeCandidates", value: "true"),
-            URLQueryItem(name: "sort", value: "source"),
-            URLQueryItem(name: "dir", value: "asc"),
+            URLQueryItem(name: "sort", value: filters.sort),
+            URLQueryItem(name: "dir", value: filters.direction),
         ]
+        for (name, value) in [
+            ("family", filters.family), ("lifecycle", filters.lifecycle), ("access", filters.access),
+            ("health", filters.health), ("output", filters.output), ("matches", filters.matches),
+        ] where !value.isEmpty {
+            components.queryItems?.append(URLQueryItem(name: name, value: value))
+        }
         if let sourceID { components.queryItems?.append(URLQueryItem(name: "sourceId", value: sourceID)) }
         if !clean.isEmpty { components.queryItems?.append(URLQueryItem(name: "q", value: clean)) }
         let snapshot: ThreatIntelligenceOperationalSourcePage = try await get(components)

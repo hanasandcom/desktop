@@ -16,6 +16,26 @@ enum ThreatSourceView: String, CaseIterable, Identifiable {
 }
 
 enum ThreatIntelligenceOperationsRouteContext {
+    static func sourceSearchQuery(_ query: [String: String], fallback: String) -> String {
+        query["q"] ?? fallback
+    }
+
+    static func sourcePage(_ value: String?) -> Int {
+        guard let value, value.range(of: "^[0-9]{1,5}$", options: .regularExpression) != nil,
+            let page = Int(value), (1...20_000).contains(page)
+        else { return 1 }
+        return page
+    }
+
+    static func sourceFilters(_ query: [String: String]) -> ThreatIntelligenceSourceOperationsFilters {
+        ThreatIntelligenceSourceOperationsFilters(
+            family: query["family"] ?? "", lifecycle: query["lifecycle"] ?? "",
+            access: query["access"] ?? "", health: query["health"] ?? "",
+            output: query["output"] ?? "", matches: query["matches"] ?? "",
+            sort: query["sort"] ?? "source", direction: query["dir"] ?? "asc"
+        ).validated()
+    }
+
     static func validOrganizationID(_ value: String?) -> String? {
         guard let value else { return nil }
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -34,20 +54,29 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     let section: ThreatIntelligenceOperationsSection
     let initialOrganizationID: String?
     let selectedSourceID: String?
+    let showsAvailableCandidates: Bool
+    private let initialPage: Int
 
     init(
         section: ThreatIntelligenceOperationsSection,
         initialSourceView: ThreatSourceView = .operations,
         initialQuery: String = "",
         selectedSourceID: String? = nil,
-        initialOrganizationID: String? = nil
+        initialOrganizationID: String? = nil,
+        initialSourceFilters: ThreatIntelligenceSourceOperationsFilters = .init(),
+        showsAvailableCandidates: Bool = false,
+        initialPage: Int = 1
     ) {
         self.section = section
         self.initialOrganizationID = ThreatIntelligenceOperationsRouteContext.validOrganizationID(initialOrganizationID)
         self.selectedSourceID = section == .sources ? ThreatIntelligenceOperationsRouteContext.validSourceID(selectedSourceID) : nil
+        self.showsAvailableCandidates = section == .sources && showsAvailableCandidates
+        self.initialPage = (1...20_000).contains(initialPage) ? initialPage : 1
         _sourceView = State(initialValue: initialSourceView)
         _query = State(initialValue: initialQuery)
         _submittedQuery = State(initialValue: initialQuery)
+        _sourceFilters = State(initialValue: initialSourceFilters.validated())
+        _page = State(initialValue: self.initialPage)
         _focusedSourceID = State(initialValue: self.selectedSourceID)
     }
 
@@ -75,6 +104,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @State private var query = ""
     @State private var submittedQuery = ""
     @State private var statusFilter = ""
+    @State private var sourceFilters = ThreatIntelligenceSourceOperationsFilters()
     @State private var timelinessTenantScope = false
     @State private var evidenceFormRecordID: String?
     @State private var evidenceRole = "publisher"
@@ -84,7 +114,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
     @State private var evidenceTitle = ""
     @State private var loadedTimelinessSettings: HanasandDesktopSettings?
     @State private var loadedTimelinessScope: ThreatIntelligenceTimelinessScope?
-    @State private var page = 1
+    @State private var page: Int
     @State private var focusedSourceID: String?
     @State private var nextCursor: String?
     @State private var isLoading = false
@@ -134,7 +164,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 content
             }
         }
-        .task(id: scopeKey) { await load(reset: true) }
+        .task(id: scopeKey) { await load(reset: true, requestedPage: initialPage) }
         .onChange(of: selectedSourceID) { _, value in
             focusedSourceID = section == .sources ? ThreatIntelligenceOperationsRouteContext.validSourceID(value) : nil
             page = 1
@@ -194,6 +224,20 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                 : section == .sources ? sourceView == .runs ? "Search source or run status" : sourceView == .captures ? "Search source or capture metadata" : "Search source names and types" : "Search actor, source, incident, or capture", text: $query
         )
         .frame(minWidth: 0, maxWidth: .infinity)
+        if section == .sources && sourceView == .operations {
+            if showsAvailableCandidates {
+                Text("Available source inventory · candidate sources can be activated after confirmation.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            sourceInventoryFilters
+            .onChange(of: sourceFilters) { _, _ in
+                page = 1
+                focusedSourceID = nil
+                Task { await load(reset: true) }
+            }
+        }
         if section == .timeliness {
             Picker("Scope", selection: $timelinessTenantScope) {
                 Text("Global").tag(false)
@@ -233,6 +277,35 @@ struct ThreatIntelligenceOperationsNativePanel: View {
             .disabled(isLoading)
             if isLoading { ProgressView().controlSize(.small) }
         }
+    }
+
+    private var sourceInventoryFilters: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), alignment: .leading)], alignment: .leading, spacing: 7) {
+            sourcePicker("Family", selection: $sourceFilters.family, options: ThreatIntelligenceSourceOperationsFilters.families)
+            sourcePicker("Status", selection: $sourceFilters.lifecycle, options: ThreatIntelligenceSourceOperationsFilters.lifecycles)
+            sourcePicker("Access", selection: $sourceFilters.access, options: ThreatIntelligenceSourceOperationsFilters.accesses)
+            sourcePicker("Health", selection: $sourceFilters.health, options: ThreatIntelligenceSourceOperationsFilters.healthStates)
+            sourcePicker("Useful output", selection: $sourceFilters.output, options: ThreatIntelligenceSourceOperationsFilters.yesNo)
+            sourcePicker("Matches", selection: $sourceFilters.matches, options: ThreatIntelligenceSourceOperationsFilters.yesNo)
+            sourcePicker("Sort", selection: $sourceFilters.sort, options: ThreatIntelligenceSourceOperationsFilters.sortFields)
+            sourcePicker("Direction", selection: $sourceFilters.direction, options: ThreatIntelligenceSourceOperationsFilters.directions)
+            if sourceFilters != ThreatIntelligenceSourceOperationsFilters() {
+                Button("Clear filters") { sourceFilters = .init() }
+                    .font(.system(size: 10, weight: .semibold))
+                    .buttonStyle(.link)
+            }
+        }
+    }
+
+    private func sourcePicker(_ title: String, selection: Binding<String>, options: [String]) -> some View {
+        Picker(title, selection: selection) {
+            Text(title).tag("")
+            ForEach(options, id: \.self) { option in
+                Text(option == "candidate" ? "Inactive candidate" : option.replacingOccurrences(of: "_", with: " ")).tag(option)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
     }
 
     @ViewBuilder private var content: some View {
@@ -283,7 +356,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                                 Text("Latest failure: \(failure)").font(.system(size: 10)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                             }
                             HStack(spacing: 8) {
-                                Button(source.lifecycleStatus == "active" ? "Pause" : "Activate") {
+                                Button(sourceStatusActionTitle(source)) {
                                     pendingSourceStatus = (source, source.lifecycleStatus == "active" ? "paused" : "active")
                                     showStatusConfirmation = true
                                 }
@@ -358,7 +431,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                Button(source.lifecycleStatus == "active" ? "Pause" : "Activate") {
+                Button(sourceStatusActionTitle(source)) {
                     pendingSourceStatus = (source, source.lifecycleStatus == "active" ? "paused" : "active")
                     showStatusConfirmation = true
                 }
@@ -961,6 +1034,11 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         loadedSourceSettings != nil && model.settings == loadedSourceSettings
     }
 
+    private func sourceStatusActionTitle(_ source: ThreatIntelligenceOperationalSourcePage.Source) -> String {
+        if source.lifecycleStatus == "active" { return "Pause" }
+        return source.lifecycleStatus == "candidate" ? "Activate candidate" : "Activate source"
+    }
+
     private var activeTimelinessScope: ThreatIntelligenceTimelinessScope {
         timelinessTenantScope ? .tenant(model.selectedOrganizationID) : .global
     }
@@ -993,7 +1071,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         }
     }
 
-    private func load(reset: Bool) async {
+    private func load(reset: Bool, requestedPage: Int? = nil) async {
         if isLoading { return }
         let current = UUID()
         requestID = current
@@ -1001,7 +1079,7 @@ struct ThreatIntelligenceOperationsNativePanel: View {
         message = reset ? "Loading \(title.lowercased())" : "Refreshing \(title.lowercased())"
         let requestedSettings = model.settings
         if reset {
-            page = 1
+            page = requestedPage ?? 1
             selectedProfileID = nil
             nextCursor = nil
             profiles = nil
@@ -1040,7 +1118,8 @@ struct ThreatIntelligenceOperationsNativePanel: View {
                     let snapshot = try await client.loadOperationalSources(
                         query: sourceLookupID == nil ? submittedQuery : "",
                         page: sourceLookupID == nil ? page : 1,
-                        sourceID: sourceLookupID)
+                        sourceID: sourceLookupID,
+                        filters: sourceFilters)
                     guard stillCurrent(current, settings: requestedSettings) else { return }
                     operationalSources = snapshot
                     loadedSourceSettings = requestedSettings

@@ -188,11 +188,15 @@ struct NativeDashboardDetail: View {
         case "/ti/sources":
             ThreatIntelligenceOperationsNativePanel(
                 section: .sources,
-                initialQuery: model.selectedNativeDashboardDetailID,
+                initialQuery: ThreatIntelligenceOperationsRouteContext.sourceSearchQuery(
+                    model.selectedNativeDashboardQuery, fallback: model.selectedNativeDashboardDetailID),
                 selectedSourceID: model.selectedNativeDashboardDetailID,
                 initialOrganizationID: model.selectedNativeDashboardQuery["organizationId"]
                     ?? model.selectedNativeDashboardQuery["org"]
-                    ?? model.selectedNativeDashboardQuery["orgId"]
+                    ?? model.selectedNativeDashboardQuery["orgId"],
+                initialSourceFilters: ThreatIntelligenceOperationsRouteContext.sourceFilters(model.selectedNativeDashboardQuery),
+                showsAvailableCandidates: model.selectedNativeDashboardQuery["available"] == "true",
+                initialPage: ThreatIntelligenceOperationsRouteContext.sourcePage(model.selectedNativeDashboardQuery["page"])
             )
         case "/ti/runs":
             ThreatIntelligenceOperationsNativePanel(section: .sources, initialSourceView: .runs, initialQuery: model.selectedNativeDashboardDetailID)
