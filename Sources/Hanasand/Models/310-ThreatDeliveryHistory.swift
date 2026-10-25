@@ -125,6 +125,30 @@ struct ThreatDeliveryReviewState {
     mutating func refreshSucceeded() { requiresRefresh = false }
 }
 
+struct ThreatDeliveryHistoryScopeIdentity: Equatable {
+    let initialOrganizationID: String
+    let apiBaseURL: String
+    let websiteBaseURL: String
+    let selectedOrganizationID: String
+    let selectedOrganizationUserID: String
+    let userID: String
+    let authToken: String
+    let impersonatingUserID: String
+    let impersonationToken: String
+
+    init(initialOrganizationID: String?, settings: HanasandDesktopSettings) {
+        self.initialOrganizationID = initialOrganizationID ?? ""
+        apiBaseURL = settings.apiBaseURL
+        websiteBaseURL = settings.websiteBaseURL
+        selectedOrganizationID = settings.selectedOrganizationID
+        selectedOrganizationUserID = settings.selectedOrganizationUserID
+        userID = settings.userID
+        authToken = settings.authToken
+        impersonatingUserID = settings.impersonatingUserID
+        impersonationToken = settings.impersonationToken
+    }
+}
+
 struct ThreatDeliveryDestinationsRoute: Equatable {
     let path: String
     let query: [String: String]

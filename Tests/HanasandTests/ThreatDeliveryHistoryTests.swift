@@ -191,6 +191,29 @@ final class ThreatDeliveryHistoryTests: XCTestCase {
         XCTAssertFalse(ThreatDeliveryHistoryClient.sameWriteScope(expectedSettings, currentSettings))
     }
 
+    func testReloadIdentityChangesWithEveryDeliveryRequestScopeInput() {
+        let baselineSettings = makeSettings()
+        let baseline = ThreatDeliveryHistoryScopeIdentity(initialOrganizationID: nil, settings: baselineSettings)
+        XCTAssertNotEqual(baseline, ThreatDeliveryHistoryScopeIdentity(initialOrganizationID: "org-deep-link", settings: baselineSettings))
+
+        let mutations: [(String, (inout HanasandDesktopSettings) -> Void)] = [
+            ("API endpoint", { $0.apiBaseURL = "https://api-next.example.test/api" }),
+            ("website endpoint", { $0.websiteBaseURL = "https://next.example.test" }),
+            ("organization", { $0.selectedOrganizationID = "org-next" }),
+            ("organization user", { $0.selectedOrganizationUserID = "user-next" }),
+            ("user", { $0.userID = "user-next" }),
+            ("auth token", { $0.authToken = "next-token" }),
+            ("impersonated user", { $0.impersonatingUserID = "user-next" }),
+            ("impersonation token", { $0.impersonationToken = "next-token" })
+        ]
+
+        for (label, mutate) in mutations {
+            var changedSettings = baselineSettings
+            mutate(&changedSettings)
+            XCTAssertNotEqual(baseline, ThreatDeliveryHistoryScopeIdentity(initialOrganizationID: nil, settings: changedSettings), label)
+        }
+    }
+
     func testWriteGateSerializesAndRequiresSuccessfulRefreshAfterAnyWrite() {
         var state = ThreatDeliveryReviewState()
         XCTAssertTrue(state.beginWrite())

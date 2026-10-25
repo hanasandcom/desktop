@@ -96,7 +96,7 @@ struct ThreatDeliveryHistoryNativePanel: View {
             }
             Button("Cancel", role: .cancel) { pendingAction = nil }
         } message: { Text(pendingAction?.message ?? "") }
-        .task(id: scopeKey) { await refresh() }
+        .task(id: scopeIdentity) { await refresh() }
     }
 
     @ViewBuilder private func findingPicker(_ page: ThreatDeliveryHistory) -> some View {
@@ -191,10 +191,8 @@ struct ThreatDeliveryHistoryNativePanel: View {
     private var actionConfirmationLabel: String {
         switch pendingAction { case .test: "Run dry-run test"; case .send: "Send finding"; case .retry: "Retry delivery"; case nil: "Confirm" }
     }
-    private var scopeKey: String {
-        [initialOrganizationID ?? "", model.settings.selectedOrganizationID, model.settings.selectedOrganizationUserID,
-         model.settings.userID, model.settings.impersonatingUserID,
-         model.settings.impersonationToken.isEmpty ? "own-account" : "impersonating"].joined(separator: "|")
+    private var scopeIdentity: ThreatDeliveryHistoryScopeIdentity {
+        ThreatDeliveryHistoryScopeIdentity(initialOrganizationID: initialOrganizationID, settings: model.settings)
     }
     private func refresh() async {
         if let initialOrganizationID, !initialOrganizationID.isEmpty,
