@@ -65,6 +65,7 @@ struct PublicStatusNativePanel: View {
             } else {
                 await model.refresh()
             }
+            await model.pollWhileVisible()
         }
         .onChange(of: selectedSection, initial: true) { _, value in
             section = Self.section(for: value, incidentID: incidentID)
@@ -83,7 +84,7 @@ struct PublicStatusNativePanel: View {
 
     private var refreshButton: some View {
         Button {
-            Task { await model.refresh() }
+            Task { await model.refreshCurrentScope() }
         } label: {
             Label("Refresh", systemImage: "arrow.clockwise")
         }

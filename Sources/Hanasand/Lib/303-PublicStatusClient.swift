@@ -53,6 +53,9 @@ struct PublicStatusClient {
 
 @MainActor
 final class PublicStatusViewModel: ObservableObject {
+    static let dashboardRefreshInterval: Duration = .seconds(3)
+    static let incidentRefreshInterval: Duration = .seconds(30)
+
     @Published private(set) var payload: PublicStatusPayload?
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
@@ -62,25 +65,40 @@ final class PublicStatusViewModel: ObservableObject {
 
     private let client: PublicStatusClient
     private let snapshotStore: PublicStatusSnapshotStore
+    private let sleep: @Sendable (Duration) async throws -> Void
+    private var activeScope: String?
+    private var scopeGeneration = 0
 
     init(
         client: PublicStatusClient = PublicStatusClient(),
-        snapshotStore: PublicStatusSnapshotStore = PublicStatusSnapshotStore()
+        snapshotStore: PublicStatusSnapshotStore = PublicStatusSnapshotStore(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.client = client
         self.snapshotStore = snapshotStore
+        self.sleep = sleep
         payload = snapshotStore.load()
     }
 
     func refresh() async {
+        activateScope("dashboard")
+        await refreshDashboard(in: scopeGeneration)
+    }
+
+    private func refreshDashboard(in generation: Int) async {
+        guard activeScope == "dashboard", generation == scopeGeneration else { return }
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if activeScope == "dashboard", generation == scopeGeneration { isLoading = false }
+        }
         do {
             let freshPayload = try await client.dashboard()
+            guard !Task.isCancelled, activeScope == "dashboard", generation == scopeGeneration else { return }
             payload = freshPayload
             snapshotStore.save(freshPayload)
         } catch {
+            guard !Task.isCancelled, activeScope == "dashboard", generation == scopeGeneration else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -91,44 +109,91 @@ final class PublicStatusViewModel: ObservableObject {
             incidentError = "This incident link is invalid."
             return
         }
+        activateScope("incident:\(requestedID)")
+        await refreshIncident(id: requestedID, in: scopeGeneration, initial: true)
+    }
+
+    private func refreshIncident(id requestedID: String, in generation: Int, initial: Bool = false) async {
+        guard activeScope == "incident:\(requestedID)", generation == scopeGeneration else { return }
         isLoading = true
-        isLoadingIncident = true
+        isLoadingIncident = initial || isLoadingIncident
         errorMessage = nil
         incidentError = nil
         defer {
-            isLoading = false
-            isLoadingIncident = false
+            if activeScope == "incident:\(requestedID)", generation == scopeGeneration {
+                isLoading = false
+                isLoadingIncident = false
+            }
         }
         do {
             let detail = try await client.incident(id: requestedID)
-            selectedIncident = detail.incidents.first(where: {
+            guard !Task.isCancelled, activeScope == "incident:\(requestedID)", generation == scopeGeneration else { return }
+            if let updated = detail.incidents.first(where: {
                 $0.id == requestedID || $0.aliases?.contains(requestedID) == true
-            }) ?? detail.incidents.first
-            if selectedIncident == nil {
+            }) ?? detail.incidents.first {
+                selectedIncident = updated
+            } else if selectedIncident == nil {
                 incidentError = "This incident is no longer available."
             }
         } catch {
+            guard !Task.isCancelled, activeScope == "incident:\(requestedID)", generation == scopeGeneration else { return }
             errorMessage = error.localizedDescription
             incidentError = error.localizedDescription
         }
     }
 
     func selectIncident(_ incident: PublicStatusIncident) async {
+        activateScope("incident:\(incident.id)")
         selectedIncident = incident
         isLoadingIncident = true
         incidentError = nil
-        defer { isLoadingIncident = false }
-        do {
-            let detail = try await client.incident(id: incident.id)
-            selectedIncident = detail.incidents.first(where: { $0.id == incident.id || $0.aliases?.contains(incident.id) == true }) ?? detail.incidents.first ?? incident
-        } catch {
-            incidentError = error.localizedDescription
+        await refreshIncident(id: incident.id, in: scopeGeneration)
+    }
+
+    func pollWhileVisible() async {
+        while !Task.isCancelled {
+            let scope = activeScope ?? "dashboard"
+            if scope.hasPrefix("incident:"), selectedIncident?.status.lowercased() == "resolved" { return }
+            let interval: Duration = scope.hasPrefix("incident:") ? Self.incidentRefreshInterval : Self.dashboardRefreshInterval
+            do {
+                try await sleep(interval)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard activeScope == scope else { continue }
+            if scope == "dashboard" {
+                await refreshDashboard(in: scopeGeneration)
+            } else if let id = scope.split(separator: ":", maxSplits: 1).last.map(String.init) {
+                guard selectedIncident?.status.lowercased() != "resolved" else { return }
+                await refreshIncident(id: id, in: scopeGeneration)
+                guard selectedIncident?.status.lowercased() != "resolved" else { return }
+            }
         }
     }
 
-    func clearSelectedIncident() async {
+    func refreshCurrentScope() async {
+        if let selectedIncident, selectedIncident.status.lowercased() != "resolved" {
+            await refreshIncident(id: selectedIncident.id, in: scopeGeneration)
+        } else {
+            await refresh()
+        }
+    }
+
+    private func activateScope(_ scope: String) {
+        guard activeScope != scope else { return }
+        activeScope = scope
+        scopeGeneration &+= 1
+    }
+
+    func showDashboard() async {
         selectedIncident = nil
         incidentError = nil
-        await refresh()
+        activateScope("dashboard")
+        await refreshDashboard(in: scopeGeneration)
+    }
+
+    func clearSelectedIncident() async {
+        await showDashboard()
     }
 }

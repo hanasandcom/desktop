@@ -27,6 +27,39 @@ private final class PublicStatusSnapshotFixture {
     }
 }
 
+private actor PublicStatusPollingClock {
+    private var successfulSleeps: Int
+    private var recordedIntervals: [Duration] = []
+
+    init(successfulSleeps: Int) { self.successfulSleeps = successfulSleeps }
+
+    func sleep(_ interval: Duration) throws {
+        recordedIntervals.append(interval)
+        guard successfulSleeps > 0 else { throw CancellationError() }
+        successfulSleeps -= 1
+    }
+
+    func intervals() -> [Duration] { recordedIntervals }
+}
+
+private actor PublicStatusResponseGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 final class PublicStatusTests: XCTestCase {
     private let dashboardJSON = Data(#"""
     {
@@ -321,6 +354,86 @@ final class PublicStatusTests: XCTestCase {
         await refresh.value
         let finishedLoading = await model.isLoading
         XCTAssertFalse(finishedLoading)
+    }
+
+    func testDashboardPollingUsesThreeSecondIntervalAndRefreshesOverviewAndIncidents() async throws {
+        let transport = PublicStatusFixtureTransport(responses: [
+            (dashboardJSON, 200), (dashboardJSON, 200), (dashboardJSON, 200),
+        ])
+        let clock = PublicStatusPollingClock(successfulSleeps: 2)
+        let model = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in try await transport.send(request) }),
+                sleep: { interval in try await clock.sleep(interval) }
+            )
+        }
+
+        await model.refresh()
+        await model.pollWhileVisible()
+
+        let intervals = await clock.intervals()
+        let requests = await transport.requests()
+        XCTAssertEqual(intervals, [.seconds(3), .seconds(3), .seconds(3)])
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertTrue(requests.allSatisfy {
+            URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems == [URLQueryItem(name: "history", value: "true")]
+        })
+    }
+
+    func testUnresolvedIncidentPollsEveryThirtySecondsAndStopsWhenResolved() async throws {
+        let resolved = Data(#"{"incidents":[{"id":"incident-42","service":"infrastructure","check_name":"Browser Web","title":"Browser Web interruption","impact":"Outage","status":"resolved","started_at":"2026-10-23T09:00:00Z","resolved_at":"2026-10-23T09:30:00Z","summary":"Requests recovered.","updates":[]}]}"#.utf8)
+        let transport = PublicStatusFixtureTransport(responses: [(detailJSON, 200), (resolved, 200)])
+        let clock = PublicStatusPollingClock(successfulSleeps: 3)
+        let model = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in try await transport.send(request) }),
+                sleep: { interval in try await clock.sleep(interval) }
+            )
+        }
+
+        await model.loadIncident(id: "incident-42")
+        await model.pollWhileVisible()
+
+        let intervals = await clock.intervals()
+        let requests = await transport.requests()
+        let status = await model.selectedIncident?.status
+        XCTAssertEqual(intervals, [.seconds(30)])
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(status, "resolved")
+    }
+
+    func testLateDashboardResponseCannotReplaceIncidentScopeSnapshot() async throws {
+        let storage = PublicStatusSnapshotFixture()
+        let original = try JSONDecoder().decode(PublicStatusPayload.self, from: dashboardJSON)
+        storage.store.save(original)
+        let dashboardStarted = expectation(description: "dashboard request started")
+        let responseGate = PublicStatusResponseGate()
+        let model = await MainActor.run {
+            PublicStatusViewModel(
+                client: PublicStatusClient(send: { request in
+                    let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+                    if query?.contains(URLQueryItem(name: "incident", value: "incident-42")) == true {
+                        return (self.detailJSON, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                    }
+                    dashboardStarted.fulfill()
+                    await responseGate.wait()
+                    return (Data(#"{"overall":"down","checks":[],"incidents":[],"history":[]}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }),
+                snapshotStore: storage.store
+            )
+        }
+
+        let staleRefresh = Task { await model.refresh() }
+        await fulfillment(of: [dashboardStarted], timeout: 2)
+        await model.loadIncident(id: "incident-42")
+        await responseGate.release()
+        await staleRefresh.value
+
+        let payload = await model.payload
+        let selected = await model.selectedIncident
+        XCTAssertEqual(payload, original)
+        XCTAssertEqual(selected?.id, "incident-42")
+        XCTAssertEqual(storage.store.load(), original)
     }
 
     func testStatusHasARecognizedLoopbackScreenshotCommand() {
