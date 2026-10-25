@@ -27,6 +27,7 @@ struct OrganizationMembersNativePanel: View {
     @Environment(\.desktopTheme) private var theme
     @State private var memberFilters = OrganizationMemberFiltering()
     @State private var routeFocus: OrganizationMemberRouteFocus?
+    @State private var organizationRouteError = ""
     @State private var pendingMemberChange: PendingOrganizationMemberChange?
     @State private var pendingInviteRevoke: PendingOrganizationInviteRevoke?
 
@@ -50,10 +51,14 @@ struct OrganizationMembersNativePanel: View {
         memberFilters.matchingInvites(model.organizationInvites)
     }
 
+    private var requestedOrganizationID: String? {
+        DashboardOrganizationRouteContext.requestedOrganizationID(from: model.selectedNativeDashboardQuery)
+    }
+
     var body: some View {
         NativeGroupPanel(title: "Team and invitations", subtitle: model.organizationMembersPage?.organization.name ?? "Selected organization") {
             HStack(spacing: 8) {
-                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await model.loadOrganizationMembers() } }
+                ActionButton(title: "Refresh", icon: "arrow.clockwise") { Task { await loadForCurrentRoute() } }
                     .disabled(model.isLoadingOrganizationMembers || model.isMutatingOrganizationMembers || model.selectedOrganizationID.isEmpty)
                 if model.isLoadingOrganizationMembers { ProgressView().controlSize(.small) }
             }
@@ -65,7 +70,14 @@ struct OrganizationMembersNativePanel: View {
                     .textSelection(.enabled)
             }
 
-            if model.selectedOrganizationID.isEmpty {
+            if !organizationRouteError.isEmpty {
+                NativeGroupPanel(title: "Organization link unavailable", subtitle: "The linked team was not opened") {
+                    Text(organizationRouteError).font(.system(size: 11)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    ActionButton(title: "Retry", icon: "arrow.clockwise") { Task { await loadForCurrentRoute() } }
+                }
+            } else if let requestedOrganizationID, requestedOrganizationID != model.selectedOrganizationID {
+                NativeEmptyState(title: "Opening linked organization", message: "Checking active membership before loading its team.")
+            } else if model.selectedOrganizationID.isEmpty {
                 NativeEmptyState(title: "Select an organization", message: "Select an active membership in the organization directory to view its team.")
             } else if model.isLoadingOrganizationMembers && model.organizationMembersPage == nil {
                 NativeEmptyState(title: "Loading team", message: "Verifying current organization membership.")
@@ -114,18 +126,7 @@ struct OrganizationMembersNativePanel: View {
             }
         }
         .task(id: routeTaskID) {
-            await model.loadOrganizationMembers()
-            let focus = OrganizationMemberRouteFocus.resolve(
-                query: model.selectedNativeDashboardQuery,
-                members: model.organizationMembersPage?.members ?? [],
-                invites: model.organizationInvites
-            )
-            routeFocus = focus
-            if let focus {
-                memberFilters.searchText = focus.id
-                memberFilters.role = "all"
-                memberFilters.status = "all"
-            }
+            await loadForCurrentRoute()
         }
         .onChange(of: model.selectedOrganizationID) { _, _ in
             routeFocus = nil
@@ -157,7 +158,33 @@ struct OrganizationMembersNativePanel: View {
 
     private var routeTaskID: String {
         let query = model.selectedNativeDashboardQuery
-        return [model.selectedOrganizationID, query["inviteId"] ?? "", query["memberId"] ?? "", query["focus"] ?? ""].joined(separator: "|")
+        return [model.selectedOrganizationID, requestedOrganizationID ?? "", query["inviteId"] ?? "", query["memberId"] ?? "", query["focus"] ?? ""].joined(separator: "|")
+    }
+
+    @MainActor private func loadForCurrentRoute() async {
+        organizationRouteError = ""
+        if let requestedOrganizationID, requestedOrganizationID != model.selectedOrganizationID {
+            let selected = await model.selectOrganizationFromDeepLink(requestedOrganizationID)
+            guard !Task.isCancelled else { return }
+            guard selected, model.selectedOrganizationID == requestedOrganizationID else {
+                organizationRouteError = model.organizationDirectoryError ?? "The linked organization is not available through an active membership."
+                return
+            }
+        }
+        guard !Task.isCancelled else { return }
+        await model.loadOrganizationMembers()
+        guard !Task.isCancelled else { return }
+        let focus = OrganizationMemberRouteFocus.resolve(
+            query: model.selectedNativeDashboardQuery,
+            members: model.organizationMembersPage?.members ?? [],
+            invites: model.organizationInvites
+        )
+        routeFocus = focus
+        if let focus {
+            memberFilters.searchText = focus.id
+            memberFilters.role = "all"
+            memberFilters.status = "all"
+        }
     }
 
     private var memberFilterControls: some View {

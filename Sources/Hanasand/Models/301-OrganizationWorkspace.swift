@@ -108,6 +108,12 @@ struct OrganizationWorkspaceRecordPage: Decodable {
     var records: [OrganizationWorkspaceRecord] { cases.isEmpty ? items : cases }
 }
 
+struct OrganizationWorkspaceRecordsLoad: Equatable {
+    let events: [OrganizationWorkspaceRecord]?
+    let cases: [OrganizationWorkspaceRecord]?
+    let warnings: [String]
+}
+
 enum OrganizationWorkspaceActivityKind: String, CaseIterable, Identifiable, Equatable {
     case event = "Event", caseRecord = "Case", delivery = "Delivery", member = "Team", invite = "Invitation", watchlist = "Watchlist", destination = "Destination"
     var id: String { rawValue }
@@ -136,6 +142,28 @@ struct OrganizationWorkspaceActivityPage {
             "Organization invites activity could not be loaded.",
             "Organization watchlists activity could not be loaded.",
         ])
+    }
+
+    func retainingUnavailableSources(from previous: OrganizationWorkspaceActivityPage) -> OrganizationWorkspaceActivityPage {
+        func source(for kind: OrganizationWorkspaceActivityKind) -> String? {
+            switch kind {
+            case .member: return "members"
+            case .invite: return "invites"
+            case .watchlist: return "watchlists"
+            case .destination: return "destinations"
+            case .delivery: return "deliveries"
+            case .event, .caseRecord: return nil
+            }
+        }
+        let retained = previous.entries.filter { entry in
+            guard let source = source(for: entry.kind) else { return false }
+            return warnings.contains { $0.localizedCaseInsensitiveContains("organization \(source) activity") }
+        }
+        let currentIDs = Set(entries.map(\.id))
+        return OrganizationWorkspaceActivityPage(
+            entries: (entries + retained.filter { !currentIDs.contains($0.id) }).sorted { $0.occurredAt > $1.occurredAt },
+            warnings: warnings
+        )
     }
 }
 

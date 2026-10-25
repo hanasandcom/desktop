@@ -121,6 +121,14 @@ struct DashboardOrganizationDirectorySnapshot {
     let memberships: [DashboardOrganizationMembership]
 }
 
+enum DashboardOrganizationRouteContext {
+    static func requestedOrganizationID(from query: [String: String]) -> String? {
+        ["org", "organizationId", "orgId"]
+            .compactMap { query[$0]?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+}
+
 enum DashboardOrganizationSwitchPolicy {
     static func canSwitch(
         organizationID: String,

@@ -1,5 +1,10 @@
 import Foundation
 
+private func captureOrganizationWorkspaceResult<Value>(_ operation: () async throws -> Value) async -> Result<Value, Error> {
+    do { return .success(try await operation()) }
+    catch { return .failure(error) }
+}
+
 private final class OrganizationWorkspaceRedirectBlocker: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -54,21 +59,48 @@ struct OrganizationWorkspaceClient {
         return page
     }
 
-    func loadRecords() async throws -> (events: [OrganizationWorkspaceRecord], cases: [OrganizationWorkspaceRecord], warnings: [String]) {
-        async let alertPage: ThreatFindingPage = request(path: "api/findings/alerts", query: [
+    func loadRecords() async -> OrganizationWorkspaceRecordsLoad {
+        async let eventResult = captureOrganizationWorkspaceResult { try await loadEvents() }
+        async let caseResult = captureOrganizationWorkspaceResult { try await loadCases() }
+        let (events, cases) = await (eventResult, caseResult)
+        var warnings: [String] = []
+        let eventRecords: [OrganizationWorkspaceRecord]?
+        switch events {
+        case let .success(value): eventRecords = value
+        case let .failure(error):
+            eventRecords = nil
+            warnings.append("Events could not be loaded: \(error.localizedDescription)")
+        }
+        let caseRecords: [OrganizationWorkspaceRecord]?
+        switch cases {
+        case let .success((records, caseWarnings)):
+            caseRecords = records
+            warnings.append(contentsOf: caseWarnings)
+        case let .failure(error):
+            caseRecords = nil
+            warnings.append("Cases could not be loaded: \(error.localizedDescription)")
+        }
+        return OrganizationWorkspaceRecordsLoad(events: eventRecords, cases: caseRecords, warnings: warnings)
+    }
+
+    private func loadEvents() async throws -> [OrganizationWorkspaceRecord] {
+        let alerts: ThreatFindingPage = try await request(path: "api/findings/alerts", query: [
             URLQueryItem(name: "tenantId", value: organizationID), URLQueryItem(name: "organizationId", value: organizationID), URLQueryItem(name: "limit", value: "50")
         ])
-        async let casePage: OrganizationWorkspaceRecordPage = request(path: "api/cases", query: [
+        try alerts.validate(tenantID: organizationID, organizationID: organizationID, requestedCursor: nil)
+
+        return alerts.alerts.map { OrganizationWorkspaceRecord(id: $0.id, title: $0.title, status: $0.reviewState, severity: $0.severity, updatedAt: $0.observedAt, createdAt: "", organizationId: organizationID) }
+    }
+
+    private func loadCases() async throws -> (records: [OrganizationWorkspaceRecord], warnings: [String]) {
+        let cases: OrganizationWorkspaceRecordPage = try await request(path: "api/cases", query: [
             URLQueryItem(name: "organizationId", value: organizationID), URLQueryItem(name: "page", value: "1"), URLQueryItem(name: "limit", value: "50")
         ])
-        let (alerts, cases) = try await (alertPage, casePage)
-        try alerts.validate(tenantID: organizationID, organizationID: organizationID, requestedCursor: nil)
         guard cases.organizationId == nil || cases.organizationId == organizationID,
               cases.records.allSatisfy({ $0.organizationId == nil || $0.organizationId == organizationID }) else {
             throw OrganizationWorkspaceError.scopeChanged
         }
-        let eventRecords = alerts.alerts.map { OrganizationWorkspaceRecord(id: $0.id, title: $0.title, status: $0.reviewState, severity: $0.severity, updatedAt: $0.observedAt, createdAt: "", organizationId: organizationID) }
-        return (eventRecords, cases.records, cases.warnings)
+        return (cases.records, cases.warnings)
     }
 
     func loadActivity(includeInvites: Bool = true) async throws -> OrganizationWorkspaceActivityPage {

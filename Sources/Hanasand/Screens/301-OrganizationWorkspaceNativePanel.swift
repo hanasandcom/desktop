@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
 
+private func captureOrganizationWorkspaceScreenResult<Value>(_ operation: () async throws -> Value) async -> Result<Value, Error> {
+    do { return .success(try await operation()) }
+    catch { return .failure(error) }
+}
+
 struct OrganizationWorkspaceNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
@@ -14,7 +19,9 @@ struct OrganizationWorkspaceNativePanel: View {
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var error = ""
+    @State private var organizationRouteError = ""
     @State private var status = ""
+    @State private var loadedOrganizationID = ""
     @State private var confirmSave = false
     @State private var search = ""
     @State private var activitySearch = ""
@@ -26,6 +33,9 @@ struct OrganizationWorkspaceNativePanel: View {
     }
 
     private var organizationID: String { model.selectedOrganizationID }
+    private var requestedOrganizationID: String? {
+        DashboardOrganizationRouteContext.requestedOrganizationID(from: model.selectedNativeDashboardQuery)
+    }
     private var impersonating: Bool { !model.settings.impersonationToken.isEmpty || !model.settings.impersonatingUserID.isEmpty }
     private var canEdit: Bool {
         guard let settingsPage else { return false }
@@ -68,15 +78,24 @@ struct OrganizationWorkspaceNativePanel: View {
                     Picker("Organization section", selection: $section) {
                         ForEach(OrganizationWorkspaceSection.allCases) { item in Text(item.rawValue).tag(item) }
                     }.pickerStyle(.segmented).labelsHidden()
-                    ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await refresh() } }.disabled(isLoading || organizationID.isEmpty)
+                    ActionButton(title: isLoading ? "Refreshing…" : "Refresh", icon: "arrow.clockwise") { Task { await refresh() } }
+                        .disabled(isLoading || (organizationID.isEmpty && requestedOrganizationID == nil))
                 }
                 if !status.isEmpty { Text(status).font(.system(size: 11, weight: .medium)).foregroundStyle(theme.textSecondary).textSelection(.enabled) }
                 if !error.isEmpty { NativeNotice(message: error) }
+                ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in NativeNotice(message: warning) }
                 if isLoading { HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Loading organization data…").font(.system(size: 11)).foregroundStyle(theme.textSecondary) } }
             }
 
             if !model.hasHanasandAuth {
                 NativeEmptyState(title: "Sign in required", message: "Sign in to view organization data.")
+            } else if !organizationRouteError.isEmpty {
+                NativeGroupPanel(title: "Organization link unavailable", subtitle: "The linked workspace was not opened") {
+                    Text(organizationRouteError).font(.system(size: 11)).foregroundStyle(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    ActionButton(title: "Retry", icon: "arrow.clockwise") { Task { await refresh() } }
+                }
+            } else if let requestedOrganizationID, requestedOrganizationID != organizationID {
+                NativeEmptyState(title: "Opening linked organization", message: "Checking active membership before loading its workspace.")
             } else if organizationID.isEmpty {
                 NativeEmptyState(title: "Select an organization", message: "Choose an active organization to view its settings and monitoring records.")
             } else if section == .settings {
@@ -89,7 +108,7 @@ struct OrganizationWorkspaceNativePanel: View {
                 recordsContent
             }
         }
-        .task(id: "\(organizationID)|\(section.rawValue)") { await refresh() }
+        .task(id: "\(organizationID)|\(requestedOrganizationID ?? "")|\(section.rawValue)") { await refresh() }
         .confirmationDialog("Save organization settings?", isPresented: $confirmSave, titleVisibility: .visible) {
             Button("Save settings", role: .none) { Task { await save() } }
             Button("Cancel", role: .cancel) {}
@@ -225,9 +244,6 @@ struct OrganizationWorkspaceNativePanel: View {
         NativeGroupPanel(title: section == .events ? "Events and cases" : "Recent organization activity",
                          subtitle: section == .events ? "Latest organization-scoped records" : "Activity is derived from the available event and case feeds") {
             SearchFieldRow(placeholder: "Search records", text: $search)
-            if !warnings.isEmpty {
-                ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in NativeNotice(message: warning) }
-            }
             if visibleRecords.isEmpty && !isLoading {
                 NativeEmptyState(title: error.isEmpty ? "No records found" : "Records could not be loaded",
                                  message: error.isEmpty ? "No organization events or cases match this view." : "Refresh to retry the organization-scoped feeds.")
@@ -247,9 +263,6 @@ struct OrganizationWorkspaceNativePanel: View {
                 Text("All activity").tag("All")
                 ForEach(OrganizationWorkspaceActivityKind.allCases) { kind in Text(kind.rawValue).tag(kind.rawValue) }
             }.pickerStyle(.menu)
-            if !isLoading && !activityPage.warnings.isEmpty {
-                ForEach(Array(activityPage.warnings.enumerated()), id: \.offset) { _, warning in NativeNotice(message: warning) }
-            }
             if activityEntries.isEmpty && !isLoading {
                 NativeEmptyState(title: error.isEmpty ? "No matching activity" : "Activity is incomplete",
                     message: error.isEmpty ? "Try another search or activity type." : "Some organization activity sources could not be loaded.")
@@ -347,26 +360,84 @@ struct OrganizationWorkspaceNativePanel: View {
     }
 
     @MainActor private func refresh() async {
-        guard model.hasHanasandAuth, !organizationID.isEmpty else { return }
+        guard model.hasHanasandAuth else { return }
+        organizationRouteError = ""
+        if let requestedOrganizationID, requestedOrganizationID != organizationID {
+            let selected = await model.selectOrganizationFromDeepLink(requestedOrganizationID)
+            guard !Task.isCancelled else { return }
+            guard selected, model.selectedOrganizationID == requestedOrganizationID else {
+                organizationRouteError = model.organizationDirectoryError ?? "The linked organization is not available through an active membership."
+                return
+            }
+        }
+        guard !Task.isCancelled, !organizationID.isEmpty else { return }
         let requestedOrganization = organizationID
+        let requestedUser = model.userIDForRequests
+        let requestedToken = model.authTokenForRequests
+        if loadedOrganizationID != requestedOrganization {
+            settingsPage = nil
+            draft = nil
+            events = []
+            cases = []
+            activityPage = .summaryUnavailable
+            warnings = []
+            loadedOrganizationID = requestedOrganization
+        }
         isLoading = true; error = ""; status = ""
-        activityPage = .summaryUnavailable
         defer { if requestedOrganization == organizationID { isLoading = false } }
         do {
             let client = try OrganizationWorkspaceClient(settings: model.settings, organizationID: requestedOrganization)
-            async let page = client.loadSettings()
-            async let rows = client.loadRecords()
-            let (loadedPage, loadedRows) = try await (page, rows)
-            let canViewInvites = ["owner", "admin"].contains(loadedPage.organization.role?.lowercased() ?? "")
-            let loadedActivity = section == .activity || section == .overview
-                ? try? await client.loadActivity(includeInvites: canViewInvites) : nil
-            guard requestedOrganization == organizationID else { return }
-            settingsPage = loadedPage; draft = loadedPage.settings
-            events = loadedRows.events; cases = loadedRows.cases; warnings = loadedRows.warnings
-            if let loadedActivity { activityPage = loadedActivity }
-            status = "Loaded settings, \(events.count) events, and \(cases.count) cases."
+            async let settingsResult = captureOrganizationWorkspaceScreenResult { try await client.loadSettings() }
+            async let loadedRecords = client.loadRecords()
+            let (pageResult, recordResult) = await (settingsResult, loadedRecords)
+            guard requestedOrganization == organizationID,
+                  requestedUser == model.userIDForRequests, requestedToken == model.authTokenForRequests,
+                  !impersonating else { return }
+
+            var sourceWarnings = recordResult.warnings
+            switch pageResult {
+            case let .success(page):
+                guard page.organization.id == requestedOrganization else {
+                    sourceWarnings.append("Settings could not be loaded: the response organization did not match the selected workspace.")
+                    break
+                }
+                settingsPage = page
+                draft = page.settings
+            case let .failure(failure):
+                sourceWarnings.append("Settings could not be loaded: \(failure.localizedDescription)")
+            }
+            if let loadedEvents = recordResult.events { events = loadedEvents }
+            if let loadedCases = recordResult.cases { cases = loadedCases }
+
+            let canViewInvites = ["owner", "admin"].contains(settingsPage?.organization.role?.lowercased() ?? "")
+            if section == .activity || section == .overview {
+                let activityResult = await captureOrganizationWorkspaceScreenResult {
+                    try await client.loadActivity(includeInvites: canViewInvites)
+                }
+                guard requestedOrganization == organizationID,
+                      requestedUser == model.userIDForRequests, requestedToken == model.authTokenForRequests,
+                      !impersonating else { return }
+                switch activityResult {
+                case let .success(page):
+                    let mergedPage = page.retainingUnavailableSources(from: activityPage)
+                    activityPage = canViewInvites ? mergedPage : OrganizationWorkspaceActivityPage(
+                        entries: mergedPage.entries.filter { $0.kind != .invite }, warnings: mergedPage.warnings
+                    )
+                    sourceWarnings.append(contentsOf: page.warnings)
+                case let .failure(failure):
+                    sourceWarnings.append("Organization activity could not be loaded: \(failure.localizedDescription)")
+                }
+            }
+            var seenWarnings = Set<String>()
+            warnings = sourceWarnings.filter { seenWarnings.insert($0).inserted }
+            if warnings.isEmpty {
+                status = "Loaded settings, \(events.count) events, and \(cases.count) cases."
+            } else {
+                status = "Some organization sources could not be refreshed. Available data remains shown; refresh to retry."
+            }
         } catch {
-            guard requestedOrganization == organizationID else { return }
+            guard requestedOrganization == organizationID,
+                  requestedUser == model.userIDForRequests, requestedToken == model.authTokenForRequests else { return }
             self.error = error.localizedDescription
             status = "Organization data could not be refreshed."
         }

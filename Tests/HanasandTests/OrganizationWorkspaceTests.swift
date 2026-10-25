@@ -36,6 +36,26 @@ final class OrganizationWorkspaceTests: XCTestCase {
 
     private let settingsJSON = #"{"organization":{"id":"org/a","name":"Example Org","slug":"example-org","lifecycleStatus":"active","role":"owner"},"settings":{"defaultWebhookPolicy":"active_destinations","alertVisibilityPolicy":"members","lifecycleStatus":"active","retentionDays":365,"auditSafeMetadata":{}},"permissions":{"canEdit":true,"editableFields":["name","slug","defaultWebhookPolicy","alertVisibilityPolicy","retentionDays","auditSafeMetadata"]},"lifecycleReadiness":{}}"#
 
+    func testOrganizationDeepLinkReadsWebsiteQueryAliasesAndRequiresVerifiedMembership() {
+        XCTAssertEqual(DashboardOrganizationRouteContext.requestedOrganizationID(from: ["org": " org-one "]), "org-one")
+        XCTAssertEqual(DashboardOrganizationRouteContext.requestedOrganizationID(from: ["organizationId": "org-two"]), "org-two")
+        XCTAssertEqual(DashboardOrganizationRouteContext.requestedOrganizationID(from: ["orgId": "org-three"]), "org-three")
+        XCTAssertNil(DashboardOrganizationRouteContext.requestedOrganizationID(from: ["org": " ", "organizationId": ""]))
+
+        XCTAssertTrue(DashboardOrganizationSwitchPolicy.canSwitch(
+            organizationID: "org-one", organizationStatus: "active", membershipStatus: "active",
+            isAuthenticated: true, isOwnAccount: true, isImpersonating: false
+        ))
+        XCTAssertFalse(DashboardOrganizationSwitchPolicy.canSwitch(
+            organizationID: "org-one", organizationStatus: "active", membershipStatus: nil,
+            isAuthenticated: true, isOwnAccount: true, isImpersonating: false
+        ))
+        XCTAssertFalse(DashboardOrganizationSwitchPolicy.canSwitch(
+            organizationID: "org-one", organizationStatus: "active", membershipStatus: "active",
+            isAuthenticated: true, isOwnAccount: true, isImpersonating: true
+        ))
+    }
+
     func testSettingsReadUsesSecureScopedNoStoreAuthenticatedRequest() async throws {
         var captured: URLRequest?
         let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
@@ -62,10 +82,11 @@ final class OrganizationWorkspaceTests: XCTestCase {
             }
             return self.http(#"{"organizationId":"org/a","items":[],"cases":[],"warnings":[]}"#, request: request)
         }
-        let result = try await client.loadRecords()
+        let result = await client.loadRecords()
         let requests = recorder.requests
-        XCTAssertTrue(result.events.isEmpty)
-        XCTAssertTrue(result.cases.isEmpty)
+        XCTAssertEqual(result.events, [])
+        XCTAssertEqual(result.cases, [])
+        XCTAssertTrue(result.warnings.isEmpty)
         XCTAssertEqual(requests.count, 2)
         XCTAssertTrue(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token_abc-123" })
         XCTAssertTrue(requests.allSatisfy { $0.value(forHTTPHeaderField: "Cache-Control") == "no-store" })
@@ -75,6 +96,34 @@ final class OrganizationWorkspaceTests: XCTestCase {
         XCTAssertEqual(alertQuery.first(where: { $0.name == "tenantId" })?.value, "org/a")
         let cases = requests.first { $0.url?.path.hasSuffix("/api/cases") == true }!
         XCTAssertEqual(URLComponents(url: cases.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "organizationId" })?.value, "org/a")
+    }
+
+    func testRecordFeedsRetainSuccessfulSourceWhenEventsFail() async throws {
+        let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
+            if request.url?.path.hasSuffix("/api/findings/alerts") == true {
+                return self.http(#"{"error":{"message":"Events are unavailable."}}"#, request: request, status: 503)
+            }
+            return self.http(#"{"organizationId":"org/a","items":[{"id":"case-1","title":"Open case","status":"open","organizationId":"org/a"}],"cases":[],"warnings":[]}"#, request: request)
+        }
+
+        let result = await client.loadRecords()
+        XCTAssertNil(result.events)
+        XCTAssertEqual(result.cases?.map(\.id), ["case-1"])
+        XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("events could not be loaded") }))
+    }
+
+    func testRecordFeedsRetainSuccessfulSourceWhenCasesFail() async throws {
+        let client = try OrganizationWorkspaceClient(settings: settings, organizationID: "org/a") { request in
+            if request.url?.path.hasSuffix("/api/findings/alerts") == true {
+                return self.http(#"{"organization":{"id":"org/a"},"visibilityDecision":{"allowed":true},"alerts":[{"id":"event-1","tenantId":"org/a","organizationId":"org/a","company":"Example Company","matchedTerm":{"value":"example.test"},"severity":"high","reviewState":"new","deliveryState":"pending","firstSeenAt":"2026-10-24T12:00:00Z","evidence":[]}],"total":1,"nextCursor":null}"#, request: request)
+            }
+            return self.http(#"{"error":{"message":"Cases are unavailable."}}"#, request: request, status: 503)
+        }
+
+        let result = await client.loadRecords()
+        XCTAssertEqual(result.events?.map(\.id), ["event-1"])
+        XCTAssertNil(result.cases)
+        XCTAssertTrue(result.warnings.contains(where: { $0.localizedCaseInsensitiveContains("cases could not be loaded") }))
     }
 
     func testActivityLoadIncludesOrganizationSourcesAndProducesNativeContextRows() async throws {
@@ -107,6 +156,20 @@ final class OrganizationWorkspaceTests: XCTestCase {
         XCTAssertEqual(page.entries.first(where: { $0.kind == .destination })?.contextPath, "/integrations")
         XCTAssertEqual(recorder.requests.count, 5)
         XCTAssertTrue(recorder.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer token_abc-123" })
+    }
+
+    func testPartialActivityRefreshRetainsOnlyUnavailableSourceEntries() {
+        let oldMember = summaryEntry("member-previous", kind: .member, status: "active")
+        let oldWatchlist = summaryEntry("watchlist-previous", kind: .watchlist, status: "active")
+        let previous = OrganizationWorkspaceActivityPage(entries: [oldMember, oldWatchlist], warnings: [])
+        let refreshed = OrganizationWorkspaceActivityPage(entries: [
+            summaryEntry("member-current", kind: .member, status: "active"),
+            summaryEntry("watchlist-current", kind: .watchlist, status: "paused"),
+        ], warnings: ["Could not load organization members activity."])
+
+        let merged = refreshed.retainingUnavailableSources(from: previous)
+        XCTAssertEqual(Set(merged.entries.map(\.id)), ["member-current", "member-previous", "watchlist-current"])
+        XCTAssertEqual(merged.warnings, refreshed.warnings)
     }
 
     func testSettingsWriteRechecksServerPermissionAndValidatesReceipt() async throws {
