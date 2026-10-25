@@ -26,6 +26,7 @@ struct OrganizationMembersNativePanel: View {
     @EnvironmentObject private var model: DesktopAgentModel
     @Environment(\.desktopTheme) private var theme
     @State private var memberFilters = OrganizationMemberFiltering()
+    @State private var routeFocus: OrganizationMemberRouteFocus?
     @State private var pendingMemberChange: PendingOrganizationMemberChange?
     @State private var pendingInviteRevoke: PendingOrganizationInviteRevoke?
 
@@ -46,13 +47,7 @@ struct OrganizationMembersNativePanel: View {
     }
 
     private var filteredInvites: [DashboardOrganizationInvite] {
-        let query = memberFilters.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return model.organizationInvites }
-        return model.organizationInvites.filter {
-            $0.email.localizedCaseInsensitiveContains(query)
-                || $0.role.localizedCaseInsensitiveContains(query)
-                || $0.status.localizedCaseInsensitiveContains(query)
-        }
+        memberFilters.matching(model.organizationInvites)
     }
 
     var body: some View {
@@ -93,7 +88,7 @@ struct OrganizationMembersNativePanel: View {
                     )
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                        ForEach(filteredMembers) { member in memberCard(member, actorRole: page.organization.role ?? "") }
+                        ForEach(filteredMembers) { member in memberCard(member, actorRole: page.organization.role ?? "", isRouteFocused: routeFocus == OrganizationMemberRouteFocus(kind: .member, id: member.userId)) }
                     }
                 }
 
@@ -107,7 +102,7 @@ struct OrganizationMembersNativePanel: View {
                             )
                         } else {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
-                                ForEach(filteredInvites) { invite in inviteCard(invite) }
+                                ForEach(filteredInvites) { invite in inviteCard(invite, isRouteFocused: routeFocus == OrganizationMemberRouteFocus(kind: .invite, id: invite.id)) }
                             }
                         }
                     }
@@ -118,8 +113,23 @@ struct OrganizationMembersNativePanel: View {
                 NativeEmptyState(title: "Team unavailable", message: model.organizationMembersStatus.isEmpty ? "Refresh to verify active organization membership." : model.organizationMembersStatus)
             }
         }
-        .task(id: model.selectedOrganizationID) { await model.loadOrganizationMembers() }
+        .task(id: routeTaskID) {
+            await model.loadOrganizationMembers()
+            let focus = OrganizationMemberRouteFocus.resolve(
+                query: model.selectedNativeDashboardQuery,
+                members: model.organizationMembersPage?.members ?? [],
+                invites: model.organizationInvites
+            )
+            routeFocus = focus
+            if let focus {
+                memberFilters.searchText = focus.id
+                memberFilters.role = "all"
+                memberFilters.status = "all"
+            }
+        }
         .onChange(of: model.selectedOrganizationID) { _, _ in
+            routeFocus = nil
+            memberFilters.searchText = ""
             memberFilters.role = "all"
             memberFilters.status = "all"
         }
@@ -143,6 +153,11 @@ struct OrganizationMembersNativePanel: View {
                 Button("Cancel", role: .cancel) { self.pendingInviteRevoke = nil }
             }
         } message: { Text(pendingInviteRevoke?.invite.email ?? "") }
+    }
+
+    private var routeTaskID: String {
+        let query = model.selectedNativeDashboardQuery
+        return [model.selectedOrganizationID, query["inviteId"] ?? "", query["memberId"] ?? "", query["focus"] ?? ""].joined(separator: "|")
     }
 
     private var memberFilterControls: some View {
@@ -207,9 +222,13 @@ struct OrganizationMembersNativePanel: View {
     }
 
     @ViewBuilder
-    private func memberCard(_ member: DashboardOrganizationMember, actorRole: String) -> some View {
+    private func memberCard(_ member: DashboardOrganizationMember, actorRole: String, isRouteFocused: Bool) -> some View {
         NativeGroupPanel(title: member.name.isEmpty ? member.userId : member.name,
                          subtitle: "\(member.role.capitalized) · \(member.status.capitalized)") {
+            if isRouteFocused {
+                Label("Selected from organization activity", systemImage: "arrow.turn.down.right")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.accent)
+            }
             Text(member.userId)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(theme.textTertiary)
@@ -239,8 +258,12 @@ struct OrganizationMembersNativePanel: View {
         }
     }
 
-    private func inviteCard(_ invite: DashboardOrganizationInvite) -> some View {
+    private func inviteCard(_ invite: DashboardOrganizationInvite, isRouteFocused: Bool) -> some View {
         NativeGroupPanel(title: invite.email, subtitle: "\(invite.role.capitalized) · Pending") {
+            if isRouteFocused {
+                Label("Selected from organization activity", systemImage: "arrow.turn.down.right")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(theme.accent)
+            }
             if let expiresAt = invite.expiresAt, !expiresAt.isEmpty {
                 Text("Expires \(expiresAt)").font(.system(size: 10)).foregroundStyle(theme.textSecondary)
             }

@@ -33,12 +33,40 @@ final class OrganizationMemberTests: XCTestCase {
         XCTAssertTrue(OrganizationMemberFiltering(status: "active").hasActiveFilters)
     }
 
+    func testInviteFilterFindsInvitationByIDWithoutLosingEmailRoleOrStatusSearch() throws {
+        let invites = try decodeInvites()
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "invite-opaque-7").matching(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "PERSON@EXAMPLE.COM").matching(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "reader").matching(invites).map(\.id), ["invite-opaque-7"])
+        XCTAssertEqual(OrganizationMemberFiltering(searchText: "pending").matching(invites).map(\.id), ["invite-opaque-7"])
+    }
+
+    func testOrganizationMemberRouteFocusResolvesExactTargetsAndWebsiteFallbackOrder() throws {
+        let members = try decodeMembers([("member-42", "Ari", "ari@example.com", "reader", "active")])
+        let invites = try decodeInvites()
+
+        XCTAssertEqual(OrganizationMemberRouteFocus.resolve(query: ["inviteId": "invite-opaque-7", "memberId": "member-42"], members: members, invites: invites),
+                       OrganizationMemberRouteFocus(kind: .invite, id: "invite-opaque-7"))
+        XCTAssertEqual(OrganizationMemberRouteFocus.resolve(query: ["memberId": "member-42"], members: members, invites: invites),
+                       OrganizationMemberRouteFocus(kind: .member, id: "member-42"))
+        XCTAssertEqual(OrganizationMemberRouteFocus.resolve(query: ["focus": "invites"], members: members, invites: invites),
+                       OrganizationMemberRouteFocus(kind: .invite, id: "invite-opaque-7"))
+        XCTAssertEqual(OrganizationMemberRouteFocus.resolve(query: ["focus": "members"], members: members, invites: invites),
+                       OrganizationMemberRouteFocus(kind: .member, id: "member-42"))
+        XCTAssertNil(OrganizationMemberRouteFocus.resolve(query: ["inviteId": "missing"], members: members, invites: invites))
+    }
+
     private func decodeMembers(_ fixtures: [(String, String, String, String, String)]) throws -> [DashboardOrganizationMember] {
         let members = fixtures.map { id, name, email, role, status in
             "{\"organizationId\":\"selected-org\",\"userId\":\"\(id)\",\"name\":\"\(name)\",\"email\":\"\(email)\",\"role\":\"\(role)\",\"status\":\"\(status)\"}"
         }.joined(separator: ",")
         let data = "{\"organization\":{\"id\":\"selected-org\",\"name\":\"Selected\",\"lifecycleStatus\":\"active\",\"role\":\"owner\"},\"members\":[\(members)]}".data(using: .utf8)!
         return try JSONDecoder().decode(DashboardOrganizationMembersEnvelope.self, from: data).members
+    }
+
+    private func decodeInvites() throws -> [DashboardOrganizationInvite] {
+        let data = #"{"invites":[{"id":"invite-opaque-7","email":"person@example.com","role":"reader","status":"pending"}]}"#.data(using: .utf8)!
+        return try JSONDecoder().decode(DashboardOrganizationInvitesEnvelope.self, from: data).invites
     }
 
     func testDecodesMemberEmailAndPendingInviteCopyLinkFields() throws {
