@@ -131,8 +131,106 @@ final class PublicArticleNativePanelTests: XCTestCase {
 
         XCTAssertEqual(blocks, [
             .paragraph("Follow these steps:"),
-            .orderedList(start: 3, items: ["Review the saved version.", "Confirm the changes.", "Save the article."]),
+            .orderedList(start: 3, items: [
+                PublicArticleMarkdownListItem(text: "Review the saved version.", checked: nil),
+                PublicArticleMarkdownListItem(text: "Confirm the changes.", checked: nil),
+                PublicArticleMarkdownListItem(text: "Save the article.", checked: nil),
+            ]),
             .paragraph("Then return to the list."),
+        ])
+    }
+
+    func testMarkdownParserReadsGFMTableAlignmentEmptyAndEscapedCells() {
+        let blocks = PublicArticleMarkdown.blocks(from: #"""
+        | Name | Center | Right | Empty |
+        | :--- | :---: | ---: | --- |
+        | A \| B | middle | 7 | |
+        | short | | 9 |
+        """#)
+
+        XCTAssertEqual(blocks, [
+            .table(
+                headers: ["Name", "Center", "Right", "Empty"],
+                alignments: [.leading, .center, .trailing, .leading],
+                rows: [["A \\| B", "middle", "7", ""], ["short", "", "9", ""]]
+            ),
+        ])
+    }
+
+    func testMarkdownParserNormalizesShortAndLongGFMTableRowsAndStopsAtMalformedRow() {
+        let blocks = PublicArticleMarkdown.blocks(from: """
+        Name | Count | Note
+        :--- | ---: | :---:
+        Ada | 2
+        Grace | 3 | compiler | ignored
+        this line is not a table row
+
+        - ordinary list item
+        """)
+
+        XCTAssertEqual(blocks, [
+            .table(
+                headers: ["Name", "Count", "Note"],
+                alignments: [.leading, .trailing, .center],
+                rows: [["Ada", "2", ""], ["Grace", "3", "compiler"]]
+            ),
+            .paragraph("this line is not a table row"),
+            .bullet("ordinary list item"),
+        ])
+    }
+
+    func testMarkdownParserKeepsPipesInsideInlineCodeInTheSameCell() {
+        let blocks = PublicArticleMarkdown.blocks(from: """
+        Expression | Meaning
+        :--- | :---:
+        `a | b` | the pipe is code, not a cell boundary
+        """)
+
+        XCTAssertEqual(blocks, [
+            .table(
+                headers: ["Expression", "Meaning"],
+                alignments: [.leading, .center],
+                rows: [["`a | b`", "the pipe is code, not a cell boundary"]]
+            ),
+        ])
+    }
+
+    func testMarkdownParserLeavesMalformedGFMSeparatorAsParagraphText() {
+        let blocks = PublicArticleMarkdown.blocks(from: """
+        Name | Count
+        :-- | nope
+        """)
+
+        XCTAssertEqual(blocks, [.paragraph("Name | Count :-- | nope")])
+
+        let escapedPipeOnly = PublicArticleMarkdown.blocks(from: #"""
+        A \| B
+        ---
+        """#)
+        XCTAssertEqual(escapedPipeOnly, [.paragraph("A \\| B"), .divider])
+    }
+
+    func testMarkdownParserDistinguishesCheckedTaskListsFromOrdinaryBullets() {
+        let blocks = PublicArticleMarkdown.blocks(from: """
+        - [x] Completed setup
+        - [ ] Pending review
+        - [X] Uppercase marker
+        - [x]not a task marker
+        - ordinary bullet
+        2. [ ] Numbered pending task
+        3. [x] Numbered completed task
+        """)
+
+        XCTAssertEqual(blocks, [
+            .task(checked: true, text: "Completed setup"),
+            .task(checked: false, text: "Pending review"),
+            .task(checked: true, text: "Uppercase marker"),
+            .bullet("[x]not a task marker"),
+            .bullet("ordinary bullet"),
+            .orderedList(start: 2, items: [
+                PublicArticleMarkdownListItem(text: "Numbered pending task", checked: false),
+                PublicArticleMarkdownListItem(text: "Numbered completed task", checked: true),
+            ]),
         ])
     }
 }

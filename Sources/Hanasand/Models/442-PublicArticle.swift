@@ -131,17 +131,30 @@ enum PublicArticleMarkdownBlock: Equatable {
     case heading(level: Int, text: String)
     case paragraph(String)
     case bullet(String)
-    case orderedList(start: Int, items: [String])
+    case orderedList(start: Int, items: [PublicArticleMarkdownListItem])
+    case task(checked: Bool, text: String)
+    case table(headers: [String], alignments: [PublicArticleTableAlignment], rows: [[String]])
     case quote(String)
     case code(String)
     case divider
+}
+
+struct PublicArticleMarkdownListItem: Equatable {
+    let text: String
+    let checked: Bool?
+}
+
+enum PublicArticleTableAlignment: Equatable {
+    case leading
+    case center
+    case trailing
 }
 
 enum PublicArticleMarkdown {
     static func blocks(from markdown: String) -> [PublicArticleMarkdownBlock] {
         var blocks: [PublicArticleMarkdownBlock] = []
         var paragraph: [String] = []
-        var orderedItems: [String] = []
+        var orderedItems: [PublicArticleMarkdownListItem] = []
         var orderedStart = 1
         var code: [String] = []
         var inCodeFence = false
@@ -159,7 +172,10 @@ enum PublicArticleMarkdown {
             orderedStart = 1
         }
 
-        for rawLine in markdown.components(separatedBy: .newlines) {
+        let lines = markdown.components(separatedBy: .newlines)
+        var index = 0
+        while index < lines.count {
+            let rawLine = lines[index]
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") {
                 flushParagraph()
@@ -169,37 +185,68 @@ enum PublicArticleMarkdown {
                     code.removeAll()
                 }
                 inCodeFence.toggle()
+                index += 1
                 continue
             }
             if inCodeFence {
                 code.append(rawLine)
+                index += 1
                 continue
             }
             if line.isEmpty {
                 flushParagraph()
+                index += 1
+            } else if index + 1 < lines.count,
+                      let header = tableCells(line),
+                      let alignments = tableAlignments(lines[index + 1], columnCount: header.count) {
+                flushParagraph()
+                flushOrderedList()
+                var rows: [[String]] = []
+                index += 2
+                while index < lines.count {
+                    let rowLine = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard !rowLine.isEmpty, let cells = tableCells(rowLine) else { break }
+                    rows.append(normalizedTableRow(cells, columnCount: header.count))
+                    index += 1
+                }
+                blocks.append(.table(headers: header, alignments: alignments, rows: rows))
             } else if let item = orderedItem(line) {
                 flushParagraph()
                 if orderedItems.isEmpty { orderedStart = item.number }
-                orderedItems.append(item.text)
+                if let task = taskItem(item.text) {
+                    orderedItems.append(PublicArticleMarkdownListItem(text: task.text, checked: task.checked))
+                } else {
+                    orderedItems.append(PublicArticleMarkdownListItem(text: item.text, checked: nil))
+                }
+                index += 1
             } else if let heading = heading(line) {
                 flushParagraph()
                 flushOrderedList()
                 blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
             } else if line.hasPrefix(">") {
                 flushParagraph()
                 flushOrderedList()
                 blocks.append(.quote(String(line.dropFirst()).trimmingCharacters(in: .whitespaces)))
+                index += 1
             } else if let item = bullet(line) {
                 flushParagraph()
                 flushOrderedList()
-                blocks.append(.bullet(item))
+                if let task = taskItem(item) {
+                    blocks.append(.task(checked: task.checked, text: task.text))
+                } else {
+                    blocks.append(.bullet(item))
+                }
+                index += 1
             } else if ["---", "***", "___"].contains(line) {
                 flushParagraph()
                 flushOrderedList()
                 blocks.append(.divider)
+                index += 1
             } else {
                 paragraph.append(line)
                 flushOrderedList()
+                index += 1
             }
         }
 
@@ -232,5 +279,116 @@ enum PublicArticleMarkdown {
             return nil
         }
         return (number, String(line.dropFirst(digits.count + 2)))
+    }
+
+    private static func taskItem(_ item: String) -> (checked: Bool, text: String)? {
+        guard item.count >= 3, item.first == "[",
+              let closingBracket = item.firstIndex(of: "]"),
+              item.index(after: item.startIndex) == item.index(before: closingBracket),
+              let marker = item[item.index(after: item.startIndex)].lowercased().first,
+              marker == " " || marker == "x",
+              closingBracket == item.index(before: item.endIndex) || item[item.index(after: closingBracket)].isWhitespace else {
+            return nil
+        }
+        let suffix = item.index(after: closingBracket)
+        let text = suffix < item.endIndex ? String(item[suffix...]).trimmingCharacters(in: .whitespaces) : ""
+        return (marker == "x", text)
+    }
+
+    private static func tableCells(_ line: String) -> [String]? {
+        let characters = Array(line)
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        var hasSeparator = false
+        var trailingSeparator = false
+        var codeDelimiterLength = 0
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            if character == "`", codeDelimiterLength > 0 || !escaped {
+                var runLength = 1
+                while index + runLength < characters.count, characters[index + runLength] == "`" {
+                    runLength += 1
+                }
+                if codeDelimiterLength == 0 {
+                    if hasMatchingBacktickRun(in: characters, from: index + runLength, length: runLength) {
+                        codeDelimiterLength = runLength
+                    }
+                } else if codeDelimiterLength == runLength {
+                    codeDelimiterLength = 0
+                }
+                cell.append(contentsOf: repeatElement("`", count: runLength))
+                escaped = false
+                trailingSeparator = false
+                index += runLength
+                continue
+            }
+            if character == "|", !escaped, codeDelimiterLength == 0 {
+                cells.append(cell.trimmingCharacters(in: .whitespaces))
+                cell = ""
+                hasSeparator = true
+                trailingSeparator = index == characters.count - 1
+                escaped = false
+                index += 1
+                continue
+            }
+            cell.append(character)
+            if codeDelimiterLength == 0, character == "\\" {
+                escaped.toggle()
+            } else {
+                escaped = false
+            }
+            trailingSeparator = false
+            index += 1
+        }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        guard hasSeparator else { return nil }
+        if line.first == "|", !cells.isEmpty { cells.removeFirst() }
+        if trailingSeparator, !cells.isEmpty { cells.removeLast() }
+        return cells
+    }
+
+    private static func hasMatchingBacktickRun(in characters: [Character], from startIndex: Int, length: Int) -> Bool {
+        var index = startIndex
+        while index < characters.count {
+            guard characters[index] == "`" else {
+                index += 1
+                continue
+            }
+            var runLength = 1
+            while index + runLength < characters.count, characters[index + runLength] == "`" {
+                runLength += 1
+            }
+            if runLength == length { return true }
+            index += runLength
+        }
+        return false
+    }
+
+    private static func tableAlignments(_ line: String, columnCount: Int) -> [PublicArticleTableAlignment]? {
+        guard let cells = tableCells(line), cells.count == columnCount, columnCount > 0 else { return nil }
+        var alignments: [PublicArticleTableAlignment] = []
+        for cell in cells {
+            let value = cell.trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { return nil }
+            let leadingColon = value.first == ":"
+            let trailingColon = value.last == ":"
+            var dashStart = value.startIndex
+            var dashEnd = value.endIndex
+            if leadingColon { dashStart = value.index(after: dashStart) }
+            if trailingColon { dashEnd = value.index(before: dashEnd) }
+            let dashRange = value[dashStart..<dashEnd]
+            guard !dashRange.isEmpty, dashRange.allSatisfy({ $0 == "-" }),
+                  value.filter({ $0 == ":" }).count == (leadingColon ? 1 : 0) + (trailingColon ? 1 : 0) else { return nil }
+            if leadingColon && trailingColon { alignments.append(.center) }
+            else if trailingColon { alignments.append(.trailing) }
+            else { alignments.append(.leading) }
+        }
+        return alignments
+    }
+
+    private static func normalizedTableRow(_ cells: [String], columnCount: Int) -> [String] {
+        Array(cells.prefix(columnCount)) + Array(repeating: "", count: max(0, columnCount - cells.count))
     }
 }

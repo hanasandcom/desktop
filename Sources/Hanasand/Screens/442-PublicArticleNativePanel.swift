@@ -219,15 +219,40 @@ struct PublicArticleNativePanel: View {
                             .font(.system(size: 14, weight: .semibold, design: .monospaced))
                             .foregroundStyle(theme.accent)
                             .frame(minWidth: 22, alignment: .trailing)
-                        Text(richText(item))
+                        if let checked = item.checked {
+                            Image(systemName: checked ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(checked ? theme.accent : theme.textTertiary)
+                                .accessibilityHidden(true)
+                        }
+                        Text(richText(item.text))
                             .font(.system(size: 14))
                             .foregroundStyle(theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(item.checked.map { "Task \($0 ? "completed" : "not completed"): \(item.text)" } ?? "\(orderedListNumber(start: start, offset: index)). \(item.text)")
                 }
             }
             .padding(.leading, 8)
+        case let .task(checked, value):
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(checked ? theme.accent : theme.textTertiary)
+                    .accessibilityHidden(true)
+                Text(richText(value))
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .padding(.leading, 8)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Task \(checked ? "completed" : "not completed"): \(value)")
+        case let .table(headers, alignments, rows):
+            PublicArticleMarkdownTable(headers: headers, alignments: alignments, rows: rows, theme: theme)
         case let .quote(value):
             Text(richText(value))
                 .font(.system(size: 14, weight: .regular, design: .serif))
@@ -266,5 +291,68 @@ struct PublicArticleNativePanel: View {
         case 3: 17
         default: 15
         }
+    }
+}
+
+private struct PublicArticleMarkdownTable: View {
+    let headers: [String]
+    let alignments: [PublicArticleTableAlignment]
+    let rows: [[String]]
+    let theme: DesktopTheme
+
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 0), spacing: 0, alignment: .topLeading), count: headers.count)
+    }
+
+    var body: some View {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 0) {
+            ForEach(headers.indices, id: \.self) { index in
+                cell(headers[index], column: index, heading: true, row: -1)
+            }
+            ForEach(rows.indices, id: \.self) { rowIndex in
+                ForEach(headers.indices, id: \.self) { columnIndex in
+                    cell(rows[rowIndex][columnIndex], column: columnIndex, heading: false, row: rowIndex)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.card)
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(theme.divider, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func cell(_ value: String, column: Int, heading: Bool, row: Int) -> some View {
+        let alignment = alignments[column]
+        let textAlignment: TextAlignment
+        let frameAlignment: Alignment
+        switch alignment {
+        case .leading:
+            textAlignment = .leading
+            frameAlignment = .leading
+        case .center:
+            textAlignment = .center
+            frameAlignment = .center
+        case .trailing:
+            textAlignment = .trailing
+            frameAlignment = .trailing
+        }
+        return Text(richText(value))
+            .font(.system(size: heading ? 12 : 13, weight: heading ? .bold : .regular))
+            .foregroundStyle(heading ? theme.text : theme.textSecondary)
+            .multilineTextAlignment(textAlignment)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: frameAlignment)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(heading ? theme.cardRaised : (row.isMultiple(of: 2) ? theme.card : theme.field.opacity(0.45)))
+            .overlay(alignment: .trailing) { Rectangle().fill(theme.divider).frame(width: 0.5) }
+            .overlay(alignment: .bottom) { Rectangle().fill(theme.divider).frame(height: 0.5) }
+            .accessibilityLabel(heading ? value : "\(headers[column]): \(value)")
+            .textSelection(.enabled)
+    }
+
+    private func richText(_ markdown: String) -> AttributedString {
+        (try? AttributedString(markdown: markdown)) ?? AttributedString(markdown)
     }
 }
