@@ -112,7 +112,7 @@ struct NativePublicInfoPanel: View {
                 solutionContent
             } else {
                 ForEach(page.sections) { section in
-                    NativeGroupPanel(title: section.title, subtitle: "") {
+                    NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: page.kind == .terms) {
                         ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
                             Text(paragraph)
                                 .font(.system(size: 12))
