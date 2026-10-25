@@ -270,51 +270,84 @@ private struct AccountSignupForm: View {
                 .disabled(model.isLoggingIn || !canSubmit)
 
                 if waitingForCode {
-                    Button("Start over") {
-                        waitingForCode = false
-                        challengeID = nil
-                        code = ""
-                        model.loginStatus = ""
-                        focusedField = .signupUsername
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            resendVerificationButton
+                            editSignupDetailsButton
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            resendVerificationButton
+                            editSignupDetailsButton
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.textTertiary)
-                    .disabled(model.isLoggingIn)
                 }
         }
     }
 
-    private var canSubmit: Bool {
+    private var resendVerificationButton: some View {
+        Button {
+            Task { await submit(resendingVerification: true) }
+        } label: {
+            Text(model.isLoggingIn ? "Sending…" : "Resend code")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(theme.textTertiary)
+        .disabled(model.isLoggingIn || !canRequestVerification)
+    }
+
+    private var editSignupDetailsButton: some View {
+        Button("Edit signup details") {
+            waitingForCode = false
+            challengeID = nil
+            code = ""
+            model.loginStatus = ""
+            focusedField = .signupUsername
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(theme.textTertiary)
+        .disabled(model.isLoggingIn)
+    }
+
+    private var canRequestVerification: Bool {
         let cleanUsername = ReservedUsernamePolicy.normalizedSignupUsername(username)
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let emailLooksValid = cleanEmail.range(of: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", options: .regularExpression) != nil
-        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil,
-              !ReservedUsernamePolicy.usernames.contains(cleanUsername),
-              emailLooksValid, AccountSignupClient.passwordMeetsRequirements(password) else { return false }
-        return !waitingForCode || (challengeID != nil && code.count == 6)
+        return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && cleanUsername.range(of: "^[a-z0-9][a-z0-9._-]{2,39}$", options: .regularExpression) != nil
+            && !ReservedUsernamePolicy.usernames.contains(cleanUsername)
+            && emailLooksValid
+            && AccountSignupClient.passwordMeetsRequirements(password)
+    }
+
+    private var canSubmit: Bool {
+        canRequestVerification && (!waitingForCode || (challengeID != nil && code.count == 6))
     }
 
     private var usernameIsReserved: Bool {
         ReservedUsernamePolicy.usernames.contains(ReservedUsernamePolicy.normalizedSignupUsername(username))
     }
 
-    @MainActor private func submit() async {
-        guard canSubmit else { return }
+    @MainActor private func submit(resendingVerification: Bool = false) async {
+        guard resendingVerification ? canRequestVerification : canSubmit else { return }
         do {
             let result = try await model.submitAccountSignup(
                 name: name,
                 username: username,
                 email: email,
                 password: password,
-                challengeID: challengeID,
-                code: waitingForCode ? code : nil
+                challengeID: resendingVerification ? nil : challengeID,
+                code: resendingVerification ? nil : (waitingForCode ? code : nil)
             )
             if case let .verificationRequired(value) = result {
                 challengeID = value
                 waitingForCode = true
                 code = ""
+                if resendingVerification {
+                    model.loginStatus = "A new code has been sent. Check your inbox and junk folder; use the newest code."
+                }
             }
         } catch {
             // The model publishes a safe, user-facing error message.
