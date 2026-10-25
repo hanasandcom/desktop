@@ -25,9 +25,24 @@ final class NativePublicInfoPageParityTests: XCTestCase {
     func testPricingIncludesPlansAndContainerSection() throws {
         let pricing = try XCTUnwrap(NativePublicInfoPage.resolve("/pricing"))
         XCTAssertEqual(NativePublicInfoPage.plans.count, 3)
+        XCTAssertEqual(NativePublicInfoPage.plans.map(\.checkoutPlanID), CommercialAccessPlans.all.map(\.id))
         XCTAssertEqual(pricing.sections.map(\.title), ["Container host options"])
         XCTAssertEqual(pricing.sections.first?.paragraphs, [
             "VM creation is free. Automatic failover is an optional upgrade: a standby copy on the other host with a verified container transfer.",
         ])
+    }
+
+    func testFAQFeedbackPersistsPerQuestionAndReplacesThePreviousVote() throws {
+        let suiteName = "hanasand.faq-feedback-tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(NativeFAQFeedbackStore.load(from: defaults).isEmpty)
+        NativeFAQFeedbackStore.save(.yes, for: "Question one", to: defaults)
+        NativeFAQFeedbackStore.save(.no, for: "Question two", to: defaults)
+        XCTAssertEqual(NativeFAQFeedbackStore.load(from: defaults), ["Question one": .yes, "Question two": .no])
+
+        NativeFAQFeedbackStore.save(.no, for: "Question one", to: defaults)
+        XCTAssertEqual(NativeFAQFeedbackStore.load(from: defaults), ["Question one": .no, "Question two": .no])
     }
 }

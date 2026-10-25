@@ -43,12 +43,10 @@ struct SubscriptionNativePanel: View {
     @State private var data: AccountSubscriptionEnvelope?
     @State private var loading = false
     @State private var openingBilling = false
-    @State private var openingPlanID: String?
+    @StateObject private var planCheckout = NativePlanCheckoutCoordinator()
     @State private var error = ""
-    @State private var checkoutStatus = ""
     @State private var revision = 0
     @State private var requestID = UUID()
-    @State private var checkoutRequestID = UUID()
     @State private var checkoutReturnTracker = SubscriptionCheckoutReturnTracker()
 
     private var checkoutReturn: SubscriptionCheckoutReturn? {
@@ -71,7 +69,7 @@ struct SubscriptionNativePanel: View {
                     .foregroundStyle(theme.textSecondary)
                 Spacer()
                 ActionButton(title: "Refresh", icon: "arrow.clockwise") { revision += 1 }
-                    .disabled(loading || openingBilling || openingPlanID != nil)
+                    .disabled(loading || openingBilling || planCheckout.openingPlanID != nil)
             }
 
             if loading {
@@ -97,9 +95,8 @@ struct SubscriptionNativePanel: View {
         }
         .onDisappear {
             requestID = UUID()
-            checkoutRequestID = UUID()
+            planCheckout.cancel()
             openingBilling = false
-            openingPlanID = nil
         }
     }
 
@@ -136,13 +133,9 @@ struct SubscriptionNativePanel: View {
                             title: planButtonTitle(planID: plan.id, alreadyActive: alreadyActive),
                             icon: alreadyActive ? "checkmark.circle" : model.hasHanasandAuth ? "cart" : "person.crop.circle"
                         ) {
-                            if model.hasHanasandAuth {
-                                Task { await buyPlan(plan.id) }
-                            } else {
-                                model.openNativeDashboard(path: "/login", label: "Sign in", query: ["next": "/subscription"])
-                            }
+                            planCheckout.buy(planID: plan.id, model: model, source: "Subscription")
                         }
-                        .disabled(alreadyActive || openingPlanID != nil || openingBilling || loading || !model.settings.impersonationToken.isEmpty)
+                        .disabled(alreadyActive || planCheckout.openingPlanID != nil || openingBilling || loading || !model.settings.impersonationToken.isEmpty)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
@@ -156,10 +149,10 @@ struct SubscriptionNativePanel: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(theme.textSecondary)
             }
-            if !checkoutStatus.isEmpty {
-                Text(checkoutStatus)
+            if !planCheckout.status.isEmpty {
+                Text(planCheckout.status)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(checkoutStatus.localizedCaseInsensitiveContains("could not") || checkoutStatus.localizedCaseInsensitiveContains("unclear") ? theme.danger : theme.textSecondary)
+                    .foregroundStyle(planCheckout.status.localizedCaseInsensitiveContains("could not") || planCheckout.status.localizedCaseInsensitiveContains("unclear") ? theme.danger : theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
@@ -189,7 +182,7 @@ struct SubscriptionNativePanel: View {
             ActionButton(title: openingBilling ? "Opening…" : "Manage billing", icon: "arrow.up.right") {
                 Task { await openBilling() }
             }
-            .disabled(loading || openingBilling || openingPlanID != nil || !model.settings.impersonationToken.isEmpty || !model.hasHanasandAuth)
+            .disabled(loading || openingBilling || planCheckout.openingPlanID != nil || !model.settings.impersonationToken.isEmpty || !model.hasHanasandAuth)
             if !model.settings.impersonationToken.isEmpty {
                 Text("Return to your own account to manage billing.")
                     .font(.system(size: 11, weight: .medium))
@@ -258,11 +251,11 @@ struct SubscriptionNativePanel: View {
         let requestedScope = scope
         data = nil
         error = ""
-        checkoutStatus = ""
+        planCheckout.clearStatus()
         guard model.hasHanasandAuth else {
             error = "Sign in to view subscription information."
             if let checkoutReturn {
-                checkoutStatus = checkoutReturn.acknowledgement(after: nil)
+                planCheckout.setStatus(checkoutReturn.acknowledgement(after: nil))
             }
             return
         }
@@ -277,50 +270,21 @@ struct SubscriptionNativePanel: View {
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
             data = result
             if let checkoutReturn {
-                checkoutStatus = checkoutReturn.acknowledgement(after: result)
+                planCheckout.setStatus(checkoutReturn.acknowledgement(after: result))
             }
         } catch let cause {
             guard !Task.isCancelled, requestID == currentRequestID, scope == requestedScope else { return }
             error = cause.localizedDescription
             if let checkoutReturn {
-                checkoutStatus = checkoutReturn.acknowledgement(after: nil)
+                planCheckout.setStatus(checkoutReturn.acknowledgement(after: nil))
             }
         }
     }
 
     private func planButtonTitle(planID: String, alreadyActive: Bool) -> String {
         if alreadyActive { return "Already active" }
-        if openingPlanID == planID { return "Opening…" }
+        if planCheckout.openingPlanID == planID { return "Opening…" }
         return model.hasHanasandAuth ? "Buy now" : "Sign in to buy"
-    }
-
-    @MainActor private func buyPlan(_ planID: String) async {
-        guard openingPlanID == nil, model.settings.impersonationToken.isEmpty, model.hasHanasandAuth else { return }
-        let currentRequestID = UUID()
-        checkoutRequestID = currentRequestID
-        let requestedScope = scope
-        openingPlanID = planID
-        checkoutStatus = ""
-        defer { if checkoutRequestID == currentRequestID { openingPlanID = nil } }
-        do {
-            guard let apiBaseURL = URL(string: model.settings.apiBaseURL),
-                  let websiteBaseURL = URL(string: model.settings.websiteBaseURL) else {
-                throw AccountSubscriptionClientError.invalidBaseURL
-            }
-            let client = try AccountSubscriptionClient(
-                baseURL: apiBaseURL,
-                websiteBaseURL: websiteBaseURL,
-                userID: model.userIDForRequests,
-                token: model.authTokenForRequests
-            )
-            let checkoutURL = try await client.createPlanCheckoutURL(for: planID)
-            guard !Task.isCancelled, checkoutRequestID == currentRequestID, scope == requestedScope else { return }
-            let didOpen = model.openStripeInAppBrowser(url: checkoutURL.absoluteString, title: "checkout", source: "Subscription")
-            checkoutStatus = didOpen ? "Secure Stripe checkout opened in the built-in browser." : "Could not open secure Stripe checkout in the built-in browser."
-        } catch {
-            guard !Task.isCancelled, checkoutRequestID == currentRequestID, scope == requestedScope else { return }
-            checkoutStatus = error.localizedDescription
-        }
     }
 
     private func openBilling() async {

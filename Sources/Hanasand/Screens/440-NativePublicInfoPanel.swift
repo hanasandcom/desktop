@@ -62,6 +62,8 @@ struct NativePublicInfoPanel: View {
     @State private var isSubmitting = false
     @State private var search = ""
     @State private var selectedFAQCategory = "All"
+    @State private var faqFeedback = NativeFAQFeedbackStore.load()
+    @StateObject private var planCheckout = NativePlanCheckoutCoordinator()
 
     private var filteredFAQs: [NativePublicInfoFAQ] {
         NativePublicInfoPage.faqItems.filter { item in
@@ -98,6 +100,7 @@ struct NativePublicInfoPanel: View {
         } message: {
             Text("This permanently removes only allowlisted local IDE drafts from this Mac. Notes drafts, Keychain credentials, settings, appearance, identity, and workspace session preferences are kept.")
         }
+        .onDisappear { planCheckout.cancel() }
     }
 
     @ViewBuilder private var standardContent: some View {
@@ -619,11 +622,23 @@ struct NativePublicInfoPanel: View {
             } else {
                 ForEach(filteredFAQs) { item in
                     DisclosureGroup {
-                        Text(item.answer)
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(item.answer)
+                                .font(.system(size: 12))
+                                .foregroundStyle(theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                            HStack(spacing: 8) {
+                                Text("Was this useful?")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(theme.textSecondary)
+                                faqFeedbackButton("Yes", vote: .yes, question: item.question, icon: "hand.thumbsup")
+                                faqFeedbackButton("No", vote: .no, question: item.question, icon: "hand.thumbsdown")
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(theme.cardRaised, in: Capsule())
+                        }
                     } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(item.question).font(.system(size: 13, weight: .semibold)).foregroundStyle(theme.text)
@@ -635,6 +650,28 @@ struct NativePublicInfoPanel: View {
                 }
             }
         }
+    }
+
+    private func faqFeedbackButton(
+        _ title: String,
+        vote: NativeFAQFeedbackVote,
+        question: String,
+        icon: String
+    ) -> some View {
+        let isSelected = faqFeedback[question] == vote
+        return Button {
+            faqFeedback[question] = vote
+            NativeFAQFeedbackStore.save(vote, for: question)
+        } label: {
+            Label(title, systemImage: isSelected ? "checkmark" : icon)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .tint(isSelected ? theme.accent : theme.textSecondary)
+        .accessibilityLabel("\(title), was this answer useful")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .help(isSelected ? "Your \(title.lowercased()) vote is saved on this Mac." : "Save a \(title.lowercased()) vote on this Mac.")
     }
 
     private var reservedUsernameContent: some View {
@@ -664,6 +701,12 @@ struct NativePublicInfoPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if !model.settings.impersonationToken.isEmpty {
+                NativeNotice(message: AccountSubscriptionClientError.impersonationUnsupported.localizedDescription)
+            }
+            if !planCheckout.status.isEmpty {
+                NativeNotice(message: planCheckout.status)
+            }
             ForEach(page.sections) { section in
                 NativeGroupPanel(title: section.title, subtitle: "", fillsAvailableWidth: true) {
                     ForEach(Array(section.paragraphs.enumerated()), id: \.offset) { _, paragraph in
@@ -686,9 +729,14 @@ struct NativePublicInfoPanel: View {
                 Label(feature, systemImage: "checkmark.circle.fill")
                     .font(.system(size: 11)).foregroundStyle(theme.textSecondary)
             }
-            ActionButton(title: "Open plan in Hanasand", icon: "arrow.up.right") {
-                open("/subscription")
+            ActionButton(
+                title: planCheckout.openingPlanID == plan.checkoutPlanID ? "Opening…" : (model.hasHanasandAuth ? "Buy now" : "Sign in to buy"),
+                icon: model.hasHanasandAuth ? "creditcard" : "person.crop.circle",
+                expands: true
+            ) {
+                planCheckout.buy(planID: plan.checkoutPlanID, model: model, source: "Pricing")
             }
+            .disabled(planCheckout.openingPlanID != nil || !model.settings.impersonationToken.isEmpty)
         }
     }
 

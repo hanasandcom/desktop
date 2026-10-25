@@ -24,7 +24,30 @@ struct NativePublicInfoFAQ: Identifiable, Hashable {
     var id: String { question }
 }
 
+enum NativeFAQFeedbackVote: String, Codable, Equatable {
+    case yes
+    case no
+}
+
+enum NativeFAQFeedbackStore {
+    static let storageKey = "hanasand-faq-feedback"
+
+    static func load(from defaults: UserDefaults = .standard) -> [String: NativeFAQFeedbackVote] {
+        guard let data = defaults.data(forKey: storageKey),
+              let votes = try? JSONDecoder().decode([String: NativeFAQFeedbackVote].self, from: data) else { return [:] }
+        return votes
+    }
+
+    static func save(_ vote: NativeFAQFeedbackVote, for question: String, to defaults: UserDefaults = .standard) {
+        var votes = load(from: defaults)
+        votes[question] = vote
+        guard let data = try? JSONEncoder().encode(votes) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+}
+
 struct NativePublicInfoPlan: Identifiable, Hashable {
+    let checkoutPlanID: String
     let name: String
     let priceNok: Int
     let quota: String
@@ -286,9 +309,9 @@ struct NativePublicInfoPage: Identifiable, Hashable {
     )
 
     static let plans: [NativePublicInfoPlan] = [
-        .init(name: "Threat Intelligence", priceNok: 199, quota: "100 searches per day", summary: "Search actors, domains, companies, and current public intelligence.", features: ["Threat actor profiles", "Current intelligence results", "API access", "Saved searches"]),
-        .init(name: "Dark Web Monitoring", priceNok: 499, quota: "25 watch terms", summary: "Monitor relevant public intelligence and turn matches into alerts and cases.", features: ["Customer watchlists", "Evidence-backed alerts", "Case workflow", "Source health and freshness"]),
-        .init(name: "Security Scanner", priceNok: 299, quota: "10 monitored targets", summary: "Run scheduled security checks against approved websites and review the findings.", features: ["Scheduled scans", "Severity-based findings", "Scan history", "Run-now controls"])
+        .init(checkoutPlanID: "threat-intelligence", name: "Threat Intelligence", priceNok: 199, quota: "100 searches per day", summary: "Search actors, domains, companies, and current public intelligence.", features: ["Threat actor profiles", "Current intelligence results", "API access", "Saved searches"]),
+        .init(checkoutPlanID: "monitoring", name: "Dark Web Monitoring", priceNok: 499, quota: "25 watch terms", summary: "Monitor relevant public intelligence and turn matches into alerts and cases.", features: ["Customer watchlists", "Evidence-backed alerts", "Case workflow", "Source health and freshness"]),
+        .init(checkoutPlanID: "scanner", name: "Security Scanner", priceNok: 299, quota: "10 monitored targets", summary: "Run scheduled security checks against approved websites and review the findings.", features: ["Scheduled scans", "Severity-based findings", "Scan history", "Run-now controls"])
     ]
 
     static let faqItems: [NativePublicInfoFAQ] = [

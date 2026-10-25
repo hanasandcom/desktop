@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 private final class AccountSubscriptionRedirectDelegate: NSObject, URLSessionTaskDelegate {
@@ -212,4 +213,83 @@ struct AccountSubscriptionClient {
     }
 
     private struct BillingPortalEnvelope: Decodable { let url: String }
+}
+
+@MainActor
+final class NativePlanCheckoutCoordinator: ObservableObject {
+    @Published private(set) var openingPlanID: String?
+    @Published private(set) var status = ""
+
+    private var requestID = UUID()
+    private var task: Task<Void, Never>?
+
+    func buy(planID: String, model: DesktopAgentModel, source: String) {
+        guard openingPlanID == nil else { return }
+        guard model.settings.impersonationToken.isEmpty else {
+            status = AccountSubscriptionClientError.impersonationUnsupported.localizedDescription
+            return
+        }
+        guard model.hasHanasandAuth else {
+            model.openNativeDashboard(path: "/login", label: "Sign in", query: ["path": "/subscription"])
+            return
+        }
+
+        let currentRequestID = UUID()
+        requestID = currentRequestID
+        let requestedScope = scope(for: model)
+        openingPlanID = planID
+        status = ""
+        task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.requestID == currentRequestID {
+                    self.openingPlanID = nil
+                    self.task = nil
+                }
+            }
+            do {
+                guard let apiBaseURL = URL(string: model.settings.apiBaseURL),
+                      let websiteBaseURL = URL(string: model.settings.websiteBaseURL) else {
+                    throw AccountSubscriptionClientError.invalidBaseURL
+                }
+                let client = try AccountSubscriptionClient(
+                    baseURL: apiBaseURL,
+                    websiteBaseURL: websiteBaseURL,
+                    userID: model.userIDForRequests,
+                    token: model.authTokenForRequests
+                )
+                let checkoutURL = try await client.createPlanCheckoutURL(for: planID)
+                guard !Task.isCancelled, self.requestID == currentRequestID,
+                      self.scope(for: model) == requestedScope else { return }
+                let didOpen = model.openStripeInAppBrowser(
+                    url: checkoutURL.absoluteString,
+                    title: "checkout",
+                    source: source
+                )
+                self.status = didOpen
+                    ? "Secure Stripe checkout opened in the built-in browser."
+                    : "Could not open secure Stripe checkout in the built-in browser."
+            } catch {
+                guard !Task.isCancelled, self.requestID == currentRequestID,
+                      self.scope(for: model) == requestedScope else { return }
+                self.status = error.localizedDescription
+            }
+        }
+    }
+
+    func clearStatus() { status = "" }
+    func setStatus(_ message: String) { status = message }
+
+    func cancel() {
+        requestID = UUID()
+        task?.cancel()
+        task = nil
+        openingPlanID = nil
+    }
+
+    private func scope(for model: DesktopAgentModel) -> String {
+        [model.settings.apiBaseURL, model.settings.websiteBaseURL, model.userIDForRequests,
+         String(model.authTokenForRequests.hashValue), model.settings.impersonatingUserID,
+         String(model.settings.impersonationToken.hashValue)].joined(separator: "|")
+    }
 }
