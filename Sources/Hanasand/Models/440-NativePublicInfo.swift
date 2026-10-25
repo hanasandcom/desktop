@@ -240,7 +240,7 @@ struct NativePublicInfoPage: Identifiable, Hashable {
         route: "/pricing", title: "Know more. Respond faster.", eyebrow: "Pricing",
         intro: "Search threats. Watch your exposure. Scan your attack surface. Investigate what you find.",
         kind: .pricing,
-        sections: [.init(title: "Container host options", paragraphs: ["VM creation is free. Automatic failover is an optional upgrade: a standby copy on the other host with a verified container transfer.", "Secure checkout is handled by Stripe."])]
+        sections: [.init(title: "Container host options", paragraphs: ["VM creation is free. Automatic failover is an optional upgrade: a standby copy on the other host with a verified container transfer."])]
     )
 
     static let scannerSolution = NativePublicInfoPage(

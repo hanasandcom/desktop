@@ -26,5 +26,8 @@ final class NativePublicInfoPageParityTests: XCTestCase {
         let pricing = try XCTUnwrap(NativePublicInfoPage.resolve("/pricing"))
         XCTAssertEqual(NativePublicInfoPage.plans.count, 3)
         XCTAssertEqual(pricing.sections.map(\.title), ["Container host options"])
+        XCTAssertEqual(pricing.sections.first?.paragraphs, [
+            "VM creation is free. Automatic failover is an optional upgrade: a standby copy on the other host with a verified container transfer.",
+        ])
     }
 }
