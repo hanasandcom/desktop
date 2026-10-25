@@ -104,24 +104,22 @@ extension DesktopAgentModel {
             return
         }
 
-        var failed: [String] = []
-        for item in discarded {
-            do {
-                var resultingURL: NSURL?
-                try FileManager.default.trashItem(at: item.url, resultingItemURL: &resultingURL)
-            } catch {
-                failed.append(item.title)
-            }
+        let outcome = ImageReviewTrashOutcome.moveToTrash(discarded) { url in
+            var resultingURL: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
         }
-
-        let discardedIDs = Set(discarded.map(\.id))
-        imageReviewItems.removeAll { discardedIDs.contains($0.id) }
-        imageReviewDecisions = imageReviewDecisions.filter { !discardedIDs.contains($0.key) }
-        imageReviewHistory.removeAll { discardedIDs.contains($0) }
-        imageReviewIndex = min(imageReviewIndex, imageReviewItems.count)
-        imageReviewStatus = failed.isEmpty
-            ? "Moved \(discarded.count) image\(discarded.count == 1 ? "" : "s") to Trash."
-            : "Moved some images to Trash. Failed: \(failed.prefix(3).joined(separator: ", "))"
+        let movedIDs = outcome.movedIDs
+        let movedBeforeCurrent = imageReviewItems.prefix(imageReviewIndex).filter { movedIDs.contains($0.id) }.count
+        imageReviewItems.removeAll { movedIDs.contains($0.id) }
+        imageReviewDecisions = imageReviewDecisions.filter { !movedIDs.contains($0.key) }
+        imageReviewHistory.removeAll { movedIDs.contains($0) }
+        imageReviewIndex = min(max(imageReviewIndex - movedBeforeCurrent, 0), imageReviewItems.count)
+        if outcome.failedTitles.isEmpty {
+            imageReviewStatus = "Moved \(movedIDs.count) image\(movedIDs.count == 1 ? "" : "s") to Trash."
+        } else {
+            let prefix = movedIDs.isEmpty ? "No images were moved to Trash." : "Moved \(movedIDs.count) image\(movedIDs.count == 1 ? "" : "s") to Trash."
+            imageReviewStatus = "\(prefix) Failed: \(outcome.failedTitles.prefix(3).joined(separator: ", "))"
+        }
     }
 
     func createMailMailbox() async {
