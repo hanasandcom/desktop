@@ -244,6 +244,7 @@ private struct AccountSignupForm: View {
                 if waitingForCode {
                     TextField("Six-digit email code", text: $code)
                         .textFieldStyle(.roundedBorder)
+                        .textContentType(.oneTimeCode)
                         .focused($focusedField, equals: .signupCode)
                         .id(HanasandLoginGate.Field.signupCode)
                         .onSubmit { if canSubmit { Task { await submit() } } }
