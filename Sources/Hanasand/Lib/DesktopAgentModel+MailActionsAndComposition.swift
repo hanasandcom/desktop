@@ -83,10 +83,14 @@ extension DesktopAgentModel {
         guard !mailSendIsInFlight else { return }
         guard let message = selectedMailMessage else { return }
         beginNewMailDraft()
-        let currentAddress = mailOverview?.mailboxAddress?.lowercased() ?? ""
-        let recipients = (message.from + message.to + (message.cc ?? []))
-            .filter { !$0.email.lowercased().isEmpty && $0.email.lowercased() != currentAddress }
-        mailComposeTo = uniqueMailAddresses(recipients).map(\.displayName).joined(separator: ", ")
+        let replyAddresses = message.replyTo.flatMap { $0.isEmpty ? nil : $0 } ?? message.from
+        let recipients = MailReplyRecipientPolicy.replyAll(
+            from: replyAddresses,
+            to: message.to,
+            cc: message.cc ?? [],
+            mailboxAddress: mailOverview?.mailboxAddress
+        )
+        mailComposeTo = recipients.map(\.displayName).joined(separator: ", ")
         mailComposeCc = ""
         mailComposeBcc = ""
         mailComposeReplyTo = ""
@@ -124,16 +128,6 @@ extension DesktopAgentModel {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { "> \($0)" }
             .joined(separator: "\n")
-    }
-
-    func uniqueMailAddresses(_ addresses: [MailOverviewEnvelope.MailAddress]) -> [MailOverviewEnvelope.MailAddress] {
-        var seen: Set<String> = []
-        return addresses.filter { address in
-            let key = address.email.lowercased()
-            guard !seen.contains(key) else { return false }
-            seen.insert(key)
-            return true
-        }
     }
 
     func sendComposedMail() async {

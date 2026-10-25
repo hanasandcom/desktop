@@ -20,3 +20,20 @@ struct MailSendPayload: Encodable {
     let textBody: String
     let attachments: [MailDraftAttachment.Payload]
 }
+
+enum MailReplyRecipientPolicy {
+    static func replyAll(
+        from: [MailOverviewEnvelope.MailAddress],
+        to: [MailOverviewEnvelope.MailAddress],
+        cc: [MailOverviewEnvelope.MailAddress],
+        mailboxAddress: String?
+    ) -> [MailOverviewEnvelope.MailAddress] {
+        let ownAddress = (mailboxAddress ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var seen = Set<String>()
+        return (from + to + cc).filter { address in
+            let email = address.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !email.isEmpty, email != ownAddress, seen.insert(email).inserted else { return false }
+            return true
+        }
+    }
+}
