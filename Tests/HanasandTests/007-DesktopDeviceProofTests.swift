@@ -57,6 +57,26 @@ final class DesktopDeviceProofTests: XCTestCase {
         XCTAssertNotNil(enriched.value(forHTTPHeaderField: "dpop"))
     }
 
+    func testSessionIssuanceAttachesOnlyThePublicJWKToTrustedOrigins() throws {
+        let signer = try EphemeralCryptoKitSigner()
+        let base = URL(string: "https://staging.example.test:8443/api")!
+        var request = URLRequest(url: URL(string: "https://staging.example.test:8443/api/auth/login/alice")!)
+        request.httpMethod = "POST"
+
+        let enriched = try DesktopDeviceProof.attachingPublicJWK(request, configuredOrigins: [base], signer: signer)
+        let header = try XCTUnwrap(enriched.value(forHTTPHeaderField: "x-device-public-jwk"))
+        let jwk = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(header.utf8)) as? [String: String])
+        XCTAssertEqual(jwk, try signer.publicJWK)
+        XCTAssertNil(enriched.value(forHTTPHeaderField: "dpop"), "Unauthenticated session issuance must not receive DPoP.")
+
+        let wrongPort = URLRequest(url: URL(string: "https://staging.example.test:9443/api/auth/login/alice")!)
+        XCTAssertThrowsError(try DesktopDeviceProof.attachingPublicJWK(wrongPort, configuredOrigins: [base], signer: signer))
+        let foreign = URLRequest(url: URL(string: "https://attacker.example.test/api/auth/login/alice")!)
+        XCTAssertThrowsError(try DesktopDeviceProof.attachingPublicJWK(foreign, configuredOrigins: [base], signer: signer))
+        let insecure = URLRequest(url: URL(string: "http://staging.example.test:8443/api/auth/login/alice")!)
+        XCTAssertThrowsError(try DesktopDeviceProof.attachingPublicJWK(insecure, configuredOrigins: [base], signer: signer))
+    }
+
     func testSharedAuthenticatedRequestPolicySignsConfiguredAPIHost() throws {
         let signer = try EphemeralCryptoKitSigner()
         let token = "desktop-session"
@@ -155,7 +175,7 @@ final class DesktopDeviceProofTests: XCTestCase {
     }
 }
 
-private struct EphemeralCryptoKitSigner: DesktopDeviceProofSigning {
+struct EphemeralCryptoKitSigner: DesktopDeviceProofSigning {
     let privateKey: P256.Signing.PrivateKey
 
     init() throws {

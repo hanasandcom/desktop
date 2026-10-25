@@ -85,11 +85,13 @@ enum AccountSignupError: LocalizedError {
 
 struct AccountSignupClient {
     let endpoint: URL
+    let deviceProofSigner: (any DesktopDeviceProofSigning)?
     var send: (URLRequest) async throws -> (Data, URLResponse) = { request in
         try await AccountCredentialTransport.shared.data(for: request)
     }
 
-    init(baseURL: URL, send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
+    init(baseURL: URL, signer: (any DesktopDeviceProofSigning)? = nil,
+         send: ((URLRequest) async throws -> (Data, URLResponse))? = nil) throws {
         guard baseURL.scheme?.lowercased() == "https", baseURL.host != nil,
               baseURL.user == nil, baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil else {
             throw AccountSignupError.invalidBaseURL
@@ -99,6 +101,7 @@ struct AccountSignupClient {
             throw AccountSignupError.invalidBaseURL
         }
         endpoint = normalized
+        deviceProofSigner = signer
         if let send { self.send = send }
     }
 
@@ -136,7 +139,8 @@ struct AccountSignupClient {
         request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (data, response) = try await send(request)
+        let outgoing = try DesktopDeviceProof.attachingPublicJWK(request, configuredOrigins: [endpoint], signer: deviceProofSigner)
+        let (data, response) = try await send(outgoing)
         guard let http = response as? HTTPURLResponse else { throw AccountSignupError.invalidResponse }
         let result = try? JSONDecoder().decode(AccountSignupResponse.self, from: data)
         if http.statusCode == 202, result?.verificationRequired == true,
@@ -171,7 +175,8 @@ extension DesktopAgentModel {
         loginStatus = challengeID == nil ? "Creating account" : "Verifying email"
         defer { isLoggingIn = false }
         do {
-            let client = try AccountSignupClient(baseURL: settings.apiBaseURL.normalizedBaseURL)
+            let client = try AccountSignupClient(baseURL: settings.apiBaseURL.normalizedBaseURL,
+                                                 signer: KeychainDesktopDeviceProofSigner.persistent())
             let result = try await client.submit(name: name, username: username, email: email, password: password, challengeID: challengeID, code: code)
             switch result {
             case .verificationRequired:
@@ -209,7 +214,8 @@ extension DesktopAgentModel {
             request.setValue("Hanasand Desktop/\(Self.appVersion)", forHTTPHeaderField: "User-Agent")
             request.httpBody = try JSONEncoder().encode(HanasandLoginRequest(password: password))
 
-            let (data, response) = try await AccountCredentialTransport.shared.data(for: request)
+            let outgoing = try DesktopDeviceProof.attachingPublicJWK(request, configuredOrigins: [url])
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: outgoing)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
             let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data)
 
@@ -255,7 +261,10 @@ extension DesktopAgentModel {
         do {
             let body = try JSONEncoder().encode(["id": userID, "restoreToken": restoreToken])
             let url = settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("user/restore")
-            let (data, response) = try await AccountCredentialTransport.shared.data(for: request(url, method: "POST", body: body, authenticated: false))
+            let restoreRequest = try DesktopDeviceProof.attachingPublicJWK(
+                request(url, method: "POST", body: body, authenticated: false), configuredOrigins: [settings.apiBaseURL.normalizedBaseURL]
+            )
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: restoreRequest)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 200
             let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data)
             guard (200..<300).contains(statusCode), let token = decoded?.token, !token.isEmpty else {

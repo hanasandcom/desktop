@@ -196,10 +196,15 @@ extension DesktopAgentModel {
 
         do {
             let body = try JSONEncoder().encode(["code": code, "verifier": verifier])
-            let (data, response) = try await AccountCredentialTransport.shared.data(for: jsonRequest(
-                url: authenticationURL("auth/mobile/sso/exchange"),
+            let request = jsonRequest(
+                url: try authenticationURL("auth/mobile/sso/exchange"),
                 body: body
-            ))
+            )
+            let outgoing = try DesktopDeviceProof.attachingPublicJWK(
+                request,
+                configuredOrigins: [settings.websiteBaseURL.normalizedBaseURL, settings.apiBaseURL.normalizedBaseURL]
+            )
+            let (data, response) = try await AccountCredentialTransport.shared.data(for: outgoing)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard (200..<300).contains(statusCode),
                   let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data),

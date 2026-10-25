@@ -60,10 +60,13 @@ final class DesktopGoogleOAuthTests: XCTestCase {
         let verifier = String(repeating: "V", count: 43)
         let client = DesktopGoogleOAuthClient(
             websiteBaseURL: URL(string: "https://hanasand.com")!,
+            deviceProofSigner: try EphemeralCryptoKitSigner(),
             transport: { request in
                 XCTAssertEqual(request.url?.absoluteString, "https://hanasand.com/api/auth/mobile/sso/exchange")
                 XCTAssertEqual(request.httpMethod, "POST")
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+                XCTAssertNotNil(request.value(forHTTPHeaderField: "x-device-public-jwk"))
+                XCTAssertNil(request.value(forHTTPHeaderField: "dpop"), "SSO exchange is unauthenticated and must not send DPoP.")
                 let payload = try XCTUnwrap(request.httpBody)
                 let object = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: String])
                 XCTAssertEqual(object, ["code": code, "verifier": verifier])

@@ -13,7 +13,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
 
     func testSignupRequestsEmailVerificationWithWebsiteContract() async throws {
         var captured: URLRequest?
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             captured = request
             return self.response(#"{"verificationRequired":true,"challengeId":"4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77","expiresIn":600}"#, request: request, status: 202)
         }
@@ -26,6 +26,9 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
         XCTAssertEqual(captured?.httpMethod, "POST")
         XCTAssertEqual(captured?.value(forHTTPHeaderField: "Cache-Control"), "no-store")
         XCTAssertFalse(captured?.httpShouldHandleCookies ?? true)
+        let publicJWK = try XCTUnwrap(captured?.value(forHTTPHeaderField: "x-device-public-jwk"))
+        XCTAssertNotNil(try JSONSerialization.jsonObject(with: Data(publicJWK.utf8)) as? [String: String])
+        XCTAssertNil(captured?.value(forHTTPHeaderField: "dpop"), "Signup is unauthenticated and must not send DPoP.")
         let body = try XCTUnwrap(captured?.httpBody)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
         XCTAssertEqual(payload["id"], "ada.lovelace")
@@ -39,7 +42,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
     func testVerifiedSignupCreatesDesktopSessionFromIdentityResponse() async throws {
         let challengeID = "4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77"
         var captured: URLRequest?
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             captured = request
             return self.response(#"{"id":"ada","name":"Ada","token":"session-token","expires_at":"2030-01-01T00:00:00Z"}"#, request: request, status: 201)
         }
@@ -61,7 +64,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
             "4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77",
             "9c5c1a25-1de6-4ba3-91fb-1b708d336ee7",
         ]
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             let body = try XCTUnwrap(request.httpBody)
             requestBodies.append(try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String]))
             let challengeID = challengeIDs[requestBodies.count - 1]
@@ -84,7 +87,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
 
     func testResendSurfacesServerRateLimitMessage() async throws {
         var requestCount = 0
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             requestCount += 1
             if requestCount == 1 {
                 return self.response(#"{"verificationRequired":true,"challengeId":"4bf1eb2f-1a9a-4a1b-b369-284e8ca6fd77","expiresIn":600}"#, request: request, status: 202)
@@ -105,7 +108,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
 
     func testSignupEnforcesWebsiteInputAndVerificationRulesBeforeSending() async throws {
         var sent = false
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             sent = true
             return self.response("{}", request: request, status: 400)
         }
@@ -123,7 +126,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
 
     func testSignupRejectsTrimmedCaseInsensitiveReservedNamesBeforeSending() async throws {
         var sent = false
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             sent = true
             return self.response("{}", request: request, status: 400)
         }
@@ -141,7 +144,7 @@ final class DesktopSignupAuthenticationTests: XCTestCase {
     }
 
     func testSignupReturnsServerValidationErrorsWithoutExposingRequestSecrets() async throws {
-        let client = try AccountSignupClient(baseURL: baseURL) { request in
+        let client = try AccountSignupClient(baseURL: baseURL, signer: try EphemeralCryptoKitSigner()) { request in
             self.response(#"{"error":"This username or email is already registered."}"#, request: request, status: 409)
         }
         do {

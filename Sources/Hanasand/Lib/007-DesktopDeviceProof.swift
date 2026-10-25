@@ -203,6 +203,36 @@ struct KeychainDesktopDeviceProofSigner: DesktopDeviceProofSigning {
 }
 
 enum DesktopDeviceProof {
+    static func attachingPublicJWK(
+        _ request: URLRequest,
+        configuredOrigins: [URL] = [],
+        signer: (any DesktopDeviceProofSigning)? = nil
+    ) throws -> URLRequest {
+        guard let url = request.url,
+              url.scheme?.lowercased() == "https",
+              url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), !host.isEmpty,
+              isTrustedPublicJWKOrigin(url, host: host, configuredOrigins: configuredOrigins) else {
+            throw DesktopDeviceProofError.untrustedTarget
+        }
+        let selectedSigner: any DesktopDeviceProofSigning
+        if let signer {
+            selectedSigner = signer
+        } else {
+            selectedSigner = try KeychainDesktopDeviceProofSigner.persistent()
+        }
+        let jwk = try selectedSigner.publicJWK
+        guard jwk["kty"] == "EC", jwk["crv"] == "P-256",
+              let x = jwk["x"], x.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              let y = jwk["y"], y.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              jwk["d"] == nil else { throw DesktopDeviceProofError.keyUnavailable }
+        let data = try JSONSerialization.data(withJSONObject: jwk, options: [.sortedKeys])
+        guard let header = String(data: data, encoding: .utf8) else { throw DesktopDeviceProofError.keyUnavailable }
+        var enriched = request
+        enriched.setValue(header, forHTTPHeaderField: "x-device-public-jwk")
+        return enriched
+    }
+
     static func enrich(
         _ request: URLRequest,
         sessionToken: String,
@@ -280,6 +310,23 @@ enum DesktopDeviceProof {
         components.percentEncodedPath = path
         guard let absolute = components.string else { return nil }
         return absolute.hasSuffix("/") ? String(absolute.dropLast()) : absolute
+    }
+
+    private static func isTrustedPublicJWKOrigin(_ url: URL, host: String, configuredOrigins: [URL]) -> Bool {
+        let port = effectiveHTTPSPort(url)
+        if (host == "hanasand.com" || host.hasSuffix(".hanasand.com")) && port == 443 {
+            return true
+        }
+        return configuredOrigins.contains { origin in
+            origin.scheme?.lowercased() == "https"
+                && origin.user == nil && origin.password == nil
+                && origin.host?.lowercased() == host
+                && effectiveHTTPSPort(origin) == port
+        }
+    }
+
+    private static func effectiveHTTPSPort(_ url: URL) -> Int? {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : nil)
     }
 
     private static func isAllowedHTTPS(_ url: URL, customAllowedHosts: Set<String>) -> Bool {

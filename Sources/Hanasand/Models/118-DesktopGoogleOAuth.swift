@@ -5,11 +5,13 @@ struct DesktopGoogleOAuthClient {
 
     private let websiteBaseURL: URL
     private let transport: Transport
+    private let deviceProofSigner: (any DesktopDeviceProofSigning)?
 
-    init(websiteBaseURL: URL, transport: @escaping Transport = { request in
+    init(websiteBaseURL: URL, deviceProofSigner: (any DesktopDeviceProofSigning)? = nil, transport: @escaping Transport = { request in
         try await URLSession.shared.data(for: request)
     }) {
         self.websiteBaseURL = websiteBaseURL
+        self.deviceProofSigner = deviceProofSigner
         self.transport = transport
     }
 
@@ -49,7 +51,10 @@ struct DesktopGoogleOAuthClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let (data, response) = try await transport(request)
+        let outgoing = try DesktopDeviceProof.attachingPublicJWK(
+            request, configuredOrigins: [websiteBaseURL], signer: deviceProofSigner
+        )
+        let (data, response) = try await transport(outgoing)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status),
               let decoded = try? JSONDecoder().decode(HanasandLoginResponse.self, from: data),
