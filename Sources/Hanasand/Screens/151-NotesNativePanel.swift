@@ -76,6 +76,33 @@ struct NotesNativePanel: View {
     @Environment(\.desktopTheme) var theme
     @State private var searchQuery = ""
     @State private var isConfirmingDelete = false
+    @State private var isSyncingDrafts = false
+    @State private var noteSyncStatus: DashboardNoteDraftSyncStatus = .idle
+
+    private var noteDraftSyncKey: String {
+        [model.userIDForRequests, String(model.hasHanasandAuth), model.selectedNoteID, model.noteDraftTitle, model.noteDraftContent]
+            .joined(separator: "\u{0}")
+    }
+
+    private var noteSyncStatusLabel: String {
+        if isSyncingDrafts { return "Syncing…" }
+        if model.noteSaveConflict || noteSyncStatus == .conflict { return "Review the conflict to continue." }
+        switch noteSyncStatus {
+        case .failed:
+            return "Sync failed. Your draft is still saved on this Mac."
+        case .synced:
+            return "Synced with Hanasand."
+        case .idle, .pending:
+            return "Waiting to sync."
+        case .conflict:
+            return "Review the conflict to continue."
+        }
+    }
+
+    private var noteSyncStatusIsFailure: Bool {
+        if case .failed = noteSyncStatus { return true }
+        return false
+    }
 
     private var visibleNotes: [DashboardNote] {
         NotesSearch.filter(model.notes, query: searchQuery)
@@ -84,6 +111,10 @@ struct NotesNativePanel: View {
     private var hasSavedLocalDraft: Bool {
         let draftID = model.selectedNoteID.isEmpty ? DashboardNoteDraftStore.newNoteID : model.selectedNoteID
         return DashboardNoteDraftStore().draft(noteID: draftID, for: model.userIDForRequests) != nil
+    }
+
+    private var hasPendingNoteDrafts: Bool {
+        !DashboardNoteDraftStore().drafts(for: model.userIDForRequests).isEmpty
     }
 
     var body: some View {
@@ -129,12 +160,45 @@ struct NotesNativePanel: View {
         } message: {
             Text("This permanently deletes the shared note. Any unsaved local draft for it will also be removed.")
         }
+        .task(id: noteDraftSyncKey) {
+            guard hasPendingNoteDrafts, !model.noteSaveConflict else { return }
+            do {
+                try await Task.sleep(nanoseconds: 1_200_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, hasPendingNoteDrafts, !model.noteSaveConflict else { return }
+            isSyncingDrafts = true
+            noteSyncStatus = await model.syncPendingNoteDrafts()
+            isSyncingDrafts = false
+        }
     }
 
     private var notesSidebar: some View {
         VStack(alignment: .leading, spacing: 10) {
                 ActionButton(title: "New note", icon: "plus") {
                     model.newNoteDraft()
+                }
+                if hasPendingNoteDrafts {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(noteSyncStatusLabel)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(noteSyncStatusIsFailure ? theme.danger : theme.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if !model.noteSaveConflict && !isSyncingDrafts {
+                            Button("Retry sync") {
+                                Task {
+                                    isSyncingDrafts = true
+                                    noteSyncStatus = await model.syncPendingNoteDrafts()
+                                    isSyncingDrafts = false
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(theme.accent)
+                        }
+                    }
+                    .padding(.horizontal, 2)
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -264,6 +328,12 @@ struct NotesNativePanel: View {
                         Task { await model.saveNoteDraft() }
                     }
                     .disabled(model.noteSaveConflict)
+                }
+                if hasSavedLocalDraft {
+                    Text(noteSyncStatusLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(noteSyncStatusIsFailure ? theme.danger : theme.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
     }

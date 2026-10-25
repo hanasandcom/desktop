@@ -10,6 +10,67 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+enum DashboardNoteDraftSyncOutcome {
+    case saved(DashboardNote)
+    case conflict(DashboardNote?)
+    case newerDraftPreserved(DashboardNote)
+}
+
+enum DashboardNoteDraftSyncStatus: Equatable {
+    case idle
+    case synced
+    case pending
+    case conflict
+    case failed(String)
+}
+
+enum DashboardNoteDraftSync {
+    static func sync(
+        _ draft: DashboardNoteDraft,
+        userID: String,
+        store: DashboardNoteDraftStore,
+        fetchNotes: () async throws -> [DashboardNote],
+        createNote: (String, String) async throws -> DashboardNote,
+        updateNote: (String, String, String) async throws -> DashboardNote
+    ) async throws -> DashboardNoteDraftSyncOutcome {
+        let remoteNotes = try await fetchNotes()
+        let isNewNote = draft.noteID == DashboardNoteDraftStore.newNoteID
+        let remote = remoteNotes.first { $0.id == draft.noteID }
+
+        if !isNewNote {
+            guard let baseUpdatedAt = draft.baseUpdatedAt,
+                  let remote,
+                  remote.updatedAt == baseUpdatedAt else {
+                return .conflict(remote)
+            }
+        }
+
+        let saved = try await (isNewNote
+            ? createNote(draft.title, draft.content)
+            : updateNote(draft.noteID, draft.title, draft.content))
+
+        if let newerDraft = store.draft(noteID: draft.noteID, for: userID), newerDraft != draft {
+            if draft.noteID != saved.id {
+                store.remove(noteID: draft.noteID, for: userID)
+            }
+            store.save(
+                DashboardNoteDraft(
+                    noteID: saved.id,
+                    title: newerDraft.title,
+                    content: newerDraft.content,
+                    baseUpdatedAt: saved.updatedAt,
+                    savedAt: newerDraft.savedAt
+                ),
+                for: userID
+            )
+            return .newerDraftPreserved(saved)
+        }
+
+        store.remove(noteID: draft.noteID, for: userID)
+        return .saved(saved)
+    }
+}
+
 extension DesktopAgentModel {
 
     func refreshChangedFilesSummary() {
@@ -230,5 +291,87 @@ extension DesktopAgentModel {
                 updatedAt: draft.baseUpdatedAt
             )] + notes
         }
+    }
+
+    func syncPendingNoteDrafts() async -> DashboardNoteDraftSyncStatus {
+        guard hasHanasandAuth else { return .idle }
+        guard !noteSaveConflict else { return .conflict }
+        let accountID = userIDForRequests
+        let store = DashboardNoteDraftStore()
+        let drafts = store.drafts(for: accountID)
+        guard !drafts.isEmpty else { return .idle }
+
+        for draft in drafts {
+            guard userIDForRequests == accountID else { return .idle }
+            guard !noteSaveConflict else { return .conflict }
+            do {
+                let outcome = try await DashboardNoteDraftSync.sync(
+                    draft,
+                    userID: accountID,
+                    store: store,
+                    fetchNotes: {
+                        try await self.requestJSON(
+                            self.settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("notes"),
+                            authenticated: true
+                        )
+                    },
+                    createNote: { title, content in
+                        let payload = ["title": title, "content": content, "source": "desktop"]
+                        let body = try JSONEncoder().encode(payload)
+                        return try await self.requestJSON(
+                            self.settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("notes"),
+                            method: "POST",
+                            body: body,
+                            authenticated: true
+                        )
+                    },
+                    updateNote: { noteID, title, content in
+                        let payload = ["title": title, "content": content, "source": "desktop"]
+                        let body = try JSONEncoder().encode(payload)
+                        return try await self.requestJSON(
+                            self.settings.apiBaseURL.normalizedBaseURL.appendingAPIPath("notes/\(noteID)"),
+                            method: "PUT",
+                            body: body,
+                            authenticated: true
+                        )
+                    }
+                )
+
+                switch outcome {
+                case .saved(let saved):
+                    notes = [saved] + notes.filter { $0.id != saved.id && $0.id != draft.noteID }
+                    if selectedNoteID == draft.noteID || (draft.noteID == DashboardNoteDraftStore.newNoteID && selectedNoteID.isEmpty) {
+                        selectedNoteID = saved.id
+                        noteDraftTitle = saved.title
+                        noteDraftContent = saved.content
+                    }
+                    nativeDashboardStatus = "Saved note."
+                case .newerDraftPreserved(let saved):
+                    notes = [saved] + notes.filter { $0.id != saved.id && $0.id != draft.noteID }
+                    if selectedNoteID == draft.noteID || (draft.noteID == DashboardNoteDraftStore.newNoteID && selectedNoteID.isEmpty) {
+                        selectedNoteID = saved.id
+                        loadSelectedNoteIntoDraft()
+                    }
+                    nativeDashboardStatus = "A newer local edit is waiting to sync."
+                case .conflict(let websiteNote):
+                    noteSaveConflict = true
+                    noteConflictServerNote = websiteNote
+                    selectedNoteID = draft.noteID
+                    noteDraftTitle = draft.title
+                    noteDraftContent = draft.content
+                    if let websiteNote {
+                        notes = [websiteNote] + notes.filter { $0.id != websiteNote.id }
+                    }
+                    nativeDashboardStatus = websiteNote == nil
+                        ? "This note was deleted on the website. Your local draft is preserved; review the conflict before saving."
+                        : "This note changed on the website. Your local draft is preserved; review both versions before saving."
+                    return .conflict
+                }
+            } catch {
+                nativeDashboardStatus = "Draft saved on this Mac; sync failed. Retry when online. \(error.localizedDescription)"
+                return .failed(error.localizedDescription)
+            }
+        }
+        return store.drafts(for: accountID).isEmpty ? .synced : .pending
     }
 }
