@@ -182,6 +182,50 @@ struct SandboxLiveWorkspaceNativePanel: View {
                         }
                     }
 
+                    if session.isActive, let runTiming = session.runTiming {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            let remaining = runTiming.remainingSeconds(at: context.date)
+                            HStack(spacing: 10) {
+                                Label("Time left · \(remaining / 60):\(String(format: "%02d", remaining % 60))", systemImage: "clock")
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(remaining == 0 ? theme.danger : theme.textSecondary)
+                                    .accessibilityIdentifier("sandbox-run-time-remaining")
+
+                                Spacer(minLength: 4)
+
+                                if remaining > 0, !runTiming.freeExtensionUsed {
+                                    Button(session.isRequestingRunExtension ? "Requesting…" : "Extend 5 min") {
+                                        session.requestRunExtension(.free)
+                                    }
+                                    .disabled(session.isRequestingRunExtension)
+                                    .accessibilityIdentifier("sandbox-free-run-extension")
+                                } else if remaining > 0, runTiming.freeExtensionUsed, !runTiming.paidExtensionUsed {
+                                    if profileQuota?.paid == true {
+                                        Button(session.isRequestingRunExtension ? "Requesting…" : "Extend 5 min") {
+                                            session.requestRunExtension(.paid)
+                                        }
+                                        .disabled(session.isRequestingRunExtension)
+                                        .accessibilityIdentifier("sandbox-paid-run-extension")
+                                    } else {
+                                        Text("Paid plan required for another extension")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(theme.textTertiary)
+                                            .accessibilityIdentifier("sandbox-paid-extension-required")
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+
+                    if let extensionMessage = session.runExtensionMessage {
+                        Text(extensionMessage)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(session.runExtensionMessageIsError ? theme.danger : theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("sandbox-run-extension-status")
+                    }
+
                     if !session.serviceMessage.isEmpty {
                         Text(session.serviceMessage)
                             .font(.system(size: 12, weight: .medium))

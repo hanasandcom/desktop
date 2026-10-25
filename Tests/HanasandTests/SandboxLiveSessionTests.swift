@@ -64,6 +64,95 @@ final class SandboxLiveSessionTests: XCTestCase {
         XCTAssertEqual(tools.map { $0["id"] }, ["virustotal", "urlquery", "webcrack"])
     }
 
+    func testRunTimingParsesServiceExpiryAndCountsDownWithoutGoingNegative() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let timing = try XCTUnwrap(SandboxLiveRunTiming.decode([
+            "expiresAt": "2027-01-15T08:00:01.250Z",
+            "freeExtensionUsed": true,
+            "paidExtensionUsed": false,
+            "suspiciousExtended": true,
+        ]))
+
+        XCTAssertEqual(timing.remainingSeconds(at: now), 2)
+        XCTAssertTrue(timing.freeExtensionUsed)
+        XCTAssertFalse(timing.paidExtensionUsed)
+        XCTAssertTrue(timing.suspiciousExtended)
+        XCTAssertEqual(timing.remainingSeconds(at: timing.expiresAt), 0)
+        XCTAssertNil(SandboxLiveRunTiming.decode(["expiresAt": "not-a-date"]))
+    }
+
+    func testExtensionProtocolUsesServiceMessageShape() throws {
+        let free = try XCTUnwrap(SandboxLiveProtocol.extensionMessage(.free))
+        let freePayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(free.utf8)) as? [String: String])
+        XCTAssertEqual(freePayload["type"], "extend")
+        XCTAssertEqual(freePayload["extension"], "free")
+
+        let paid = try XCTUnwrap(SandboxLiveProtocol.extensionMessage(.paid))
+        let paidPayload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(paid.utf8)) as? [String: String])
+        XCTAssertEqual(paidPayload["extension"], "paid")
+    }
+
+    func testRunExtensionWaitsForServerAndSurfacesDenial() async throws {
+        let transport = MockSandboxLiveSocket()
+        let session = SandboxLiveSession(transport: transport)
+        await session.start(SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        ))
+        let startPayload = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(transport.messages.first).utf8)
+        ) as? [String: Any])
+        let sessionID = try XCTUnwrap(startPayload["sessionId"] as? String)
+        transport.enqueue(#"{"type":"ready"}"#)
+        transport.enqueue("""
+        {"type":"run_time","sessionId":"\(sessionID)","expiresAt":"2099-01-15T08:00:00Z","freeExtensionUsed":false,"paidExtensionUsed":false}
+        """)
+        await waitFor { session.runTiming != nil }
+
+        session.requestRunExtension(.free)
+        await waitFor { transport.messages.count == 2 }
+        let extensionPayload = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(transport.messages.last).utf8)
+        ) as? [String: String])
+        XCTAssertEqual(extensionPayload["type"], "extend")
+        XCTAssertEqual(extensionPayload["extension"], "free")
+        XCTAssertFalse(session.runTiming?.freeExtensionUsed ?? true, "The client must wait for authoritative service timing.")
+
+        transport.enqueue(#"{"type":"status","state":"payment_required","message":"A paid plan is required."}"#)
+        await waitFor { session.runExtensionMessageIsError }
+        XCTAssertFalse(session.isRequestingRunExtension)
+        XCTAssertEqual(session.runExtensionMessage, "A paid plan is required.")
+
+        transport.enqueue("""
+        {"type":"run_time","sessionId":"stale-session","expiresAt":"2099-01-15T08:00:00Z","freeExtensionUsed":true,"paidExtensionUsed":false}
+        """)
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(session.runTiming?.freeExtensionUsed ?? true, "Timing from another session must be ignored.")
+        await session.stop()
+        XCTAssertNil(session.runTiming)
+    }
+
+    func testTimeoutSurfacesExpiryAndClearsRunTiming() async throws {
+        let transport = MockSandboxLiveSocket()
+        let session = SandboxLiveSession(transport: transport)
+        await session.start(SandboxLiveConfiguration(
+            userID: "owner.test", token: "token", target: "example.test", isImpersonating: false
+        ))
+        let startPayload = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(transport.messages.first).utf8)
+        ) as? [String: Any])
+        let sessionID = try XCTUnwrap(startPayload["sessionId"] as? String)
+        transport.enqueue(#"{"type":"ready"}"#)
+        transport.enqueue("""
+        {"type":"run_time","sessionId":"\(sessionID)","expiresAt":"2099-01-15T08:00:00Z"}
+        """)
+        await waitFor { session.runTiming != nil }
+        transport.enqueue(#"{"type":"ended","reason":"timeout"}"#)
+        await waitFor { session.state == .ended }
+
+        XCTAssertNil(session.runTiming)
+        XCTAssertEqual(session.serviceMessage, "The Sandbox run expired.")
+    }
+
     func testStartMessageCarriesWebsiteBrowserFingerprintConfiguration() throws {
         let mobile = try XCTUnwrap(SandboxBrowserFingerprint.presets.first { $0.id == "iphone-safari" })
         var configuration = SandboxLiveConfiguration(

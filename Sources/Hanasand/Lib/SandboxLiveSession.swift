@@ -41,6 +41,41 @@ enum SandboxLiveSessionError: LocalizedError, Equatable {
     }
 }
 
+enum SandboxLiveRunExtension: String, Equatable {
+    case free
+    case paid
+}
+
+struct SandboxLiveRunTiming: Equatable {
+    let expiresAt: Date
+    let suspiciousExtended: Bool
+    let freeExtensionUsed: Bool
+    let paidExtensionUsed: Bool
+
+    static func decode(_ payload: [String: Any]) -> SandboxLiveRunTiming? {
+        guard let rawDate = payload["expiresAt"] as? String,
+              let expiresAt = parseDate(rawDate) else { return nil }
+        return SandboxLiveRunTiming(
+            expiresAt: expiresAt,
+            suspiciousExtended: payload["suspiciousExtended"] as? Bool == true,
+            freeExtensionUsed: payload["freeExtensionUsed"] as? Bool == true,
+            paidExtensionUsed: payload["paidExtensionUsed"] as? Bool == true
+        )
+    }
+
+    func remainingSeconds(at now: Date = .now) -> Int {
+        max(0, Int(ceil(expiresAt.timeIntervalSince(now))))
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+}
+
 struct SandboxBrowserTool: Codable, Equatable, Identifiable {
     let id: String
     let name: String
@@ -700,6 +735,11 @@ enum SandboxLiveProtocol {
         return text
     }
 
+    static func extensionMessage(_ runExtension: SandboxLiveRunExtension) -> String? {
+        let payload: [String: Any] = ["type": "extend", "extension": runExtension.rawValue]
+        return try? jsonString(payload)
+    }
+
     static func inputMessage(type: String, x: Int, y: Int, button: Int = 0) -> String? {
         guard ["click", "pointer"].contains(type), x >= 0, y >= 0,
               x < maximumFrameWidth, y < maximumFrameHeight else { return nil }
@@ -857,6 +897,10 @@ final class SandboxLiveSession: ObservableObject {
     @Published private(set) var pageURL = ""
     @Published private(set) var pageTitle = ""
     @Published private(set) var serviceMessage = ""
+    @Published private(set) var runTiming: SandboxLiveRunTiming?
+    @Published private(set) var runExtensionMessage: String?
+    @Published private(set) var runExtensionMessageIsError = false
+    @Published private(set) var isRequestingRunExtension = false
     @Published private(set) var streamURL: URL?
     @Published private(set) var streamWidth = 0
     @Published private(set) var streamHeight = 0
@@ -943,6 +987,10 @@ final class SandboxLiveSession: ObservableObject {
         receiveTask?.cancel()
         receiveTask = nil
         sessionID = nil
+        runTiming = nil
+        runExtensionMessage = nil
+        runExtensionMessageIsError = false
+        isRequestingRunExtension = false
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
@@ -965,6 +1013,23 @@ final class SandboxLiveSession: ObservableObject {
             do { try await transport.send(message) }
             catch { fail(error) }
         }
+    }
+
+    func requestRunExtension(_ runExtension: SandboxLiveRunExtension) {
+        guard case .live = state,
+              let runTiming,
+              runTiming.remainingSeconds() > 0,
+              !isRequestingRunExtension else { return }
+        switch runExtension {
+        case .free where runTiming.freeExtensionUsed: return
+        case .paid where !runTiming.freeExtensionUsed || runTiming.paidExtensionUsed: return
+        default: break
+        }
+        guard let message = SandboxLiveProtocol.extensionMessage(runExtension) else { return }
+        isRequestingRunExtension = true
+        runExtensionMessageIsError = false
+        runExtensionMessage = "Requesting five more minutes…"
+        sendInput(message)
     }
 
     func updateStreamDiagnostics(_ value: Any, messageType: String = "hanasand-browser-stream") {
@@ -1030,10 +1095,30 @@ final class SandboxLiveSession: ObservableObject {
             if providerResults.count > 8 { providerResults.removeFirst(providerResults.count - 8) }
         case "stream_metrics":
             updateStreamDiagnostics(payload, messageType: "stream_metrics")
+        case "run_time":
+            guard !isStopping,
+                  let sessionID,
+                  payload["sessionId"] as? String == sessionID,
+                  let timing = SandboxLiveRunTiming.decode(payload) else { break }
+            runTiming = timing
+            isRequestingRunExtension = false
+            if !runExtensionMessageIsError { runExtensionMessage = nil }
         case "status":
             let reason = (payload["state"] as? String) ?? ""
             let message = (payload["message"] as? String) ?? ""
             serviceMessage = String((message.isEmpty ? reason : message).prefix(512))
+            switch reason {
+            case "run_extended":
+                isRequestingRunExtension = false
+                runExtensionMessage = String((message.isEmpty ? "Browser run extended by five minutes." : message).prefix(512))
+                runExtensionMessageIsError = false
+            case "extension_used", "payment_required", "extension_unavailable":
+                isRequestingRunExtension = false
+                runExtensionMessage = String((message.isEmpty ? reason : message).prefix(512))
+                runExtensionMessageIsError = true
+            default:
+                break
+            }
             if ["quota_exhausted", "concurrency_limit", "run_exists", "failed"].contains(reason) {
                 fail(SandboxLiveSessionError.requestFailed(reason == "quota_exhausted" ? 403 : 429))
             }
@@ -1046,13 +1131,15 @@ final class SandboxLiveSession: ObservableObject {
             inputSendTask?.cancel()
             inputSendTask = nil
             sessionID = nil
+            runTiming = nil
+            isRequestingRunExtension = false
             streamURL = nil
             streamWidth = 0
             streamHeight = 0
             streamDiagnostics = SandboxLiveStreamDiagnostics()
             apiBaseURL = nil
             state = .ended
-            serviceMessage = "Sandbox session ended."
+            serviceMessage = payload["reason"] as? String == "timeout" ? "The Sandbox run expired." : "Sandbox session ended."
             transport.close()
         case "stream_ready":
             guard let rawURL = payload["streamUrl"] as? String,
@@ -1127,6 +1214,10 @@ final class SandboxLiveSession: ObservableObject {
         receiveTask = nil
         transport.close()
         sessionID = nil
+        runTiming = nil
+        runExtensionMessage = nil
+        runExtensionMessageIsError = false
+        isRequestingRunExtension = false
         streamURL = nil
         streamWidth = 0
         streamHeight = 0
@@ -1148,6 +1239,10 @@ final class SandboxLiveSession: ObservableObject {
         inputSendTask = nil
         transport.close()
         sessionID = nil
+        runTiming = nil
+        runExtensionMessage = nil
+        runExtensionMessageIsError = false
+        isRequestingRunExtension = false
         resumeToken = nil
         connectionRequest = nil
         frameData = nil
