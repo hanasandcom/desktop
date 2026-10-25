@@ -302,6 +302,20 @@ final class NativeVMWorkspaceClientTests: XCTestCase {
         XCTAssertEqual(metrics.last?.poweredOnAt, "2026-10-23T09:00:00Z")
     }
 
+    func testMetricFreshnessMatchesWebsiteThreeMinuteWarning() {
+        let now = ISO8601DateFormatter().date(from: "2026-10-25T14:00:00Z")!
+        func metric(_ recordedAt: String?) -> NativeVMMetric {
+            NativeVMMetric(id: "metric", recordedAt: recordedAt, powerState: "running", poweredOnAt: nil, poweredOffAt: nil, values: [])
+        }
+
+        XCTAssertTrue(nativeVMMetricIsStale(metric("2026-10-25T13:56:59Z"), now: now))
+        XCTAssertTrue(nativeVMMetricIsStale(metric("2026-10-25T13:56:59.500Z"), now: now))
+        XCTAssertFalse(nativeVMMetricIsStale(metric("2026-10-25T13:57:00Z"), now: now))
+        XCTAssertFalse(nativeVMMetricIsStale(metric("2026-10-25T14:01:00Z"), now: now))
+        XCTAssertFalse(nativeVMMetricIsStale(metric("invalid timestamp"), now: now))
+        XCTAssertFalse(nativeVMMetricIsStale(metric(nil), now: now))
+    }
+
     func testDetailsIncludeHardwareAndNetworkFields() async throws {
         let client = try NativeVMWorkspaceClient(
             apiBaseURL: "https://api.example.test/api",

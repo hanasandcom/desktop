@@ -436,6 +436,14 @@ struct VMsNativePanel: View {
                 }
             }
             if !selectedMetrics.isEmpty {
+                let latestMetric = selectedMetrics[0]
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    if nativeVMMetricIsStale(latestMetric, now: context.date) {
+                        Text("Metrics have not updated recently.")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
                 Text("CPU history · oldest to newest · \(selectedMetrics.count) samples")
                     .font(.system(size: 12, weight: .bold)).foregroundStyle(theme.textSecondary)
                 GeometryReader { geometry in
@@ -444,7 +452,6 @@ struct VMsNativePanel: View {
                         .accessibilityLabel("CPU metric history")
                 }
                 .frame(height: 100)
-                let latestMetric = selectedMetrics[0]
                 Text("Latest metrics · \(latestMetric.recordedAt ?? "time unavailable") · \(latestMetric.powerState ?? "power state unavailable")")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(theme.textSecondary)

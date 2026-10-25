@@ -134,6 +134,16 @@ struct NativeVMMetric: Equatable, Identifiable {
     }
 }
 
+func nativeVMMetricIsStale(_ metric: NativeVMMetric, now: Date = .now) -> Bool {
+    guard let recordedAt = metric.recordedAt else { return false }
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let standard = ISO8601DateFormatter()
+    standard.formatOptions = [.withInternetDateTime]
+    guard let timestamp = fractional.date(from: recordedAt) ?? standard.date(from: recordedAt) else { return false }
+    return now.timeIntervalSince(timestamp) > 180
+}
+
 struct NativeVMChartPoint: Equatable {
     let x: Double
     let y: Double
