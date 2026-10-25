@@ -68,6 +68,14 @@ struct DashboardMonitoringOverview: Decodable, Equatable {
     var healthySourceCount: Int { sourceCoverage.filter { $0.health == "healthy" }.count }
     var isReady: Bool { readiness.decision == "production_ready_with_live_sources" }
 
+    var watchlistDetail: String { "companies, domains, brands, and vendors" }
+    var recentMatchDetail: String { recentMatchCount > 0 ? "relevant activity found" : "no new matches" }
+    var openAlertDetail: String { openAlertCount > 0 ? "ready to review" : "no new alerts" }
+    var sourceHealthValue: String { sourceCoverage.isEmpty ? "—" : "\(healthySourceCount)/\(sourceCoverage.count)" }
+    var sourceHealthDetail: String { sourceCoverage.isEmpty ? "No source coverage yet" : "healthy source families" }
+    var latestEvidenceValue: String { latestEvidence == nil ? "None yet" : "Available" }
+    var latestEvidenceDetail: String { latestEvidence?.sourceName ?? "No retained evidence" }
+
     static func date(from value: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -86,6 +94,13 @@ struct DashboardMonitoringOverviewState: Equatable {
     let casesErrorMessage: String?
 
     static let loading = Self(snapshot: nil, openCaseCount: nil, isLoading: true, errorMessage: nil, casesErrorMessage: nil)
+
+    var openCaseValue: String { openCaseCount.map(String.init) ?? "—" }
+    var openCaseDetail: String {
+        if isLoading { return "Loading cases…" }
+        guard let openCaseCount else { return "Case data unavailable" }
+        return openCaseCount > 0 ? "active customer work" : "no open cases"
+    }
 }
 
 enum DashboardMonitoringOverviewError: LocalizedError, Equatable {

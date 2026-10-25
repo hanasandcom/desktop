@@ -24,6 +24,9 @@ struct DashboardOverviewNativePanel: View {
     let metricColumns = [
         GridItem(.adaptive(minimum: 140), spacing: 10, alignment: .top),
     ]
+    let overviewMetricColumns = [
+        GridItem(.adaptive(minimum: 240), spacing: 10, alignment: .top),
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -133,13 +136,13 @@ struct DashboardOverviewNativePanel: View {
                         model.openNativeDashboard(path: "/watchlists", label: "Watchlists")
                     }
                 } else {
-                    LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
-                        FeatureCard(title: "Active watch terms", value: "\(snapshot.watchlist.count)", icon: "dot.radiowaves.left.and.right")
-                        FeatureCard(title: "New matches · 7 days", value: "\(snapshot.recentMatchCount)", icon: "shield.lefthalf.filled")
-                        FeatureCard(title: "Open alerts", value: "\(snapshot.openAlertCount)", icon: "bell.badge")
-                        FeatureCard(title: "Open cases", value: monitoringOverview.openCaseCount.map(String.init) ?? "—", icon: "ticket")
-                        FeatureCard(title: "Source health", value: snapshot.sourceCoverage.isEmpty ? "—" : "\(snapshot.healthySourceCount)/\(snapshot.sourceCoverage.count)", icon: "checkmark.shield")
-                        FeatureCard(title: "Latest evidence", value: snapshot.latestEvidence == nil ? "None yet" : "Available", icon: "doc.text.magnifyingglass")
+                    LazyVGrid(columns: overviewMetricColumns, alignment: .leading, spacing: 10) {
+                        monitoringMetric(title: "Active watch terms", value: "\(snapshot.watchlist.count)", detail: snapshot.watchlistDetail, icon: "dot.radiowaves.left.and.right")
+                        monitoringMetric(title: "New matches · 7 days", value: "\(snapshot.recentMatchCount)", detail: snapshot.recentMatchDetail, icon: "shield.lefthalf.filled")
+                        monitoringMetric(title: "Open alerts", value: "\(snapshot.openAlertCount)", detail: snapshot.openAlertDetail, icon: "bell.badge")
+                        monitoringMetric(title: "Open cases", value: monitoringOverview.openCaseValue, detail: monitoringOverview.openCaseDetail, icon: "ticket")
+                        monitoringMetric(title: "Source health", value: snapshot.sourceHealthValue, detail: snapshot.sourceHealthDetail, icon: "checkmark.shield")
+                        monitoringMetric(title: "Latest evidence", value: snapshot.latestEvidenceValue, detail: snapshot.latestEvidenceDetail, icon: "doc.text.magnifyingglass")
                     }
                     if let latest = snapshot.latestEvidence {
                         Label("Latest evidence: \(latest.sourceName) · \(latest.latestTimestamp ?? "time not reported")", systemImage: "doc.text")
@@ -175,6 +178,44 @@ struct DashboardOverviewNativePanel: View {
         ActionButton(title: "Open monitoring", icon: "dot.radiowaves.left.and.right") {
             model.openNativeDashboard(path: "/findings", label: "Findings")
         }
+    }
+
+    private func monitoringMetric(title: String, value: String, detail: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+                    .textCase(.uppercase)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.textSecondary)
+            }
+            Text(value)
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(theme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .textSelection(.enabled)
+            Text(detail)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 98, alignment: .leading)
+        .background(theme.cardRaised)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(theme.divider.opacity(0.7), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(value), \(detail)")
     }
 
     private var refreshOverviewButton: some View {
