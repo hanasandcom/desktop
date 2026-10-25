@@ -2,10 +2,15 @@ import SwiftUI
 
 struct PublicExposureActivityNativePanel: View {
     @Environment(\.desktopTheme) private var theme
-    @StateObject private var model = PublicExposureActivityViewModel()
+    @StateObject private var model: PublicExposureActivityViewModel
     @State private var filters = PublicExposureActivityFilters()
     @State private var appliedFilters = PublicExposureActivityFilters()
     @State private var filtersOpen = false
+
+    @MainActor
+    init(viewModel: PublicExposureActivityViewModel? = nil) {
+        _model = StateObject(wrappedValue: viewModel ?? PublicExposureActivityViewModel())
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
