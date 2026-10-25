@@ -28,6 +28,16 @@ final class NativeAuthenticatorTests: XCTestCase {
         XCTAssertThrowsError(try NativeAuthenticator.parse("otpauth://hotp/alice?secret=\(rfcSecret)&counter=1"))
     }
 
+    func testLiveQRScanAcceptsOnlyTOTPAuthenticatorURIs() {
+        XCTAssertTrue(NativeAuthenticatorQRScan.isTOTPURI("otpauth://totp/alice?secret=\(rfcSecret)"))
+        XCTAssertTrue(NativeAuthenticatorQRScan.isTOTPURI("OTPAUTH://TOTP/alice?secret=\(rfcSecret)"))
+        XCTAssertFalse(NativeAuthenticatorQRScan.isTOTPURI("otpauth://hotp/alice?secret=\(rfcSecret)&counter=1"))
+        XCTAssertFalse(NativeAuthenticatorQRScan.isTOTPURI("https://example.com"))
+        XCTAssertFalse(NativeAuthenticatorQRScan.isTOTPURI("otpauth://totp/"))
+        XCTAssertFalse(NativeAuthenticatorQRScan.isTOTPURI("otpauth://totp:443/alice?secret=\(rfcSecret)"))
+        XCTAssertFalse(NativeAuthenticatorQRScan.isTOTPURI("otpauth://totp/alice?secret=abc\n"))
+    }
+
     func testRejectsBadSecretDigitsAndPeriod() {
         XCTAssertThrowsError(try NativeAuthenticator.validate(NativeAuthenticatorEntry(label: "bad", secret: "abc123")))
         XCTAssertThrowsError(try NativeAuthenticator.validate(NativeAuthenticatorEntry(label: "bad", secret: rfcSecret, digits: 7)))
